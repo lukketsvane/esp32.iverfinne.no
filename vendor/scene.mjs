@@ -1,5 +1,6 @@
 import { inferenceSize, imageToPointCloud, pointStride, gaussianSplats } from '../pointcloud/math.mjs';
 import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, primitiveDimensions, qualityPointBudget } from '../pointcloud/primitive.mjs';
+import { attachViewerGestures, progressiveIndices } from './viewer-gestures.mjs';
 
 function estimateDepth(pixels, onProgress, signal) {
   return new Promise((resolve, reject) => {
@@ -40,8 +41,8 @@ function renderScene(host, cloud, bytes, signal) {
     return item;
   };
   program = gl.createProgram();
-  gl.attachShader(program, shader(gl.VERTEX_SHADER, 'attribute vec3 aPosition;attribute float aScale;attribute vec4 aColor;uniform mat3 uRotation;uniform float uDistance,uFocal,uAspect,uHeight,uMaxPoint;uniform vec2 uClip;varying vec4 vColor;void main(){vec3 p=uRotation*aPosition;float depth=uDistance-p.z;gl_Position=vec4(p.x*uFocal/uAspect,p.y*uFocal,depth*uClip.x+uClip.y,depth);gl_PointSize=clamp(aScale*uHeight*uFocal*3.0/max(depth,.02),1.0,uMaxPoint);vColor=aColor;}'));
-  gl.attachShader(program, shader(gl.FRAGMENT_SHADER, 'precision mediump float;varying vec4 vColor;void main(){vec2 p=gl_PointCoord*2.0-1.0;float r=dot(p,p);if(r>1.0)discard;float alpha=vColor.a*exp(-4.5*r);if(alpha<.0039)discard;gl_FragColor=vec4(vColor.rgb,alpha);}'));
+  gl.attachShader(program, shader(gl.VERTEX_SHADER, 'attribute vec3 aPosition;attribute float aScale;attribute vec4 aColor;uniform mat3 uRotation;uniform float uDistance,uFocal,uAspect,uHeight,uMaxPoint,uPointScale;uniform vec2 uClip,uPan;varying vec4 vColor;void main(){vec3 p=uRotation*aPosition;p.xy+=uPan;float depth=uDistance-p.z;gl_Position=vec4(p.x*uFocal/uAspect,p.y*uFocal,depth*uClip.x+uClip.y,depth);gl_PointSize=clamp(aScale*uPointScale*uHeight*uFocal*3.0/max(depth,.02),1.0,uMaxPoint);vColor=aColor;}'));
+  gl.attachShader(program, shader(gl.FRAGMENT_SHADER, 'precision mediump float;varying vec4 vColor;uniform float uOpacity;void main(){vec2 p=gl_PointCoord*2.0-1.0;float r=dot(p,p);if(r>1.0)discard;float alpha=vColor.a*uOpacity*exp(-4.5*r);if(alpha<.0039)discard;gl_FragColor=vec4(vColor.rgb,alpha);}'));
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) failed();
   gl.useProgram(program);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.disable(gl.DEPTH_TEST);gl.clearColor(0,0,0,1);
@@ -50,8 +51,8 @@ function renderScene(host, cloud, bytes, signal) {
   for (const [name,size,offset] of [['aPosition',3,0],['aScale',1,12],['aColor',4,16]]) {
     attributes.push([gl.getAttribLocation(program,name),size,offset]);
   }
-  const uniforms=Object.fromEntries(['uRotation','uDistance','uFocal','uAspect','uHeight','uMaxPoint','uClip'].map(name=>[name,gl.getUniformLocation(program,name)]));
-  const points=new Float32Array(cloud.count*8),depths=new Float32Array(cloud.count),order=Uint32Array.from({length:cloud.count},(_,i)=>i),view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  const uniforms=Object.fromEntries(['uRotation','uDistance','uFocal','uAspect','uHeight','uMaxPoint','uClip','uPan','uPointScale','uOpacity'].map(name=>[name,gl.getUniformLocation(program,name)]));
+  const points=new Float32Array(cloud.count*8),depths=new Float32Array(cloud.count),indices=Uint32Array.from(progressiveIndices(cloud.count)),view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);let order=indices.slice();
   const colors=new Float32Array(cloud.count*4);
   for(let i=0;i<cloud.count;i++){const color=nearestC64(bytes[i*32+24],bytes[i*32+25],bytes[i*32+26]);for(let c=0;c<3;c++)colors[i*4+c]=color[c]/255;colors[i*4+3]=bytes[i*32+27]/255}
   screenProgram=gl.createProgram();
@@ -63,7 +64,7 @@ function renderScene(host, cloud, bytes, signal) {
   target=gl.createFramebuffer();texture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,texture);
   for(const [key,value] of [[gl.TEXTURE_MIN_FILTER,gl.NEAREST],[gl.TEXTURE_MAG_FILTER,gl.NEAREST],[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]])gl.texParameteri(gl.TEXTURE_2D,key,value);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,null);gl.bindFramebuffer(gl.FRAMEBUFFER,target);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,texture,0);if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)failed();gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-  const pointers=new Map();let yaw=0,pitch=0,zoom=1,frame=0,disposed=false,primitiveLevel=0,targetWidth=0,targetHeight=0;
+  const pointers=new Map();let yaw=0,pitch=0,zoom=1,panX=0,panY=0,pointScale=1,opacity=1,frame=0,disposed=false,primitiveLevel=0,targetWidth=0,targetHeight=0;
   const focal=1/Math.tan(24*Math.PI/180),distance=Math.max(.3,cloud.radius*2.8),near=.01,far=Math.max(100,distance*20);
   gl.uniform1f(uniforms.uMaxPoint,gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]);gl.uniform2f(uniforms.uClip,(far+near)/(far-near),-2*far*near/(far-near));
   function draw() {
@@ -76,15 +77,15 @@ function renderScene(host, cloud, bytes, signal) {
     for(const [at,count,offset] of attributes){gl.enableVertexAttribArray(at);gl.vertexAttribPointer(at,count,gl.FLOAT,false,32,offset)}
     const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
     const rotation=new Float32Array([cy,sp*sy,-cp*sy,0,cp,sp,sy,-sp*cy,cp*cy]);
-    for(let i=0;i<cloud.count;i++)depths[i]=rotation[2]*cloud.positions[i*3]+rotation[5]*cloud.positions[i*3+1]+rotation[8]*cloud.positions[i*3+2];
+    for(const i of order)depths[i]=rotation[2]*cloud.positions[i*3]+rotation[5]*cloud.positions[i*3+1]+rotation[8]*cloud.positions[i*3+2];
     order.sort((a,b)=>depths[a]-depths[b]);
     for(let n=0;n<order.length;n++){
       const i=order[n],at=n*8;
       points.set(cloud.positions.subarray(i*3,i*3+3),at);points[at+3]=view.getFloat32(i*32+12,true);
       points.set(colors.subarray(i*4,i*4+4),at+4);
     }
-    gl.bufferData(gl.ARRAY_BUFFER,points,gl.DYNAMIC_DRAW);gl.uniformMatrix3fv(uniforms.uRotation,false,rotation);gl.uniform1f(uniforms.uFocal,focal*Math.min(1,width/height));gl.uniform1f(uniforms.uDistance,distance/zoom);gl.uniform1f(uniforms.uAspect,width/height);gl.uniform1f(uniforms.uHeight,size.height);
-    gl.clear(gl.COLOR_BUFFER_BIT);gl.drawArrays(gl.POINTS,0,cloud.count);
+    gl.bufferData(gl.ARRAY_BUFFER,points.subarray(0,order.length*8),gl.DYNAMIC_DRAW);gl.uniformMatrix3fv(uniforms.uRotation,false,rotation);gl.uniform1f(uniforms.uFocal,focal*Math.min(1,width/height));gl.uniform1f(uniforms.uDistance,distance/zoom);gl.uniform1f(uniforms.uAspect,width/height);gl.uniform1f(uniforms.uHeight,size.height);gl.uniform2f(uniforms.uPan,panX,panY);gl.uniform1f(uniforms.uPointScale,pointScale);gl.uniform1f(uniforms.uOpacity,opacity);
+    gl.clear(gl.COLOR_BUFFER_BIT);gl.drawArrays(gl.POINTS,0,order.length);
     if(primitiveLevel){
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,width,height);gl.disable(gl.BLEND);gl.useProgram(screenProgram);gl.bindBuffer(gl.ARRAY_BUFFER,screenBuffer);for(const [at] of attributes)gl.disableVertexAttribArray(at);gl.enableVertexAttribArray(screenPosition);gl.vertexAttribPointer(screenPosition,2,gl.FLOAT,false,0,0);
       const mode=PRIMITIVE_MODES[primitiveLevel],palette=new Float32Array(48);for(let i=0;i<mode.palette.length;i++)for(let c=0;c<3;c++)palette[i*3+c]=mode.palette[i][c]/255;
@@ -92,21 +93,27 @@ function renderScene(host, cloud, bytes, signal) {
     }
   }
   const redraw=()=>{if(!disposed&&!frame)frame=requestAnimationFrame(draw)};
-  const down=event=>{pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});canvas.setPointerCapture(event.pointerId)};
+  const rotate=(dx,dy)=>{yaw+=dx*.006;pitch=Math.max(-1.2,Math.min(1.2,pitch+dy*.006));redraw()};
+  const gestures=attachViewerGestures(canvas,{
+    onRotate:rotate,
+    onTransform(dx,dy,scale,focusX,focusY){
+      const width=Math.max(1,canvas.clientWidth),height=Math.max(1,canvas.clientHeight),pixelsToWorld=2/(focal*Math.min(1,width/height)*height),before=distance/zoom*pixelsToWorld,nextZoom=Math.max(.4,Math.min(3,zoom*scale)),after=distance/nextZoom*pixelsToWorld;
+      panX+=dx*before-(focusX-width/2)*(before-after);panY-=dy*before-(focusY-height/2)*(before-after);zoom=nextZoom;redraw();
+    },
+    onDensity(value){const count=Math.max(1,Math.min(cloud.count,Math.round(cloud.count*value)));if(count!==order.length){order=indices.slice(0,count);redraw()}},
+    onDefinition(value){pointScale=4**(1-2*value);opacity=4**(value-.5);redraw()},
+    onTouch(active){if(active)pointers.clear()}
+  });
+  const down=event=>{if(event.pointerType==='touch')return;pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});canvas.setPointerCapture(event.pointerId)};
   const move=event=>{
     const old=pointers.get(event.pointerId);if(!old)return;
-    if(pointers.size===1){yaw+=(event.clientX-old.x)*.006;pitch=Math.max(-1.2,Math.min(1.2,pitch+(event.clientY-old.y)*.006))}
-    else{
-      const other=[...pointers.entries()].find(([id])=>id!==event.pointerId)[1],before=Math.hypot(old.x-other.x,old.y-other.y),after=Math.hypot(event.clientX-other.x,event.clientY-other.y);
-      if(before>2)zoom=Math.max(.4,Math.min(3,zoom*after/before));
-    }
-    pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});redraw();
+    rotate(event.clientX-old.x,event.clientY-old.y);pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
   };
   const up=event=>pointers.delete(event.pointerId);
   const wheel=event=>{event.preventDefault();zoom=Math.max(.4,Math.min(3,zoom*Math.exp(-event.deltaY*.001)));redraw()};
   const lost=event=>{event.preventDefault();dispose()};
   function dispose(){
-    if(disposed)return;disposed=true;cancelAnimationFrame(frame);observer?.disconnect();signal.removeEventListener('abort',dispose);
+    if(disposed)return;disposed=true;cancelAnimationFrame(frame);observer?.disconnect();signal.removeEventListener('abort',dispose);gestures.dispose();
     for(const [name,listener] of listeners)canvas.removeEventListener(name,listener);
     gl.deleteBuffer(buffer);gl.deleteBuffer(screenBuffer);gl.deleteProgram(program);gl.deleteProgram(screenProgram);gl.deleteFramebuffer(target);gl.deleteTexture(texture);for(const item of shaders)gl.deleteShader(item);gl.getExtension('WEBGL_lose_context')?.loseContext();canvas.remove();pointers.clear();
   }

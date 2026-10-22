@@ -724,6 +724,15 @@ test('a pinch clears the double-tap candidate and keeps the scene open', async (
   assert.equal(disposed,false);
 });
 
+test('three-finger adjustment cannot close review or turn the next tap into a double tap',async()=>{
+  const app=await connectedCamera({scene:async()=>({dispose(){}})});await app.get('capture-plane').emit('click');await app.tick(0);
+  await reviewTap(app);await app.tick(100);const target=app.get('scene');
+  for(const pointerId of [1,2,3])await app.get('photo-dialog').emit('pointerdown',{target,pointerId,isPrimary:pointerId===1});
+  for(const pointerId of [3,2,1])await app.get('photo-dialog').emit('pointerup',{target,pointerId,isPrimary:pointerId===1});
+  await app.tick(100);await reviewTap(app);
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.sceneCalls[0].signal.aborted,false);
+});
+
 test('taps from a closed review cannot reset a newly captured scene', async () => {
   const app=await connectedCamera({scene:async()=>({dispose(){}})});
   await app.get('capture-plane').emit('click');await app.tick(0);

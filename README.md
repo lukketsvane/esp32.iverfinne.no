@@ -10,6 +10,8 @@ Kameraet treng ikkje minnekort. 3D blir berre vist; nedlasting gjeld originalfot
 
 Oppsettet følgjer den opphavlege Entropi-sida: svart heilskjerm, ein liten optisk søkjar og ei éinpiksels framdriftslinje. Fire strekar langs venstre kant vel C64, EGA, CGA eller grøn fosfor; høgre kant vel punktmengda for neste foto. Alt blir rekna lokalt med same djupnemodell. Dobbelttrykk på resultatet gir eit nytt foto. Tilgjengelege kontrollar for retur og lagring av originalfoto blir berre synlege ved tastaturfokus; feil viser eit prøv-igjen-symbol. Ingen bileteveljar eller opplasting er tilgjengeleg. Modell og WASM blir kontrollerte med SHA-256 og mellomlagra i IndexedDB når nettlesaren tillèt det.
 
+I 3D-visinga roterer éin finger resultatet; to fingrar flyttar og zoomar. Tre fingrar opp viser fleire punkt, ned færre; mot høgre blir punkta skarpare, mot venstre mjukare. Retninga blir låst etter ei lita startrørsle. Justeringa skjer direkte i visinga utan ny modellkøyring.
+
 ## ESP32-CAM
 
 1. Opne [klargjeringa](https://esp32.iverfinne.no/prepare/) i Safari med internett og vent på «Telefonen er klar».

@@ -11,7 +11,8 @@ scene = (shared / "vendor/scene.mjs").read_text(encoding="utf-8").replace("expor
 scene = re.sub(r"^import .*?;\s*", "", scene, flags=re.MULTILINE)
 math = (shared / "pointcloud/math.mjs").read_text(encoding="utf-8").replace("export ", "")
 primitive = (shared / "pointcloud/primitive.mjs").read_text(encoding="utf-8").replace("export ", "")
-scene = "const createDepthScene = (() => {\n" + math + "\n" + primitive + "\n" + scene + "\nreturn createDepthScene;\n})();"
+gestures = (shared / "vendor/viewer-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
+scene = "const createDepthScene = (() => {\n" + math + "\n" + primitive + "\n" + gestures + "\n" + scene + "\nreturn createDepthScene;\n})();"
 studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("export ", "")
 assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
