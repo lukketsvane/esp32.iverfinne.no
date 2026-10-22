@@ -11,8 +11,10 @@ renderer = (shared / "vendor/viewfinder.mjs").read_text(encoding="utf-8").replac
 scene = (shared / "vendor/scene.mjs").read_text(encoding="utf-8").replace("export async function", "async function")
 scene = re.sub(r"^import .*?;\s*", "", scene, flags=re.MULTILINE)
 math = (shared / "pointcloud/math.mjs").read_text(encoding="utf-8").replace("export ", "")
-scene = "const createDepthScene = (() => {\n" + math + "\n" + scene + "\nreturn createDepthScene;\n})();"
-source = source.replace("__ENTROPI_VIEWFINDER__", renderer).replace("__ENTROPI_SCENE__", scene)
+primitive = (shared / "pointcloud/primitive.mjs").read_text(encoding="utf-8").replace("export ", "")
+scene = "const createDepthScene = (() => {\n" + math + "\n" + primitive + "\n" + scene + "\nreturn createDepthScene;\n})();"
+studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("export ", "")
+source = source.replace("__ENTROPI_VIEWFINDER__", renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio)
 
 def array(name, payload):
     rows = [", ".join(f"0x{byte:02x}" for byte in payload[i:i + 16]) for i in range(0, len(payload), 16)]

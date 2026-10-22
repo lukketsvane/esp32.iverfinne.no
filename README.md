@@ -8,7 +8,7 @@ Foto frå ESP32-CAM eller telefonen blir til ei djupnebasert 3D-vising på telef
 
 [esp32.iverfinne.no](https://esp32.iverfinne.no) brukar berre telefonkameraet eller eit kamerafoto frå ESP32. Første trykk på den svarte flata opnar kameraet; neste trykk tek foto og lagar 3D på telefonen. Kameraet si lokale side kan opne nettappen og overføre fotoet direkte mellom dei to nettlesarvindauga. Meldinga blir kontrollert mot avsendarvindauge og opphav; biletet går ikkje gjennom Vercel.
 
-Oppsettet følgjer den opphavlege Entropi-sida: svart heilskjerm, ein liten optisk søkjar og ei éinpiksels framdriftslinje. Dobbelttrykk på resultatet gir eit nytt foto. Tilgjengelege kontrollar for retur og lagring av originalfoto blir berre synlege ved tastaturfokus; feil viser eit prøv-igjen-symbol. Ingen bileteveljar eller opplasting er tilgjengeleg. Modell og WASM blir kontrollerte med SHA-256 og mellomlagra i IndexedDB når nettlesaren tillèt det.
+Oppsettet følgjer den opphavlege Entropi-sida: svart heilskjerm, ein liten optisk søkjar og ei éinpiksels framdriftslinje. Fire strekar langs venstre kant vel C64, EGA, CGA eller grøn fosfor; høgre kant vel punktmengda for neste foto. Alt blir rekna lokalt med same djupnemodell. Dobbelttrykk på resultatet gir eit nytt foto. Tilgjengelege kontrollar for retur og lagring av originalfoto blir berre synlege ved tastaturfokus; feil viser eit prøv-igjen-symbol. Ingen bileteveljar eller opplasting er tilgjengeleg. Modell og WASM blir kontrollerte med SHA-256 og mellomlagra i IndexedDB når nettlesaren tillèt det.
 
 ## ESP32-CAM
 
@@ -29,7 +29,7 @@ Nettappen er statiske filer utan byggjesteg. `pointcloud/` og `vendor/` er felle
 ```powershell
 python prepare-models.py
 python device/build-ui.py
-node --test device/tests/ui.test.mjs tests/app.test.mjs tests/scene.test.mjs
+node --test
 arduino-cli compile --fqbn esp32:esp32:esp32cam:PartitionScheme=huge_app --build-path device/build device/EntropiCamera
 ```
 

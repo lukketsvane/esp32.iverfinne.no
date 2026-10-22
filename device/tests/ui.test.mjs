@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-const application = scripts.find(script => script.includes('function takePhoto('));
+const application = scripts.find(script => script.includes('function takePhoto(')).replace('__ENTROPI_STUDIO__','');
 const verifiedStatus = { camera_ready: true, stream_ready: true, recovering: false, recovery_attempts: 0, last_error: '', framesize: 10, photo_framesize: 15, brightness: 0, psram: true, storage: { state: 'missing', error: '' } };
 const savedPhoto = 'entropi-00000000000000000002.jpg';
 const olderPhoto = 'entropi-00000000000000000001.jpg';
@@ -32,6 +32,8 @@ function harness(options = {}) {
   const sceneCalls = [];
   const opened = [];
   const messages = [];
+  const studioBindings = [];
+  const studioControls = { quality: 2, primitive: 0, dispose() {} };
   const childWindow = { postMessage: (data, origin) => messages.push({ data, origin }) };
   const elements = new Map();
   const stored = new Map(options.onboarded === false ? [] : [['entropi-onboarded', '2']]);
@@ -187,9 +189,10 @@ function harness(options = {}) {
       setItem(key, value) { if (options.storageDenied) throw new Error('Storage denied'); stored.set(key, value); },
     },
     Viewfinder: class { constructor(canvas) { this.canvas = canvas; } },
-    createDepthScene: async (host, blob, onProgress, signal) => {
-      sceneCalls.push({ host, blob, onProgress, signal });
-      if (options.scene) return options.scene(host, blob, onProgress, signal);
+    attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
+    createDepthScene: async (host, blob, onProgress, signal, quality) => {
+      sceneCalls.push({ host, blob, onProgress, signal, quality });
+      if (options.scene) return { setPrimitiveLevel() {}, ...await options.scene(host, blob, onProgress, signal, quality) };
       throw new Error('Djupnemodellen manglar.');
     },
     setTimeout: (callback, delay) => timeout(callback, delay),
@@ -219,7 +222,9 @@ function harness(options = {}) {
     await Promise.all((events.get(name) ?? []).map(callback => callback({ type: name, ...details })));
     await flush();
   }
-  return { elements, qualities, photoQualities, document, images, canvases, requests, revoked, objectUrls, sceneCalls, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
+  function changeStudio(kind, level) { studioControls[kind] = level; for (const binding of studioBindings) binding.onChange(kind, level); }
+  function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
+  return { elements, qualities, photoQualities, document, images, canvases, requests, revoked, objectUrls, sceneCalls, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
 }
 
 async function connectedCamera(options = {}) {
@@ -728,4 +733,36 @@ test('taps from a closed review cannot reset a newly captured scene', async () =
   await reviewTap(app);
   assert.equal(app.get('photo-dialog').open,true);
   assert.equal(app.sceneCalls[1].signal.aborted,false);
+});
+
+test('point density changes the next capture while primitive style changes the current scene', async () => {
+  const styles=[],app=await connectedCamera({scene:async()=>({dispose(){},setPrimitiveLevel(level){styles.push(level)}})});
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.sceneCalls[0].quality,2);
+  assert.equal(styles.at(-1),0);
+  app.changeStudio('quality',0);app.changeStudio('primitive',3);
+  assert.equal(app.sceneCalls.length,1);
+  assert.equal(styles.at(-1),3);
+  await app.get('close-photo').emit('click');await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.sceneCalls[1].quality,0);
+  assert.equal(styles.at(-1),3);
+});
+
+test('a rail gesture clears a pending result tap even when its value is unchanged', async () => {
+  const app=await connectedCamera({scene:async()=>({dispose(){}})});
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  await reviewTap(app);app.gestureStudio();await app.tick(100);await reviewTap(app);
+  assert.equal(app.get('photo-dialog').open,true);
+});
+
+test('the click following a result double tap cannot capture another photo', async () => {
+  const app=await connectedCamera({scene:async()=>({dispose(){}})});
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  await reviewTap(app);await app.tick(100);await reviewTap(app);
+  await app.get('capture-plane').emit('click');
+  assert.equal(app.get('photo-dialog').open,false);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  await app.tick(401);await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,2);
+  assert.equal(app.get('photo-dialog').open,true);
 });

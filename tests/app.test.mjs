@@ -10,7 +10,8 @@ function deferred(){let resolve;const promise=new Promise(yes=>{resolve=yes});re
 
 function harness(options={}){
   let now=1000,nextTimer=0,nextUrl=0,mediaRequests=0,stopped=0;
-  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),downloads=[],sceneCalls=[],messages=[];
+  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),downloads=[],sceneCalls=[],messages=[],studioBindings=[];
+  const studioControls={quality:2,primitive:0,dispose(){}};
   const opener={postMessage:(data,origin)=>messages.push({data,origin})};
   class Element{
     constructor(id='',tagName='DIV'){
@@ -47,14 +48,17 @@ function harness(options={}){
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},
     Viewfinder:class{clear(){}dispose(){}},
-    createDepthScene:async(host,blob,progress,signal)=>{sceneCalls.push({host,blob,progress,signal});return options.scene?options.scene(host,blob,progress,signal):{dispose(){}}},
+    attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
+    createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});return options.scene?{setPrimitiveLevel(){},...await options.scene(host,blob,progress,signal,quality)}:{dispose(){},setPrimitiveLevel(){}}},
     performance:{now:()=>now},Date:class extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}},
     setTimeout:(callback,delay=0)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)
   });
   vm.runInContext(application,context,{filename:'app.mjs'});
   async function tick(duration){now+=duration;for(const [id,timer]of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}await flush()}
   async function emit(name,details={}){for(const callback of events.get(name)??[])callback({type:name,...details});await flush()}
-  return {get:id=>elements.get(id),opener,sceneCalls,messages,urls,downloads,tick,emit,media,get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
+  function changeStudio(kind,level){studioControls[kind]=level;for(const binding of studioBindings)binding.onChange(kind,level)}
+  function gestureStudio(){for(const binding of studioBindings)binding.onGesture?.()}
+  return {get:id=>elements.get(id),opener,sceneCalls,studioControls,changeStudio,gestureStudio,messages,urls,downloads,tick,emit,media,get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
 }
 
 async function photoFromDevice(app,blob=new Blob(['camera-jpeg'],{type:'image/jpeg'})){
@@ -162,4 +166,29 @@ test('a camera permission response arriving after an incoming image is stopped',
   assert.equal(app.get('studio').className,'studio done');
   assert.equal(app.stopped,1);
   assert.equal(app.sceneCalls.length,1);
+});
+
+test('quality affects the next photo while primitive style updates without rebuilding the current scene',async()=>{
+  const styles=[],app=harness({scene:async()=>({dispose(){},setPrimitiveLevel(level){styles.push(level)}})});await photoFromDevice(app);
+  assert.equal(app.sceneCalls[0].quality,2);
+  assert.equal(styles.at(-1),0);
+  app.changeStudio('quality',3);app.changeStudio('primitive',2);
+  assert.equal(app.sceneCalls.length,1);
+  assert.equal(styles.at(-1),2);
+  await app.get('reset').emit('click');await photoFromDevice(app);
+  assert.equal(app.sceneCalls[1].quality,3);
+  assert.equal(styles.at(-1),2);
+});
+
+test('an unchanged rail gesture clears a pending result tap',async()=>{
+  const app=harness();await photoFromDevice(app);await tap(app);app.gestureStudio();await app.tick(100);await tap(app);
+  assert.equal(app.get('studio').className,'studio done');
+});
+
+test('a double-tap click cannot recapture until the next intentional camera gesture',async()=>{
+  const app=harness();await app.get('capture-plane').emit('click');await app.get('capture-plane').emit('click');
+  await tap(app);await app.tick(100);await tap(app);await app.get('capture-plane').emit('click');
+  assert.equal(app.get('studio').className,'studio camera');assert.equal(app.sceneCalls.length,1);
+  await app.tick(401);await app.get('capture-plane').emit('click');
+  assert.equal(app.get('studio').className,'studio done');assert.equal(app.sceneCalls.length,2);
 });

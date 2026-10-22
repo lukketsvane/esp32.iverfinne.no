@@ -31,13 +31,16 @@
 <button id="toggle-scene" class="access-control" aria-label="Vis foto" hidden></button>
 <a id="save-photo" class="access-control right" aria-label="Lagre foto" download="entropi.jpg"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4"/></svg></a>
 <button id="retry-scene" class="retry-plane" aria-label="Prøv 3D på nytt" hidden><span class="retry-mark" aria-hidden="true"></span></button>
-<p id="image-meta" class="sr"></p><p id="scene-status" class="sr" role="status" aria-live="polite"></p><p id="photo-feedback" class="notice" role="status"></p>
+<p id="scene-status" class="sr" role="status" aria-live="polite"></p><p id="photo-feedback" class="notice" role="status"></p>
 </dialog>
 <script>
 __ENTROPI_VIEWFINDER__
 </script>
 <script>
 __ENTROPI_SCENE__
+</script>
+<script>
+__ENTROPI_STUDIO__
 </script>
 <script>
 const $=id=>document.getElementById(id);
@@ -48,7 +51,8 @@ const sourceContext=source.getContext('2d');
 finder.source=source;
 const live=new Image();live.crossOrigin='anonymous';
 const streamUrl=new URL('/stream',location.href);streamUrl.port='81';
-let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',photoSaved=false,hasFrame=false,onboardingReady=false,galleryNext=null,galleryLoading=false,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,hostedWindow=null;
+let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',photoSaved=false,hasFrame=false,onboardingReady=false,galleryNext=null,galleryLoading=false,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,hostedWindow=null,captureAfter=0;
+const studioControls=attachStudioControls([studio,photoDialog],(kind,level)=>{if(kind==='primitive')sceneViewer?.setPrimitiveLevel(level)},()=>photoDialog.open||!onboarding.open&&!settingsDialog.open&&!galleryDialog.open,()=>{reviewDown=reviewTap=null});
 const storage={get(key){try{return localStorage.getItem(key)}catch{return null}},set(key,value){try{localStorage.setItem(key,value)}catch{}}};
 const reviewing=()=>photoDialog.open||galleryDialog.open;
 function notice(text,transient=false){clearTimeout(noticeTimer);$('notice').textContent=text;if(transient)noticeTimer=setTimeout(()=>{$('notice').textContent=''},4500)}
@@ -131,13 +135,12 @@ async function showPhoto(blob,name='',saved=false,visible=()=>true){
   clearScene();
   photoBlob=blob;photoUrl=url;photoSaved=saved;photoName=name||'entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.jpg';
   $('photo').src=url;$('save-photo').href=url;$('save-photo').download=photoName;$('thumbnail').src=url;$('thumbnail').hidden=false;$('gallery-icon').hidden=true;
-  $('image-meta').textContent=img.naturalWidth+' × '+img.naturalHeight+' / JPEG';
   $('photo-feedback').textContent=saved?'':'Ikkje lagra på minnekortet.';
   if(!photoDialog.open)photoDialog.showModal();
   void makeScene();
 }
 async function takePhoto(){
-  if(busy||connecting||!connected||onboarding.open||settingsDialog.open||reviewing())return;
+  if(busy||connecting||!connected||onboarding.open||settingsDialog.open||reviewing()||Date.now()<captureAfter)return;
   busy=true;stopStream();controls();notice('');
   try{
     const photo=await request('/capture?t='+Date.now(),'photo',20000),saved=photo.state==='ready'&&/^entropi-\d{20}\.jpg$/.test(photo.name);
@@ -176,10 +179,10 @@ function clearScene(){
   photoDialog.classList.remove('working','error');$('scene-progress').hidden=true;$('retry-scene').hidden=true;
   ++sceneGeneration;sceneTask?.abort();sceneTask=null;sceneViewer?.dispose();sceneViewer=null;
   sceneVisible=false;
-  $('scene').replaceChildren();$('scene').hidden=true;$('photo').hidden=false;$('image-meta').hidden=false;$('photo-feedback').hidden=false;$('toggle-scene').hidden=true;$('scene-status').textContent='';
+  $('scene').replaceChildren();$('scene').hidden=true;$('photo').hidden=false;$('photo-feedback').hidden=false;$('toggle-scene').hidden=true;$('scene-status').textContent='';
 }
 function showScene(visible){
-  sceneVisible=visible;$('scene').hidden=!visible;$('photo').hidden=visible;$('image-meta').hidden=visible;
+  sceneVisible=visible;$('scene').hidden=!visible;$('photo').hidden=visible;
   $('toggle-scene').setAttribute('aria-label',visible?'Vis foto':'Vis 3D');
   $('toggle-scene').innerHTML=visible?'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m5 16 4-4 4 4 3-3 4 4"/></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5v8l-9 5-9-5V8Zm0 9 9-4M12 12 3 8m9 4v9"/></svg>';
 }
@@ -190,9 +193,9 @@ async function makeScene(){
   try{
     const result=await createDepthScene($('scene'),photoBlob,update=>{
       if(generation===sceneGeneration){$('scene-progress').classList.toggle('indeterminate',update.percent===undefined);$('scene-progress-bar').style.width=(update.percent??26)+'%';$('scene-status').textContent=(update.phase.startsWith('loading')?'Lastar modell til telefonen':'Reknar djupn på telefonen')+(update.percent===undefined?' …':' · '+update.percent+' %')}
-    },task.signal);
+    },task.signal,studioControls.quality);
     if(generation!==sceneGeneration||!photoDialog.open){result.dispose();return}
-    photoDialog.classList.remove('working');$('scene-progress').hidden=true;sceneViewer=result;
+    photoDialog.classList.remove('working');$('scene-progress').hidden=true;sceneViewer=result;sceneViewer.setPrimitiveLevel(studioControls.primitive);
     $('toggle-scene').hidden=false;showScene(true);$('scene-status').textContent='';
   }catch(error){
     if(task.signal.aborted||generation!==sceneGeneration)return;
@@ -218,7 +221,7 @@ photoDialog.addEventListener('pointercancel',()=>{reviewDown=null;reviewTap=null
 photoDialog.addEventListener('pointerup',event=>{
   const down=reviewDown;reviewDown=null;
   if(!down||!event.isPrimary||Date.now()-down.time>350||Math.hypot(event.clientX-down.x,event.clientY-down.y)>12){reviewTap=null;return}
-  if(reviewTap&&Date.now()-reviewTap.time<350&&Math.hypot(event.clientX-reviewTap.x,event.clientY-reviewTap.y)<24){reviewTap=null;photoDialog.close()}
+  if(reviewTap&&Date.now()-reviewTap.time<350&&Math.hypot(event.clientX-reviewTap.x,event.clientY-reviewTap.y)<24){reviewTap=null;captureAfter=Date.now()+400;photoDialog.close()}
   else reviewTap={x:event.clientX,y:event.clientY,time:Date.now()};
 });
 
