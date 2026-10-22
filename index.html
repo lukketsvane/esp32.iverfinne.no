@@ -22,10 +22,13 @@
   <button id="capture-plane" class="capture-plane" type="button" aria-label="Opne kameraet"></button>
   <div id="scene" class="cloud hidden" role="img" aria-label="3D-scene. Dra for å rotere, klyp for å zoome. Dobbelttrykk for eit nytt foto."></div>
   <button id="retry" class="retry-plane" type="button" aria-label="Prøv igjen" hidden><i class="retry-mark" aria-hidden="true"></i></button>
-  <button id="reset" class="access-control" type="button" aria-label="Ta eit nytt foto" hidden><i class="plus" aria-hidden="true"></i></button>
-  <button id="save" class="access-control download" type="button" aria-label="Lagre originalfoto" hidden><i class="download-mark" aria-hidden="true"></i></button>
-  <a class="access-control device-link" href="/prepare/" aria-label="Kople til ESP32-kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9a14 14 0 0 1 18 0M6 12a9 9 0 0 1 12 0M9 15a4 4 0 0 1 6 0M12 19h.01"/></svg></a>
+  <button id="reset" class="access-control new-photo" type="button" aria-label="Ta eit nytt foto" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></button>
+  <button id="last-photo" class="access-control" type="button" aria-label="Opne siste foto" hidden><img id="thumbnail" alt=""></button>
+  <button id="save" class="access-control download" type="button" aria-label="Lagre originalfoto" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4"/></svg></button>
+  <button id="print" class="access-control print" type="button" aria-label="Skriv ut" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8V3h10v5M7 17H4V9h16v8h-3M7 14h10v7H7z"/></svg></button>
+  <a class="access-control device-link" href="/prepare/?camera" aria-label="Kople til ESP32-kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9a14 14 0 0 1 18 0M6 12a9 9 0 0 1 12 0M9 15a4 4 0 0 1 6 0M12 19h.01"/></svg></a>
   <span id="status" class="sr-only" role="status" aria-live="polite"></span>
+  <span id="print-status" class="print-status" role="status" aria-live="polite"></span>
 </main>
 <script type="module" src="/app.mjs"></script>
 </html>

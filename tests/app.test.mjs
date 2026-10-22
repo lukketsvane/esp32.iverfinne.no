@@ -42,7 +42,7 @@ function harness(options={}){
   Object.assign(elements.get('video'),{videoWidth:640,videoHeight:480,play:async()=>{},pause(){}});
   const document={hidden:options.hidden??false,referrer:options.referrer??'http://192.168.4.1/',getElementById:id=>elements.get(id),addEventListener(name,callback){if(!events.has(name))events.set(name,[]);events.get(name).push(callback)},createElement(tag){
     const element=new Element('',tag.toUpperCase());
-    if(tag==='canvas'){element.getContext=()=>({drawImage(){},getImageData:(x,y,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})});element.toBlob=(callback,type)=>callback(new Blob(['camera-jpeg'],{type}))}
+    if(tag==='canvas'){element.getContext=()=>({drawImage(){},getImageData:(x,y,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})});element.toBlob=(callback,type)=>options.toBlob?options.toBlob(callback,type):callback(new Blob(['camera-jpeg'],{type}))}
     return element;
   }};
   const media={getTracks:()=>[{stop(){stopped++}}]};
@@ -144,15 +144,15 @@ test('model failure keeps the original JPEG available for saving',async()=>{
   assert.equal(app.downloads[0].name,'entropi.jpg');
 });
 
-test('a double tap cancels processing and a late result cannot reopen the scene',async()=>{
+test('returning to the camera keeps pending splats without letting a late result reopen review',async()=>{
   const pending=deferred();let disposed=false;
   const app=harness({image:1,scene:()=>pending.promise});await photoFromDevice(app);
   assert.equal(app.get('studio').className,'studio working');
   await tap(app);await app.tick(100);await tap(app);
   assert.equal(app.get('studio').className,'studio camera');
-  assert.equal(app.sceneCalls[0].signal.aborted,true);
+  assert.equal(app.sceneCalls[0].signal.aborted,false);
   pending.resolve({dispose(){disposed=true}});await app.tick(0);
-  assert.equal(disposed,true);
+  assert.equal(disposed,false);
   assert.equal(app.get('studio').className,'studio camera');
 });
 
@@ -222,11 +222,12 @@ test('a pending splat can finish behind the photo without taking over the chosen
   app.changeStudio('image',1);await app.tick(0);assert.equal(app.sceneCalls.length,1);assert.equal(app.get('scene').classList.contains('hidden'),false);
 });
 
-test('rapid image switches share an in-flight calculation and resetting retires its late result',async()=>{
+test('rapid image switches share pending splats and reopening the same photo uses the cached result',async()=>{
   const pending=deferred();let disposed=false;const app=harness({scene:()=>pending.promise});await photoFromDevice(app);
   app.changeStudio('image',1);await app.tick(0);app.changeStudio('image',0);app.changeStudio('image',1);await app.tick(0);assert.equal(app.sceneCalls.length,1);
-  const url=app.get('photo').src;await app.get('reset').emit('click');assert.equal(app.sceneCalls[0].signal.aborted,true);assert.ok(app.revoked.includes(url));
-  pending.resolve({dispose(){disposed=true}});await app.tick(0);assert.equal(disposed,true);assert.equal(app.get('studio').className,'studio camera');
+  const url=app.get('photo').src;await app.get('reset').emit('click');assert.equal(app.sceneCalls[0].signal.aborted,false);assert.equal(app.revoked.includes(url),false);
+  pending.resolve({dispose(){disposed=true}});await app.tick(0);assert.equal(disposed,false);assert.equal(app.get('studio').className,'studio camera');
+  assert.equal(app.get('last-photo').hidden,false);await app.get('last-photo').emit('click');assert.equal(app.get('studio').className,'studio done');assert.equal(app.sceneCalls.length,1);assert.equal(app.get('photo').src,url);
 });
 
 test('holding a normal photo prints the monochrome photo snapshot without starting a model',async()=>{
@@ -275,4 +276,40 @@ test('a camera response received in the background cannot reactivate video or re
     if(failed)pending.reject(new Error('late camera error'));else pending.resolve(app.media);await app.tick(0);
     assert.equal(app.get('video').srcObject,null);assert.equal(app.get('studio').className,'studio camera');assert.equal(app.sceneCalls.length,0);assert.equal(app.stopped,failed?0:1);
   }
+});
+
+
+test('the explicit printer action prints once and becomes stale on returning to the camera',async()=>{
+  const app=harness();await photoFromDevice(app);assert.equal(app.get('print').hidden,false);
+  await app.get('print').emit('click');assert.equal(app.printCalls.length,1);assert.equal(app.printCalls[0].image.photo,true);
+  await app.get('reset').emit('click');assert.equal(app.get('print').hidden,true);assert.equal(app.printCalls[0].isCurrent(),false);
+});
+
+test('changing image type in the camera preserves live composition and defers inference',async()=>{
+  const app=harness();await photoFromDevice(app);await app.get('reset').emit('click');app.changeStudio('image',1);await app.tick(0);
+  assert.equal(app.get('studio').className,'studio camera');assert.equal(app.sceneCalls.length,0);assert.equal(app.get('finder').classList.contains('hidden'),false);
+  await app.get('last-photo').emit('click');assert.equal(app.sceneCalls.length,1);assert.equal(app.get('studio').className,'studio done');
+});
+
+test('camera permission failure arriving after reopening a saved result cannot replace it',async()=>{
+  const pending=deferred(),app=harness({media:()=>pending.promise});await photoFromDevice(app);await app.get('reset').emit('click');
+  await app.get('capture-plane').emit('click');await app.get('last-photo').emit('click');pending.reject(new Error('late camera failure'));await app.tick(0);
+  assert.equal(app.get('studio').className,'studio done');assert.equal(app.get('photo').hidden,false);
+});
+
+
+test('an abandoned photo encoding cannot replace the camera or overwrite a newer capture',async()=>{
+  const callbacks=[],app=harness({toBlob:callback=>callbacks.push(callback)});await photoFromDevice(app);const oldUrl=app.get('photo').src;
+  await app.get('reset').emit('click');await app.get('capture-plane').emit('click');await app.get('capture-plane').emit('click');assert.equal(callbacks.length,1);
+  await app.get('reset').emit('click');await app.get('capture-plane').emit('click');assert.equal(callbacks.length,2);
+  callbacks[0](new Blob(['old'],{type:'image/jpeg'}));await app.tick(0);assert.equal(app.get('studio').className,'studio working');assert.equal(app.get('photo').src,oldUrl);
+  callbacks[1](new Blob(['new'],{type:'image/jpeg'}));await app.tick(0);assert.equal(app.get('studio').className,'studio done');assert.notEqual(app.get('photo').src,oldUrl);
+});
+
+
+test('a failed new capture retries the camera rather than reprocessing the retained splat',async()=>{
+  const app=harness({image:1,toBlob:callback=>callback(null)});await photoFromDevice(app);const url=app.get('photo').src;
+  await app.get('reset').emit('click');await app.get('capture-plane').emit('click');await app.get('capture-plane').emit('click');assert.equal(app.get('studio').className,'studio error');
+  await app.get('retry').emit('click');assert.equal(app.get('studio').className,'studio camera');assert.equal(app.sceneCalls.length,1);assert.equal(app.get('photo').src,url);
+  await app.get('last-photo').emit('click');assert.equal(app.get('studio').className,'studio done');assert.equal(app.sceneCalls.length,1);
 });

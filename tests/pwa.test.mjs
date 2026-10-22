@@ -8,13 +8,14 @@ const read=path=>readFile(new URL(path,root),'utf8');
 const worker=await read('sw.js'),prepare=await read('prepare/sw.js'),registration=await read('pwa.mjs');
 
 function serviceWorker(source,network=async()=>new Response('online')){
-  const listeners=new Map(),stores=new Map(),deleted=[],calls=[],installed=[];let claimed=0,skipped=0;
+  const listeners=new Map(),stores=new Map(),deleted=[],calls=[],installed=[],timers=new Map();let claimed=0,skipped=0,timerId=0,now=100000;
   const cache=name=>{if(!stores.has(name))stores.set(name,new Map());const values=stores.get(name);return {addAll:async paths=>{for(const path of paths){installed.push(path);values.set(path,new Response('cached:'+path))}},match:async path=>values.get(path)?.clone()}};
-  const context={URL,Response,caches:{open:async name=>cache(name),keys:async()=>[...stores.keys()],delete:async name=>{deleted.push(name);return stores.delete(name)}},fetch:async request=>{calls.push(request);return network(request)},self:{location:{origin},clients:{claim:async()=>{claimed++}},skipWaiting:async()=>{skipped++},addEventListener:(name,listener)=>listeners.set(name,listener)}};
+  const context={URL,Response,AbortController,Date:{now:()=>now},setTimeout:(callback,delay)=>{const id=++timerId;timers.set(id,{callback,delay});return id},clearTimeout:id=>timers.delete(id),caches:{open:async name=>cache(name),keys:async()=>[...stores.keys()],delete:async name=>{deleted.push(name);return stores.delete(name)}},fetch:async(request,options)=>{calls.push(request);return network(request,options)},self:{location:{origin},clients:{claim:async()=>{claimed++}},skipWaiting:async()=>{skipped++},addEventListener:(name,listener)=>listeners.set(name,listener)}};
   vm.runInNewContext(source+'\nglobalThis.files=FILES;globalThis.cacheName=CACHE;',context);
   async function lifecycle(name){let promise;listeners.get(name)({waitUntil:value=>{promise=value}});await promise}
   async function request(path,options={}){let promise;listeners.get('fetch')({request:{url:new URL(path,origin).href,method:'GET',mode:'navigate',...options},respondWith:value=>{promise=value}});return promise?await promise:null}
-  return {files:Array.from(context.files),name:context.cacheName,stores,deleted,calls,installed,lifecycle,request,get claimed(){return claimed},get skipped(){return skipped}};
+  const expire=delay=>{for(const[id,timer]of[...timers])if(timer.delay===delay){timers.delete(id);timer.callback()}};
+  return {files:Array.from(context.files),name:context.cacheName,stores,deleted,calls,installed,lifecycle,request,expire,advance:delay=>{now+=delay},get claimed(){return claimed},get skipped(){return skipped}};
 }
 
 test('the app manifest starts the native camera and every entry has the same opaque app icons',async()=>{
@@ -40,8 +41,8 @@ test('the offline shell contains its complete small module graph without models,
 });
 
 test('root activation cleans only its own old caches and preserves preparation and model storage',async()=>{
-  const app=serviceWorker(worker);app.stores.set('entropi-app-old',new Map());app.stores.set('entropi-prepare-v5',new Map());app.stores.set('unrelated',new Map());
-  await app.lifecycle('install');await app.lifecycle('activate');assert.deepEqual(app.deleted,['entropi-app-old']);assert.equal(app.claimed,1);assert.ok(app.stores.has('entropi-prepare-v5'));assert.ok(app.stores.has('unrelated'));
+  const app=serviceWorker(worker);app.stores.set('entropi-app-old',new Map());app.stores.set('entropi-prepare-v6',new Map());app.stores.set('unrelated',new Map());
+  await app.lifecycle('install');await app.lifecycle('activate');assert.deepEqual(app.deleted,['entropi-app-old']);assert.equal(app.claimed,1);assert.ok(app.stores.has('entropi-prepare-v6'));assert.ok(app.stores.has('unrelated'));
 });
 
 test('navigation and unversioned modules prefer the network and fall back to the installed shell offline',async()=>{
@@ -58,11 +59,36 @@ test('a failed navigation can use the shell while private requests, photos and b
   assert.equal(await app.request('/app.mjs',{method:'POST'}),null);assert.equal(app.calls.length,1);
 });
 
+test('a stalled network yields the cached shell at the deadline and cancels its pending fetch',async()=>{
+  let signal;const app=serviceWorker(worker,(_,options)=>new Promise((_,reject)=>{signal=options.signal;signal.addEventListener('abort',()=>reject(signal.reason))}));await app.lifecycle('install');
+  const response=app.request('/');assert.equal(signal.aborted,false);app.expire(1500);
+  assert.equal(await(await response).text(),'cached:/');assert.equal(signal.aborted,true);
+});
+
+test('one timed-out navigation makes the whole cached module graph immediate for a bounded interval',async()=>{
+  let stalled=true;const app=serviceWorker(worker,(_,options)=>stalled?new Promise((_,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason))):new Response('online'));await app.lifecycle('install');
+  const first=app.request('/');app.expire(1500);assert.equal(await(await first).text(),'cached:/');
+  assert.equal(await(await app.request('/app.mjs')).text(),'cached:/app.mjs');assert.equal(await(await app.request('/vendor/scene.mjs')).text(),'cached:/vendor/scene.mjs');assert.equal(app.calls.length,1);
+  stalled=false;app.advance(10001);assert.equal(await(await app.request('/app.mjs')).text(),'online');assert.equal(app.calls.length,2);
+});
+
+test('a cache deadline never invents a first-install shell that was not saved',async()=>{
+  let respond,settled=false;const app=serviceWorker(worker,()=>new Promise(resolve=>{respond=resolve})),response=app.request('/').then(value=>{settled=true;return value});app.expire(1500);
+  for(let index=0;index<10;index++)await Promise.resolve();assert.equal(settled,false);respond(new Response('first install'));
+  assert.equal(await(await response).text(),'first install');
+});
+
 test('the more specific preparation worker keeps branding and registration available offline without deleting the root cache',async()=>{
-  const app=serviceWorker(prepare);app.stores.set('entropi-app-v1',new Map());app.stores.set('entropi-prepare-old',new Map());await app.lifecycle('install');await app.lifecycle('activate');
-  assert.deepEqual(app.deleted,['entropi-prepare-old']);assert.ok(app.stores.has('entropi-app-v1'));
+  const app=serviceWorker(prepare);app.stores.set('entropi-app-v3',new Map());app.stores.set('entropi-prepare-old',new Map());await app.lifecycle('install');await app.lifecycle('activate');
+  assert.deepEqual(app.deleted,['entropi-prepare-old']);assert.ok(app.stores.has('entropi-app-v3'));
   for(const path of ['/pwa.mjs','/manifest.webmanifest','/favicon.svg','/apple-touch-icon.png','/icons/icon-512.png'])assert.equal(await(await app.request(path)).text(),'cached:'+path);
   assert.equal(app.calls.length,0);
+});
+
+test('both offline entry paths include the native Wi-Fi QR image without disabling its callout',async()=>{
+  const png=await readFile(new URL('prepare/entropi-wifi.png',root)),html=await read('prepare/index.html');assert.equal(png.subarray(1,4).toString(),'PNG');
+  for(const source of[worker,prepare])assert.ok(serviceWorker(source).files.includes('/prepare/entropi-wifi.png'));
+  assert.match(html,/<img src="\/prepare\/entropi-wifi.png"[^>]+alt="ENTROPI Wi-Fi"/);assert.doesNotMatch(html,/touch-callout\s*:\s*none|user-select\s*:\s*none/);
 });
 
 test('registration is secure, idempotent and does not take over the specific preparation scope',async()=>{

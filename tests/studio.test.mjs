@@ -6,20 +6,20 @@ import vm from 'node:vm';
 const source=(await readFile(new URL('../vendor/studio.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
 
 function harness(options={}){
-  let now=1000,gestures=0;
-  const events=new Map(),changes=[];
+  let now=1000,gestures=0,nextTimer=0;
+  const events=new Map(),changes=[],timers=new Map();
   class Element{
-    constructor(tag='DIV'){this.tagName=tag.toUpperCase();this.className='';this.children=[];this.attributes=new Map();this.listeners=new Map();this.classes=new Set();this.classList={toggle:(name,active)=>{if(active??!this.classes.has(name))this.classes.add(name);else this.classes.delete(name)},contains:name=>this.classes.has(name)}}
+    constructor(tag='DIV'){this.tagName=tag.toUpperCase();this.className='';this.children=[];this.attributes=new Map();this.listeners=new Map();this.classes=new Set();this.classList={add:name=>this.classes.add(name),remove:name=>this.classes.delete(name),toggle:(name,active)=>{if(active??!this.classes.has(name))this.classes.add(name);else this.classes.delete(name)},contains:name=>this.classes.has(name)}}
     setAttribute(name,value){this.attributes.set(name,String(value))}
     getAttribute(name){return this.attributes.get(name)??null}
     appendChild(child){child.parent=this;this.children.push(child);return child}
     remove(){if(this.parent)this.parent.children=this.parent.children.filter(child=>child!==this)}
     addEventListener(name,listener){this.listeners.set(name,listener)}
-    closest(selector){return selector.startsWith('.')?this.className.split(/\s+/).includes(selector.slice(1))?this:null:this.tagName===selector.toUpperCase()?this:null}
+    closest(selector){for(const option of selector.split(',')){if(option.startsWith('.')?this.className.split(/\s+/).includes(option.slice(1)):this.tagName===option.toUpperCase())return this}return this.parent?.closest(selector)??null}
   }
   const document={head:new Element('HEAD'),createElement:tag=>new Element(tag)};
   const window={innerWidth:390,innerHeight:844,addEventListener(name,listener,options){if(!events.has(name))events.set(name,[]);events.get(name).push({listener,options})},removeEventListener(name,listener){events.set(name,(events.get(name)??[]).filter(item=>item.listener!==listener))}};
-  const roots=[new Element(),new Element()],context=vm.createContext({document,window,Date:{now:()=>now}});
+  const roots=[new Element(),new Element()],context=vm.createContext({document,window,Date:{now:()=>now},setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)});
   vm.runInContext(source,context);
   const controls=context.attachStudioControls(roots,(kind,level)=>changes.push([kind,level]),options.enabled??(()=>true),()=>gestures++);
   function emit(name,details={}){
@@ -27,68 +27,65 @@ function harness(options={}){
     for(const {listener} of events.get(name)??[]){listener(event);if(event.stopped)break}
     return event;
   }
-  return {roots,controls,changes,document,window,emit,advance:duration=>{now+=duration},get gestures(){return gestures}};
+  const rail=(kind,index=0)=>roots[index].children.find(element=>element.className.includes(kind+'-rail'));
+  function click(kind,index,details={}){const button=rail(kind).children[index];if(button.disabled)return;const event=emit('click',{pointerType:'mouse',target:button.children[0],...details});if(!event.prevented)button.listeners.get('click')()}
+  function advance(duration){now+=duration;for(const [id,timer]of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}}
+  return {roots,controls,changes,document,window,emit,rail,click,advance,get timers(){return timers.size},get gestures(){return gestures}};
 }
 
-test('both views start with two image types, photo selected and four primitive styles',()=>{
-  const app=harness();assert.equal(app.controls.image,0);assert.equal(app.controls.primitive,0);assert.equal('quality' in app.controls,false);
-  for(const root of app.roots){
-    const rails=root.children.filter(element=>element.tagName==='DIV'),ranges=root.children.filter(element=>element.tagName==='INPUT');
-    assert.equal(rails.length,2);assert.deepEqual(rails.map(rail=>rail.children.length),[2,4]);
-    assert.deepEqual(ranges.map(range=>range.value),['0','0']);assert.deepEqual(ranges.map(range=>range.max),['1','3']);
-    assert.equal(ranges[0].getAttribute('aria-label'),'Bilettype');assert.equal(ranges[0].getAttribute('aria-valuetext'),'Svart-kvittfoto');
-    assert.equal(rails[0].children[0].classList.contains('chosen'),true);assert.equal(rails[1].children[3].classList.contains('chosen'),true);
+test('photo starts with two accessible image buttons and no inert style choices',()=>{
+  const app=harness();assert.equal(app.controls.image,0);assert.equal(app.controls.primitive,0);assert.equal('quality'in app.controls,false);
+  for(let i=0;i<2;i++){
+    const image=app.rail('image',i),primitive=app.rail('primitive',i);assert.equal(image.children.length,2);assert.equal(primitive.children.length,4);
+    assert.equal(image.getAttribute('aria-label'),'Bilettype');assert.deepEqual(image.children.map(button=>button.getAttribute('aria-label')),['Svart-kvittfoto','Splats']);assert.deepEqual(image.children.map(button=>button.getAttribute('aria-pressed')),['true','false']);
+    assert.equal(image.children[0].children[0].tagName,'I');assert.equal(primitive.hidden,true);assert.ok(primitive.children.every(button=>button.disabled));assert.equal(app.roots[i].children.some(element=>element.tagName==='INPUT'),false);
   }
-  assert.equal(app.changes.length,0);
 });
 
-test('the right upper half selects photo and lower half selects splats independently of the left styles',()=>{
-  const app=harness();
-  assert.equal(app.emit('pointerdown',{clientX:4,clientY:100}).prevented,true);
-  assert.equal(app.controls.primitive,3);assert.equal(app.controls.image,0);
-  app.emit('pointerup',{clientX:4,clientY:100});app.emit('pointerdown',{clientX:386,clientY:800});
-  assert.equal(app.controls.image,1);assert.equal(app.controls.primitive,3);
-  app.emit('pointermove',{clientX:386,clientY:100});assert.equal(app.controls.image,0);
-  assert.deepEqual(app.changes,[['primitive',3],['image',1],['image',0]]);
+test('native mouse and keyboard button activation selects once without the touch capture handler',()=>{
+  const app=harness(),button=app.rail('image').children[1],target=button.children[0];
+  assert.equal(app.emit('pointerdown',{clientX:386,clientY:633,target}).prevented,false);assert.equal(app.emit('pointerup',{target}).prevented,false);app.click('image',1);assert.equal(app.controls.image,1);assert.deepEqual(app.changes,[['image',1]]);
+  app.click('image',0,{detail:0});assert.equal(app.controls.image,0);assert.deepEqual(app.changes,[['image',1],['image',0]]);assert.equal(app.gestures,2);
+  assert.equal(app.rail('image',1).children[0].getAttribute('aria-pressed'),'true');
 });
 
-test('the image rail has two stable half-screen choices and clamps its accessible range',()=>{
-  const app=harness();
-  for(const [y,expected] of [[0,0],[421,0],[422,1],[844,1]]){app.emit('pointerdown',{clientX:386,clientY:y});assert.equal(app.controls.image,expected);app.emit('pointerup',{clientX:386,clientY:y})}
-  const range=app.roots[0].children.find(element=>element.tagName==='INPUT');range.value='8';range.listeners.get('input')();assert.equal(app.controls.image,1);
-  range.value='-1';range.listeners.get('input')();assert.equal(app.controls.image,0);
-  assert.equal(app.roots[1].children.find(element=>element.tagName==='INPUT').value,'0');
+test('photo hides and disables style buttons while returning to splats restores the chosen style',()=>{
+  const app=harness();assert.equal(app.emit('pointerdown',{clientX:4,clientY:100}).prevented,false);app.click('primitive',0);assert.equal(app.changes.length,0);
+  app.click('image',1);app.click('primitive',1);assert.equal(app.controls.primitive,2);assert.equal(app.rail('primitive').hidden,false);app.click('image',0);app.click('primitive',3);assert.equal(app.controls.primitive,2);
+  app.click('image',1);for(let i=0;i<2;i++){assert.equal(app.rail('primitive',i).hidden,false);assert.equal(app.rail('primitive',i).children[1].getAttribute('aria-pressed'),'true');assert.ok(app.rail('primitive',i).children.every(button=>!button.disabled))}
 });
 
-test('an unchanged edge choice still clears a previous scene tap and consumes the ghost click',()=>{
-  const app=harness(),down=app.emit('pointerdown',{clientX:4,clientY:800});
-  assert.equal(app.gestures,1);assert.equal(app.changes.length,0);assert.equal(down.stopped,true);
-  app.emit('pointerup',{clientX:4,clientY:800});assert.equal(app.emit('click',{clientX:4,clientY:800}).stopped,true);
-  assert.equal(app.emit('click',{clientX:195,clientY:400}).prevented,false);
-  app.advance(500);assert.equal(app.emit('click',{clientX:4,clientY:800}).prevented,false);
+test('edge dragging retains two image zones and four independent style levels',()=>{
+  const app=harness();app.emit('pointerdown',{clientX:386,clientY:500});assert.equal(app.controls.image,1);app.emit('pointermove',{clientX:386,clientY:421});assert.equal(app.controls.image,0);app.emit('pointermove',{clientX:386,clientY:422});assert.equal(app.controls.image,1);app.emit('pointerup',{clientX:386});
+  app.emit('pointerdown',{clientX:4,clientY:100});assert.equal(app.controls.primitive,3);app.emit('pointermove',{clientX:4,clientY:800});assert.equal(app.controls.primitive,0);app.emit('pointerup',{clientX:4});
+  assert.deepEqual(app.changes,[['image',1],['image',0],['image',1],['primitive',3],['primitive',0]]);
 });
 
-test('a rail gesture consumes all fingers until they lift without leaking an orbit or pinch',()=>{
-  const app=harness();let viewerEvents=0;app.window.addEventListener('pointerdown',()=>viewerEvents++);
-  app.emit('pointerdown',{clientX:4,clientY:800});
-  assert.equal(app.emit('pointerdown',{pointerId:2,isPrimary:false,clientX:200}).stopped,true);
-  app.emit('pointermove',{pointerId:2,isPrimary:false,clientX:220,clientY:100});assert.equal(app.controls.primitive,0);
-  app.emit('pointerup',{clientX:4,clientY:800});assert.equal(app.emit('pointermove',{pointerId:2,isPrimary:false}).stopped,true);
-  app.emit('pointerup',{pointerId:2,isPrimary:false});
-  assert.equal(viewerEvents,0);assert.equal(app.emit('pointerdown').prevented,false);assert.equal(viewerEvents,1);
+test('an unchanged choice clears a pending scene tap and its icon feedback expires',()=>{
+  const app=harness();app.click('image',0);assert.equal(app.gestures,1);assert.equal(app.changes.length,0);
+  const hints=app.roots.map(root=>root.children.find(element=>element.tagName==='SPAN'));assert.ok(hints.every(hint=>hint.classList.contains('shown')));assert.match(hints[0].innerHTML,/<svg/);assert.doesNotMatch(hints[0].innerHTML,/Svart|Splats/);
+  app.advance(801);assert.ok(hints.every(hint=>!hint.classList.contains('shown')));app.rail('image').children[1].listeners.get('focus')();assert.equal(app.controls.image,0);assert.ok(hints[0].classList.contains('shown'));
 });
 
-test('mouse gestures, central touches, auxiliary controls and disabled screens retain their native interaction',()=>{
-  const app=harness(),button={closest:selector=>selector==='.access-control'?{}:null};
-  for(const details of [{pointerType:'mouse',clientX:4},{clientX:195},{clientX:4,target:button}])assert.equal(app.emit('pointerdown',details).prevented,false);
-  const disabled=harness({enabled:()=>false});assert.equal(disabled.emit('pointerdown',{clientX:4}).prevented,false);
-  assert.equal(app.gestures,0);assert.equal(disabled.gestures,0);
+test('an edge scrub consumes extra fingers and ghost clicks without blocking explicit buttons',()=>{
+  const app=harness();let viewerEvents=0;app.window.addEventListener('pointerdown',()=>viewerEvents++);app.emit('pointerdown',{clientX:386,clientY:500});assert.equal(app.emit('pointerdown',{pointerId:2,isPrimary:false,clientX:200}).stopped,true);
+  app.emit('pointerup',{clientX:386});assert.equal(app.emit('pointermove',{pointerId:2,isPrimary:false}).stopped,true);app.emit('pointerup',{pointerId:2,isPrimary:false});assert.equal(viewerEvents,0);
+  assert.equal(app.emit('click',{clientX:386}).prevented,true);app.click('image',0,{clientX:386});assert.equal(app.controls.image,0);assert.equal(app.emit('click',{clientX:195}).prevented,false);app.advance(500);assert.equal(app.emit('click',{clientX:386}).prevented,false);assert.equal(app.emit('pointerdown').prevented,false);
 });
 
-test('cancel and disposal release the controls and preserve accessible keyboard selection',()=>{
-  const app=harness(),range=app.roots[0].children.find(element=>element.tagName==='INPUT');
-  range.value='1';range.listeners.get('input')();assert.equal(app.controls.image,1);assert.equal(range.getAttribute('aria-valuetext'),'Splats');
-  app.emit('pointerdown',{clientX:4});app.emit('pointercancel',{clientX:4});assert.equal(app.emit('pointerdown').prevented,false);
-  app.controls.dispose();assert.equal(app.document.head.children.length,0);assert.equal(app.roots[0].children.length,0);assert.equal(app.roots[1].children.length,0);
-  assert.equal(app.emit('pointerdown',{clientX:4}).prevented,false);
+test('a native rail button keeps its click while consuming a second finger until release',()=>{
+  const app=harness(),target=app.rail('image').children[1];assert.equal(app.emit('pointerdown',{target,clientX:386}).prevented,false);
+  assert.equal(app.emit('pointerdown',{pointerId:2,isPrimary:false}).stopped,true);assert.equal(app.emit('pointermove',{pointerId:2,isPrimary:false}).stopped,true);
+  assert.equal(app.emit('pointerup',{target}).prevented,false);app.click('image',1);assert.deepEqual(app.changes,[['image',1]]);
+  assert.equal(app.emit('pointermove',{pointerId:2,isPrimary:false}).stopped,true);app.emit('pointerup',{pointerId:2,isPrimary:false});assert.equal(app.emit('pointerdown').prevented,false);
+});
+
+test('mouse movement, central touches, auxiliary controls and disabled contexts remain native',()=>{
+  const app=harness(),button={closest:selector=>selector.includes('.access-control')?{}:null};for(const details of [{pointerType:'mouse',clientX:4},{clientX:195},{clientX:386,target:button}])assert.equal(app.emit('pointerdown',details).prevented,false);
+  const disabled=harness({enabled:()=>false});assert.equal(disabled.emit('pointerdown',{clientX:386}).prevented,false);disabled.click('image',1);assert.equal(disabled.controls.image,0);assert.equal(disabled.gestures,0);
+});
+
+test('cancel and disposal release gesture ownership, feedback timers and every mounted control',()=>{
+  const app=harness();app.emit('pointerdown',{clientX:386,clientY:500});app.emit('pointercancel',{clientX:386});assert.equal(app.emit('pointerdown').prevented,false);assert.equal(app.timers,1);
+  app.controls.dispose();assert.equal(app.timers,0);assert.equal(app.document.head.children.length,0);assert.ok(app.roots.every(root=>root.children.length===0));assert.equal(app.emit('pointerdown',{clientX:386}).prevented,false);
 });
