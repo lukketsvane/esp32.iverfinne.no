@@ -253,6 +253,13 @@ test('a late photo decode cannot undo a reset or start inference',async()=>{
   await app.get('reset').emit('click');pending.resolve();await app.tick(0);assert.equal(app.get('studio').className,'studio camera');assert.equal(app.sceneCalls.length,0);assert.ok(app.revoked.includes(url));
 });
 
+test('retrying an unreadable photo returns to the camera and the next photo needs no model',async()=>{
+  let reads=0;const app=harness({decode:()=>{if(++reads===1)throw new Error('unreadable JPEG')}});
+  await photoFromDevice(app);const failedUrl=app.get('photo').src;assert.equal(app.get('studio').className,'studio error');
+  await app.get('retry').emit('click');assert.equal(app.get('studio').className,'studio camera');assert.equal(app.mediaRequests,1);assert.ok(app.revoked.includes(failedUrl));
+  await app.get('capture-plane').emit('click');assert.equal(app.get('studio').className,'studio done');assert.equal(app.sceneCalls.length,0);
+});
+
 test('backgrounding releases the camera and returning resumes it without recapturing',async()=>{
   const app=harness();await app.get('capture-plane').emit('click');await app.visibility(true);assert.equal(app.stopped,1);assert.equal(app.mediaRequests,1);
   await app.visibility(false);assert.equal(app.mediaRequests,2);assert.equal(app.sceneCalls.length,0);assert.equal(app.get('studio').className,'studio camera');
