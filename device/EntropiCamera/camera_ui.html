@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="nn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Entropi · kamera</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;background:#000;color:#eee;font-synthesis:none;font-weight:400}
+*{box-sizing:border-box}body{margin:0}button,input,a{font:inherit;-webkit-tap-highlight-color:transparent}button,a{touch-action:manipulation}button{color:inherit;cursor:pointer}button:disabled{cursor:default;opacity:.35}button:focus-visible,a:focus-visible,input:focus-visible{outline:1px solid #ddd;outline-offset:5px}button{border:0}svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}[hidden]{display:none!important}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.studio{position:fixed;inset:0;overflow:hidden;isolation:isolate;background:#000;color:#fff;touch-action:none}.finder{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:clamp(104px,30vw,148px);aspect-ratio:2/3;background:#000;pointer-events:none;overflow:hidden;box-shadow:0 0 0 1px #ffffff18;transition:opacity .3s}.finder canvas{width:100%;height:100%;display:block}.cross{position:absolute;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);opacity:.4}.cross:before,.cross:after{content:'';position:absolute;background:#fff}.cross:before{left:8px;top:0;width:1px;height:16px}.cross:after{left:0;top:8px;width:16px;height:1px}.capture-plane{position:absolute;inset:70px 24px 92px;width:calc(100% - 48px);background:none;padding:0;cursor:crosshair}.progress{position:absolute;bottom:0;left:0;right:0;height:1px;background:#ffffff12;overflow:hidden}.progress i{display:block;height:1px;width:26%;background:#aaa;animation:flow 1.8s linear infinite}.topbar{position:absolute;top:max(16px,env(safe-area-inset-top));left:max(18px,env(safe-area-inset-left));right:max(18px,env(safe-area-inset-right));display:flex;align-items:center;justify-content:space-between;pointer-events:none}.topbar>*{pointer-events:auto}.brand{font-size:10px;letter-spacing:.26em;color:#888;font-weight:500}.icon{display:grid;place-items:center;width:44px;height:44px;background:none;color:#999;border-radius:50%}.icon:hover{color:#fff;background:#ffffff08}.connection{display:flex;align-items:center;gap:8px;padding:0 12px;background:none;min-height:44px;color:#9b9b9b;font-size:11px}.dot{width:4px;height:4px;border-radius:50%;background:#777}.connected .dot{background:#b0c4b2}.reconnecting .dot{animation:pulse 1.5s infinite}.bottom{position:absolute;left:24px;right:24px;bottom:max(22px,env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr 64px 1fr;align-items:center}.bottom .icon:last-child{justify-self:end}.shutter{width:48px;height:48px;justify-self:center;border:1px solid #ffffff30;border-radius:50%;padding:6px;background:none;transition:border-color .2s}.shutter:after{content:'';display:block;width:100%;height:100%;border:1px solid #ffffff90;border-radius:50%;transition:background .2s}.shutter:hover:after,.shutter:active:after{border-color:#fff}.thumb{width:28px;height:28px;object-fit:cover;border-radius:3px;opacity:.7}.notice{position:absolute;top:calc(50% + 130px);left:50%;transform:translateX(-50%);width:calc(100% - 70px);max-width:310px;text-align:center;font-size:12px;line-height:1.7;color:#aaa;pointer-events:none}.flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}.flash.fire{animation:flash .25s ease-out}.sheet{position:fixed;inset:auto 0 0;width:min(100% - 20px,460px);max-height:calc(100dvh - 40px - env(safe-area-inset-top));margin:0 auto 10px;padding:0;border:1px solid #ffffff18;border-radius:24px;background:#111;color:#eee;overflow:auto;box-shadow:0 20px 100px #000}.sheet::backdrop{background:#000b;backdrop-filter:blur(12px)}.sheet-content{padding:10px 26px max(28px,env(safe-area-inset-bottom))}.handle{width:30px;height:3px;background:#444;border-radius:4px;margin:0 auto 20px}.sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:23px}.eyebrow{font-size:10px;line-height:1.4;letter-spacing:.2em;text-transform:uppercase;color:#969696}.sheet h1,.sheet h2{font-size:30px;font-weight:400;letter-spacing:-.045em;line-height:1.1;margin:0 0 15px}.sheet p{font-size:14px;line-height:1.7;color:#9a9a9a;margin:0 0 24px}.sheet p strong{color:#ccc;font-weight:400}.primary{width:100%;min-height:52px;display:flex;align-items:center;justify-content:center;gap:10px;border-radius:14px;background:transparent;color:#ccc;border:1px solid #ffffff28;font-size:14px;font-weight:400;text-decoration:none}.primary svg{width:17px}.quiet{min-height:44px;background:none;color:#aaa;font-size:12px;padding:10px 4px}.network{border-top:1px solid #ffffff14;border-bottom:1px solid #ffffff14;margin:25px 0;display:grid;grid-template-columns:1fr auto;align-items:center;gap:12px;padding:18px 0}.network small{display:block;font-size:10px;color:#999;margin-bottom:7px}.network strong{font-size:15px;letter-spacing:.12em;font-weight:400}.network code{font-size:13px;color:#bbb;font-family:inherit;letter-spacing:.06em;user-select:all}.network .quiet{border:1px solid #ffffff20;border-radius:10px;padding:9px 13px;align-self:end}.steps{display:flex;gap:5px}.steps i{height:2px;width:18px;background:#333}.steps i.active{background:#ddd}.diagram{height:145px;display:flex;align-items:center;justify-content:center;margin:0 0 20px}.diagram svg{width:130px;height:105px;stroke:#888;stroke-width:.8}.diagram .light{stroke:#eee}.footnote{text-align:center;margin:14px 0 0!important;font-size:11px!important;line-height:1.6!important;color:#888!important}.feedback{font-size:12px;line-height:1.6;color:#bbb;min-height:20px;margin:0 0 14px}.setting{padding:22px 0;border-top:1px solid #ffffff12}.setting label,.setting-label{display:block;font-size:13px;margin:0 0 13px}.segmented{display:flex;padding:3px;border:1px solid #ffffff14;border-radius:12px;gap:3px}.segmented button{flex:1;min-height:44px;border-radius:8px;background:none;color:#999;font-size:12px}.segmented button[aria-pressed=true]{background:#303030;color:#fff}.setting small{display:block;font-size:11px;line-height:1.6;color:#888;margin-top:12px}.range{display:flex;align-items:center;gap:16px;color:#999;font-size:13px}.range input{width:100%;min-height:44px;accent-color:#ccc}.link-row{display:flex;align-items:center;justify-content:space-between;width:100%;background:none;min-height:54px;border-top:1px solid #ffffff12;font-size:13px;text-align:left;color:#aaa}.review{position:fixed;inset:0;margin:auto;width:100%;height:100%;max-width:none;max-height:none;padding:0;border:0;background:#000;color:#eee}.review::backdrop{background:#000}.review-inner{display:flex;flex-direction:column;height:100dvh;padding:max(14px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));gap:20px}.review header{display:flex;align-items:center;justify-content:space-between}.review figure{min-height:0;flex:1;display:flex;align-items:center;justify-content:center;margin:0}.review img{display:block;max-width:100%;max-height:100%;object-fit:contain}.review footer{margin:auto auto 0;width:min(100%,420px)}.review-actions{display:flex;gap:24px;align-items:center;justify-content:center}.review-actions>.primary{flex:1}.review-actions .quiet{min-width:95px}.image-meta{font-size:10px;color:#999;letter-spacing:.1em;text-align:center;margin:0 0 20px}.scene{position:absolute;inset:0;touch-action:none}.scene canvas{display:block;width:100%;height:100%}.review figure{position:relative}.review .footnote{max-width:330px;margin:14px auto 0!important}.status-label{color:#aaa}.camera-help{position:absolute;inset:0;display:grid;place-content:center;background:#000;z-index:-1}.studio:not(.connected) .finder{opacity:.3}.studio.connected .camera-help{display:none}
+@keyframes flow{from{transform:translateX(-110%)}to{transform:translateX(490%)}}@keyframes pulse{50%{opacity:.3}}@keyframes flash{0%{opacity:.16}100%{opacity:0}}@media(min-width:600px){.sheet{margin-bottom:28px}.topbar{left:32px;right:32px;top:22px}.bottom{left:36px;right:36px;bottom:28px}.sheet-content{padding:10px 32px 32px}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}@media(max-height:550px){.diagram{display:none}.sheet-head{margin-bottom:10px}.sheet p{margin-bottom:12px}.network{margin:12px 0;padding:10px 0}.sheet h1{font-size:25px}}
+</style>
+</head>
+<body>
+<main id="studio" class="studio">
+<div class="finder" aria-hidden="true"><canvas id="finder"></canvas><span class="cross"></span><div id="progress" class="progress" hidden><i></i></div></div>
+<button id="capture-plane" class="capture-plane" aria-label="Ta bilete" disabled></button>
+<div class="topbar"><span class="brand">ENTROPI</span><button id="connection" class="connection" aria-label="Tilkopling og Wi-Fi"><span class="dot"></span><span id="connection-label">Koplar til</span></button></div>
+<p id="notice" class="notice" role="status" aria-live="polite"></p>
+<div class="bottom"><button id="last-photo" class="icon" aria-label="Opne bilete"><svg id="gallery-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m5 16 4-4 4 4 3-3 4 4"/><circle cx="15" cy="9" r="1"/></svg><img id="thumbnail" class="thumb" alt="" hidden></button><button id="capture" class="shutter" aria-label="Ta bilete" disabled></button><button id="settings" class="icon" aria-label="Innstillingar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></button></div>
+<div id="flash" class="flash"></div>
+</main>
+<dialog id="onboarding" class="sheet" aria-labelledby="onboarding-title"><div class="sheet-content"><div class="handle"></div><div class="sheet-head"><span class="eyebrow">ENTROPI / TILKOPLING</span><div class="steps" aria-hidden="true"><i id="step-one" class="active"></i><i id="step-two"></i></div></div><div class="diagram" aria-hidden="true"><svg viewBox="0 0 130 105"><path d="M18 36h52v42H18zM25 36v-5h13v5"/><circle cx="44" cy="57" r="12"/><circle cx="44" cy="57" r="5"/><rect x="92" y="23" width="24" height="57" rx="5"/><path d="M100 74h8M75 39q12 11 0 22M80 33q19 17 0 34"/><path class="light" d="M104 44v14m-7-7h14"/></svg></div><h1 id="onboarding-title">Kameraet ditt.<br>Rett her.</h1><p id="onboarding-copy">Slå på kameraet. Vel <strong>ENTROPI</strong> under Wi-Fi i Innstillingar på telefonen. Bli på nettet sjølv om det står «utan internett».</p><div id="network-details" class="network"><div><small>Wi-Fi</small><strong>ENTROPI</strong></div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8a15 15 0 0 1 18 0M6 12a10 10 0 0 1 12 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="20" r=".5"/></svg><div><small>Passord</small><code id="password">entropi2026</code></div><button id="copy-password" class="quiet">Kopier</button></div><div id="onboarding-feedback" class="feedback" role="status" aria-live="polite"></div><button id="onboarding-next" class="primary">Eg er tilkopla <span aria-hidden="true">↗</span></button><button id="onboarding-gallery" class="quiet" hidden>Opne lagra bilete</button><p id="onboarding-note" class="footnote">Opne 192.168.4.1 i Safari for å lagre bilete.<br>Alt skjer direkte mellom telefonen og kameraet.</p></div></dialog>
+<dialog id="settings-dialog" class="sheet" aria-labelledby="settings-title"><div class="sheet-content"><div class="handle"></div><div class="sheet-head"><span class="eyebrow">KAMERA</span><button class="icon" data-close="settings-dialog" aria-label="Lukk innstillingar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><h2 id="settings-title">Berre det du treng.</h2><p id="device-health" role="status"></p><p id="storage-status" role="status"></p><div class="setting"><span class="setting-label" id="quality-label">Søkjar</span><div id="quality" class="segmented" role="group" aria-labelledby="quality-label"><button data-size="6" aria-pressed="false">Rask</button><button data-size="10" aria-pressed="false">Vanleg</button></div><small id="quality-description">Rask søkjar, uavhengig av fotoet.</small></div><div class="setting"><span class="setting-label" id="photo-quality-label">Foto</span><div id="photo-quality" class="segmented" role="group" aria-labelledby="photo-quality-label"><button data-photo-size="6" aria-pressed="false">320 × 240</button><button data-photo-size="10" aria-pressed="false">640 × 480</button><button data-photo-size="15" aria-pressed="false">1600 × 1200</button></div><small>Fotoet blir teke i vald oppløysing. Søkjaren held fram etterpå.</small></div><div class="setting"><label for="brightness">Lysstyrke</label><div class="range"><span aria-hidden="true">−</span><input id="brightness" type="range" min="-2" max="2" step="1" value="0"><span aria-hidden="true">+</span><output id="brightness-value" for="brightness">0</output></div></div><p id="settings-feedback" class="feedback" role="status"></p><button id="wifi-help" class="link-row">Wi-Fi og tilkopling <span aria-hidden="true">↗</span></button><p class="footnote">Søkjaren er i svart-kvitt. Fotoet beheld originalfargane.</p></div></dialog>
+<dialog id="gallery-dialog" class="sheet" aria-labelledby="gallery-title"><div class="sheet-content"><div class="handle"></div><div class="sheet-head"><span class="eyebrow">PÅ KAMERAET</span><button id="gallery-close" class="icon" aria-label="Lukk bilete"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><h2 id="gallery-title">Augneblikka dine.</h2><p id="gallery-feedback" role="status" aria-live="polite"></p><button id="gallery-latest" class="link-row" hidden>Siste opna bilete <span aria-hidden="true">↗</span></button><div id="gallery-list"></div><button id="gallery-more" class="quiet" hidden>Vis fleire</button></div></dialog>
+<dialog id="photo-dialog" class="review" aria-label="Biletet ditt"><div class="review-inner"><header><button id="close-photo" class="icon" aria-label="Tilbake til kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 5-7 7 7 7"/></svg></button></header><figure><img id="photo" alt="Biletet du tok"><div id="scene" class="scene" aria-label="Djupnebasert 3D" hidden></div></figure><footer><p id="image-meta" class="sr"></p><div class="review-actions"><button id="toggle-scene" class="icon" aria-label="Vis foto" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m5 16 4-4 4 4 3-3 4 4"/></svg></button><a id="save-photo" class="icon" aria-label="Lagre foto" download="entropi.jpg"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4"/></svg></a></div><p id="scene-status" class="footnote" role="status" aria-live="polite"></p><p id="photo-feedback" class="footnote" role="status"></p></footer></div></dialog>
+<script>
+__ENTROPI_VIEWFINDER__
+</script>
+<script>
+__ENTROPI_SCENE__
+</script>
+<script>
+const $=id=>document.getElementById(id);
+const studio=$('studio'),onboarding=$('onboarding'),settingsDialog=$('settings-dialog'),photoDialog=$('photo-dialog'),galleryDialog=$('gallery-dialog');
+const finder=new Viewfinder($('finder')),source=document.createElement('canvas');
+source.width=320;source.height=240;
+const sourceContext=source.getContext('2d');
+finder.source=source;
+const live=new Image();live.crossOrigin='anonymous';
+const streamUrl=new URL('/stream',location.href);streamUrl.port='81';
+let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',photoSaved=false,hasFrame=false,onboardingReady=false,galleryNext=null,galleryLoading=false,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,hostedWindow=null;
+const storage={get(key){try{return localStorage.getItem(key)}catch{return null}},set(key,value){try{localStorage.setItem(key,value)}catch{}}};
+const reviewing=()=>photoDialog.open||galleryDialog.open;
+function notice(text,transient=false){clearTimeout(noticeTimer);$('notice').textContent=text;if(transient)noticeTimer=setTimeout(()=>{$('notice').textContent=''},4500)}
+function controls(){
+  const disabled=busy||!connected||connecting;
+  for(const id of ['capture','capture-plane','brightness'])$(id).disabled=disabled;
+  for(const b of document.querySelectorAll('[data-size]'))b.disabled=disabled||(Number(b.dataset.size)!==6&&!cameraStatus?.psram);
+  for(const b of document.querySelectorAll('[data-photo-size]'))b.disabled=disabled||(Number(b.dataset.photoSize)!==6&&!cameraStatus?.psram);
+  $('last-photo').disabled=busy||connecting;$('progress').hidden=!busy;
+  studio.classList.toggle('connected',connected);studio.classList.toggle('reconnecting',connecting);
+  $('connection-label').textContent=connected?'Tilkopla':connecting?'Koplar til':deviceStatus?'Kamera ikkje klart':'Fråkopla';
+}
+async function request(path,type='json',timeout=8000){
+  const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),timeout);
+  try{
+    const response=await fetch(path,{cache:'no-store',signal:abort.signal});
+    if(!response.ok)throw new Error('Kameraet svarte ikkje');
+    if(type==='json')return await response.json();
+    if(type==='photo')return {blob:await response.blob(),name:response.headers.get('X-Photo-Name')||'',state:response.headers.get('X-Storage-State')||'error',error:response.headers.get('X-Storage-Error')||''};
+    return type==='blob'?await response.blob():null;
+  }finally{clearTimeout(timer)}
+}
+function validStatus(s){return s&&typeof s.camera_ready==='boolean'&&typeof s.stream_ready==='boolean'&&typeof s.psram==='boolean'&&['ready','missing','full','error'].includes(s.storage?.state)&&typeof s.storage.error==='string'&&(!s.camera_ready||([6,10].includes(s.framesize)&&[6,10,15].includes(s.photo_framesize)&&Number.isInteger(s.brightness)&&s.brightness>=-2&&s.brightness<=2))}
+function storageMessage(s){return s?.state==='ready'?'Foto blir lagra automatisk på minnekortet.':s?.state==='full'?'Minnekortet er fullt. Lagre foto på telefonen.':s?.state==='missing'?'Minnekort manglar. Lagre foto på telefonen.':'Kan ikkje lagre på minnekortet.'+(s?.error?' '+s.error:'')}
+function healthMessage(s){return !s?'Ser etter kameraet …':s.camera_ready&&s.stream_ready?'Kameraet er klart.':(s.last_error||'Kameraet er ikkje klart.')+(s.recovering?' Prøver å starte kameraet på nytt …':'')}
+function updateSettings(){
+  $('device-health').textContent=healthMessage(deviceStatus);$('storage-status').textContent=storageMessage(deviceStatus?.storage);
+  if(!cameraStatus)return;
+  for(const [selector,key] of [['[data-size]','framesize'],['[data-photo-size]','photo_framesize']])for(const b of document.querySelectorAll(selector))b.setAttribute('aria-pressed',String(Number(key==='framesize'?b.dataset.size:b.dataset.photoSize)===cameraStatus[key]));
+  $('brightness').value=cameraStatus.brightness;$('brightness-value').value=cameraStatus.brightness;
+  $('quality-description').textContent=cameraStatus.framesize===6?'320 × 240 · raskast søkjar':'640 × 480 · meir detalj i søkjaren';
+}
+function acceptStatus(status){deviceStatus=status;cameraStatus=status.camera_ready?status:null;updateSettings();controls()}
+function stopStream(){streaming=false;clearInterval(frameTimer);live.removeAttribute('src');finder.active=!document.hidden}
+function startStream(){
+  if(streaming||document.hidden||reviewing()||busy||!cameraStatus)return;
+  streaming=true;finder.active=true;live.src=streamUrl.href+'?t='+Date.now();
+  frameTimer=setInterval(()=>{if(!streaming||!live.naturalWidth)return;try{sourceContext.drawImage(live,0,0,source.width,source.height);hasFrame=true}catch{loseConnection('Kamerabiletet kunne ikkje visast.')}},50);
+}
+function resumeStream(){if(document.hidden||reviewing())return;if(connected)startStream();else connect()}
+function scheduleReconnect(){clearTimeout(retryTimer);if(document.hidden||reviewing())return;retryTimer=setTimeout(connect,Math.min(30000,1500*2**Math.min(retryCount++,4)))}
+function loseConnection(message){connected=false;cameraStatus=null;stopStream();controls();notice(message);if(onboarding.open){renderOnboarding();$('onboarding-feedback').textContent=message}scheduleReconnect()}
+function renderOnboarding(){onboardingReady=connected&&hasFrame;$('step-one').classList.toggle('active',!onboardingReady);$('step-two').classList.toggle('active',onboardingReady);$('onboarding-title').innerHTML=onboardingReady?'Du er inne.':'Kameraet ditt.<br>Rett her.';$('onboarding-copy').innerHTML=onboardingReady?'Kameraet sender bilete. Trykk på søkjaren eller den vesle utløysaren for å fange eit augeblikk.':'Slå på kameraet. Vel <strong>ENTROPI</strong> under Wi-Fi i Innstillingar på telefonen. Bli på nettet sjølv om det står «utan internett».';$('network-details').hidden=onboardingReady;$('onboarding-next').innerHTML=onboardingReady?'Opne kameraet <span aria-hidden="true">↗</span>':'Eg er tilkopla <span aria-hidden="true">↗</span>';$('onboarding-gallery').hidden=!deviceStatus;$('onboarding-feedback').textContent=onboardingReady?'Wi-Fi og kamerabilete er klare.':deviceStatus?healthMessage(deviceStatus):'';$('onboarding-note').innerHTML=onboardingReady?'Opna dette seg i Wi-Fi-vindauget?<br>Bruk 192.168.4.1 i Safari for å lagre bilete.':'Opne 192.168.4.1 i Safari for å lagre bilete.<br>Alt skjer direkte mellom telefonen og kameraet.'}
+function showOnboarding(){settingsDialog.close();renderOnboarding();if(!onboarding.open)onboarding.showModal()}
+async function connect(){
+  if(connecting||busy||document.hidden||reviewing())return;
+  clearTimeout(retryTimer);connecting=true;connected=false;controls();
+  const generation=++connectGeneration;stopStream();hasFrame=false;
+  try{
+    const status=await request('/status');
+    if(generation!==connectGeneration||document.hidden||reviewing())return;
+    if(!validStatus(status))throw new Error('Ugyldig kamerastatus');
+    acceptStatus(status);
+    if(!status.camera_ready||!status.stream_ready)throw new Error(healthMessage(status));
+    startStream();const started=Date.now();
+    while(!hasFrame&&Date.now()-started<8000&&generation===connectGeneration&&!document.hidden&&!reviewing())await new Promise(r=>setTimeout(r,100));
+    if(generation!==connectGeneration||document.hidden||reviewing())return;
+    if(!hasFrame)throw new Error('Ingen kamerabilete. Prøver igjen …');
+    connected=true;retryCount=0;notice('');if(onboarding.open)renderOnboarding();
+  }catch(error){if(generation===connectGeneration)loseConnection(error.name==='AbortError'?'Ingen kontakt. Kontroller Wi-Fi og straum.':error.message)}
+  finally{if(generation===connectGeneration){connecting=false;controls()}}
+}
+async function changeSetting(name,value){
+  if(busy||connecting||!connected)return;
+  busy=true;stopStream();controls();$('settings-feedback').textContent='';
+  try{
+    await request('/control?var='+encodeURIComponent(name)+'&val='+value,'empty');
+    const status=await request('/status');
+    if(!validStatus(status)||!status.camera_ready||status[name]!==value)throw new Error();
+    acceptStatus(status);
+  }catch{updateSettings();$('settings-feedback').textContent='Innstillinga vart ikkje stadfesta. Prøv igjen.'}
+  finally{busy=false;controls();resumeStream()}
+}
+async function showPhoto(blob,name='',saved=false,visible=()=>true){
+  if(blob.type!=='image/jpeg'||!blob.size)throw new Error('Ugyldig bilete');
+  const url=URL.createObjectURL(blob),img=new Image();img.src=url;
+  try{await img.decode();if(!img.naturalWidth||!img.naturalHeight)throw new Error('Ugyldig bilete')}catch(error){URL.revokeObjectURL(url);throw error}
+  if(!visible()){URL.revokeObjectURL(url);return}
+  if(photoUrl)URL.revokeObjectURL(photoUrl);
+  clearScene();
+  photoBlob=blob;photoUrl=url;photoSaved=saved;photoName=name||'entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.jpg';
+  $('photo').src=url;$('save-photo').href=url;$('save-photo').download=photoName;$('thumbnail').src=url;$('thumbnail').hidden=false;$('gallery-icon').hidden=true;
+  $('image-meta').textContent=img.naturalWidth+' × '+img.naturalHeight+' / JPEG';
+  $('photo-feedback').textContent=saved?'':'Ikkje lagra på minnekortet.';
+  if(!photoDialog.open)photoDialog.showModal();
+  void makeScene();
+}
+async function takePhoto(){
+  if(busy||connecting||!connected||onboarding.open||settingsDialog.open||reviewing())return;
+  busy=true;stopStream();controls();notice('');
+  try{
+    const photo=await request('/capture?t='+Date.now(),'photo',20000),saved=photo.state==='ready'&&/^entropi-\d{20}\.jpg$/.test(photo.name);
+    await showPhoto(photo.blob,photo.name,saved);
+    if(!saved)$('photo-feedback').textContent=photo.state==='missing'?'Ikkje lagra: minnekort manglar.':photo.state==='full'?'Ikkje lagra: minnekortet er fullt.':'Ikkje lagra på minnekortet.';
+    $('flash').classList.remove('fire');void $('flash').offsetWidth;$('flash').classList.add('fire');
+  }catch{notice('Biletet vart ikkje teke. Prøv ein gong til.',true)}
+  finally{busy=false;controls();resumeStream()}
+}
+async function loadGallery(append=false){
+  if(galleryLoading)return;
+  galleryLoading=true;$('gallery-more').disabled=true;
+  try{
+    const page=await request('/photos'+(append&&galleryNext?'?before='+encodeURIComponent(galleryNext):''));
+    if(!Array.isArray(page.photos)||page.photos.length>12||page.photos.some(p=>!/^entropi-\d{20}\.jpg$/.test(p.name))||!(page.next===null||typeof page.next==='string'&&/^entropi-\d{20}\.jpg$/.test(page.next)))throw new Error();
+    if(!append)$('gallery-list').replaceChildren();
+    for(const photo of page.photos){
+      const button=document.createElement('button');button.className='link-row';button.textContent='Bilete '+photo.name.slice(8,-4).replace(/^0+(?=\d)/,'')+' ↗';
+      button.addEventListener('click',()=>openSavedPhoto(photo.name));$('gallery-list').appendChild(button);
+    }
+    galleryNext=page.next;$('gallery-more').hidden=!galleryNext;
+    $('gallery-feedback').textContent=page.storage?.state==='ready'?(page.photos.length?'Trykk på eit bilete for å opne og lagre det.':'Ingen lagra bilete enno.'):storageMessage(page.storage);
+  }catch{$('gallery-feedback').textContent='Kunne ikkje hente bileta. Lukk og opne galleriet for å prøve igjen.'}
+  finally{galleryLoading=false;$('gallery-more').disabled=false}
+}
+async function openSavedPhoto(name){
+  if(busy)return;busy=true;stopStream();controls();
+  try{await showPhoto(await request('/photo?name='+encodeURIComponent(name),'blob',20000),name,true,()=>galleryDialog.open&&!document.hidden)}
+  catch{$('gallery-feedback').textContent='Biletet kunne ikkje opnast. Prøv igjen.'}
+  finally{busy=false;controls();resumeStream()}
+}
+async function openGallery(){
+  if(busy)return;clearTimeout(retryTimer);++connectGeneration;connecting=false;stopStream();controls();
+  $('gallery-latest').hidden=!photoUrl;if(!galleryDialog.open)galleryDialog.showModal();await loadGallery();
+}
+function clearScene(){
+  ++sceneGeneration;sceneTask?.abort();sceneTask=null;sceneViewer?.dispose();sceneViewer=null;
+  sceneVisible=false;
+  $('scene').replaceChildren();$('scene').hidden=true;$('photo').hidden=false;$('image-meta').hidden=false;$('photo-feedback').hidden=false;$('toggle-scene').hidden=true;$('scene-status').textContent='';
+}
+function showScene(visible){
+  sceneVisible=visible;$('scene').hidden=!visible;$('photo').hidden=visible;$('image-meta').hidden=visible;
+  $('toggle-scene').setAttribute('aria-label',visible?'Vis foto':'Vis 3D');
+  $('toggle-scene').innerHTML=visible?'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m5 16 4-4 4 4 3-3 4 4"/></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5v8l-9 5-9-5V8Zm0 9 9-4M12 12 3 8m9 4v9"/></svg>';
+}
+async function makeScene(){
+  if(!photoBlob||!photoDialog.open)return;
+  clearScene();const generation=sceneGeneration,task=new AbortController();sceneTask=task;
+  $('scene').hidden=false;$('scene-status').textContent='Lagar 3D på telefonen …';
+  try{
+    const result=await createDepthScene($('scene'),photoBlob,update=>{
+      if(generation===sceneGeneration)$('scene-status').textContent=(update.phase.startsWith('loading')?'Lastar modell til telefonen':'Reknar djupn på telefonen')+(update.percent===undefined?' …':' · '+update.percent+' %');
+    },task.signal);
+    if(generation!==sceneGeneration||!photoDialog.open){result.dispose();return}
+    sceneViewer=result;
+    $('toggle-scene').hidden=false;showScene(true);$('scene-status').textContent='';
+  }catch(error){
+    if(task.signal.aborted||generation!==sceneGeneration)return;
+    $('scene').hidden=true;$('photo').hidden=false;$('toggle-scene').hidden=false;$('toggle-scene').setAttribute('aria-label','Opne 3D-appen');$('toggle-scene').innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>';
+    $('scene-status').textContent=error.message||'Kunne ikkje lage 3D. Fotoet er tilgjengeleg.';
+  }
+}
+$('toggle-scene').addEventListener('click',()=>{if(sceneViewer)showScene(!sceneVisible);else{hostedWindow=window.open('https://esp32.iverfinne.no/','entropi-3d');if(!hostedWindow)$('scene-status').textContent='Tillat opning av 3D-appen og prøv igjen.'}});
+window.addEventListener('message',event=>{if(event.origin==='https://esp32.iverfinne.no'&&event.source===hostedWindow&&event.data?.type==='entropi-ready'&&photoBlob)hostedWindow.postMessage({type:'entropi-photo',blob:photoBlob,name:photoName},event.origin)});
+$('capture').addEventListener('click',takePhoto);$('capture-plane').addEventListener('click',takePhoto);
+$('connection').addEventListener('click',showOnboarding);$('wifi-help').addEventListener('click',showOnboarding);
+$('settings').addEventListener('click',()=>{updateSettings();settingsDialog.showModal()});
+for(const b of document.querySelectorAll('[data-close]'))b.addEventListener('click',()=>$(b.dataset.close).close());
+for(const [selector,key,data] of [['[data-size]','framesize','size'],['[data-photo-size]','photo_framesize','photoSize']])for(const b of document.querySelectorAll(selector))b.addEventListener('click',()=>changeSetting(key,Number(b.dataset[data])));
+$('brightness').addEventListener('input',()=>{$('brightness-value').value=$('brightness').value});$('brightness').addEventListener('change',()=>changeSetting('brightness',Number($('brightness').value)));
+$('onboarding-next').addEventListener('click',()=>{if(onboardingReady){storage.set('entropi-onboarded','2');onboarding.close();notice('Trykk på søkjaren for å ta bilete.',true)}else{$('onboarding-feedback').textContent='Ser etter kameraet …';connect()}});
+$('copy-password').addEventListener('click',async()=>{try{if(!navigator.clipboard)throw new Error();await navigator.clipboard.writeText('entropi2026');$('copy-password').textContent='Kopiert'}catch{const range=document.createRange();range.selectNodeContents($('password'));const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);$('onboarding-feedback').textContent='Hald på det markerte passordet og vel Kopier.'}});
+$('close-photo').addEventListener('click',()=>photoDialog.close());
+photoDialog.addEventListener('close',()=>{clearScene();resumeStream();if(!galleryDialog.open)$('capture').focus({preventScroll:true})});
+$('onboarding-gallery').addEventListener('click',()=>{onboarding.close();openGallery()});
+$('last-photo').addEventListener('click',openGallery);$('gallery-close').addEventListener('click',()=>galleryDialog.close());galleryDialog.addEventListener('close',resumeStream);
+$('gallery-more').addEventListener('click',()=>loadGallery(true));$('gallery-latest').addEventListener('click',()=>{if(photoUrl)showPhoto(photoBlob,photoName,photoSaved)});
+for(const dialog of [onboarding,settingsDialog,galleryDialog])dialog.addEventListener('click',event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)dialog.close()}});
+live.addEventListener('error',()=>{if(streaming&&!connecting&&!busy)loseConnection('Kamerabiletet stoppa. Koplar til på nytt …')});
+function suspend(){++connectGeneration;connecting=false;connected=false;clearTimeout(retryTimer);stopStream();controls()}
+function resume(){if(!document.hidden&&!reviewing())connect()}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});window.addEventListener('pagehide',suspend);window.addEventListener('pageshow',resume);window.addEventListener('online',resume);
+setInterval(async()=>{
+  if(!connected||busy||connecting||document.hidden||reviewing())return;
+  const generation=connectGeneration;
+  try{
+    const status=await request('/status','json',5000);
+    if(generation!==connectGeneration||document.hidden||busy||reviewing())return;
+    if(!validStatus(status))throw new Error('Ugyldig kamerastatus');
+    acceptStatus(status);if(!status.camera_ready||!status.stream_ready)throw new Error(healthMessage(status));
+  }catch(error){if(generation===connectGeneration&&!document.hidden&&!busy&&!reviewing()&&connected)loseConnection(error.name==='AbortError'?'Mista kontakten med kameraet. Koplar til på nytt …':error.message)}
+},10000);
+window.addEventListener('keydown',event=>{if(event.code==='Space'&&!event.repeat&&!onboarding.open&&!settingsDialog.open&&!reviewing()&&!['INPUT','BUTTON','A'].includes(document.activeElement.tagName)){event.preventDefault();takePhoto()}});
+controls();if(storage.get('entropi-onboarded')!=='2'||new URLSearchParams(location.search).has('setup'))showOnboarding();connect();
+</script>
+</body>
+</html>

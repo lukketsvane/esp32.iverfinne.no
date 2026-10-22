@@ -1,0 +1,10 @@
+.git
+.vercel
+test-results
+tests
+device
+firmware
+backups
+node_modules
+prepare-models.py
+README.md

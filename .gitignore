@@ -1,0 +1,10 @@
+.vercel/
+test-results/
+node_modules/
+device/build/
+device/preview/
+device/firmware/
+device/compile.log
+device/EntropiCamera/camera_ui.h
+device/EntropiCamera/camera_assets.h
+__pycache__/
