@@ -52,7 +52,7 @@ function renderScene(host, cloud, bytes, signal) {
   const points=new Float32Array(cloud.count*8),depths=new Float32Array(cloud.count),order=Uint32Array.from({length:cloud.count},(_,i)=>i),view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
   const pointers=new Map();let yaw=0,pitch=0,zoom=1,frame=0,disposed=false;
   const focal=1/Math.tan(24*Math.PI/180),distance=Math.max(.3,cloud.radius*2.8),near=.01,far=Math.max(100,distance*20);
-  gl.uniform1f(uniforms.uFocal,focal);gl.uniform1f(uniforms.uMaxPoint,gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]);gl.uniform2f(uniforms.uClip,(far+near)/(far-near),-2*far*near/(far-near));
+  gl.uniform1f(uniforms.uMaxPoint,gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]);gl.uniform2f(uniforms.uClip,(far+near)/(far-near),-2*far*near/(far-near));
   function draw() {
     frame=0;if(disposed)return;
     const ratio=Math.min(globalThis.devicePixelRatio||1,1.5),width=Math.max(1,Math.round(host.clientWidth*ratio)),height=Math.max(1,Math.round(host.clientHeight*ratio));
@@ -66,7 +66,7 @@ function renderScene(host, cloud, bytes, signal) {
       points.set(cloud.positions.subarray(i*3,i*3+3),at);points[at+3]=view.getFloat32(i*32+12,true);
       for(let c=0;c<4;c++)points[at+4+c]=bytes[i*32+24+c]/255;
     }
-    gl.bufferData(gl.ARRAY_BUFFER,points,gl.DYNAMIC_DRAW);gl.uniformMatrix3fv(uniforms.uRotation,false,rotation);gl.uniform1f(uniforms.uDistance,distance/zoom);gl.uniform1f(uniforms.uAspect,width/height);gl.uniform1f(uniforms.uHeight,height);
+    gl.bufferData(gl.ARRAY_BUFFER,points,gl.DYNAMIC_DRAW);gl.uniformMatrix3fv(uniforms.uRotation,false,rotation);gl.uniform1f(uniforms.uFocal,focal*Math.min(1,width/height));gl.uniform1f(uniforms.uDistance,distance/zoom);gl.uniform1f(uniforms.uAspect,width/height);gl.uniform1f(uniforms.uHeight,height);
     gl.clear(gl.COLOR_BUFFER_BIT);gl.drawArrays(gl.POINTS,0,cloud.count);
   }
   const redraw=()=>{if(!disposed&&!frame)frame=requestAnimationFrame(draw)};
