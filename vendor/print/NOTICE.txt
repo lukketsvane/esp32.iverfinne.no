@@ -1,0 +1,10 @@
+TiMini-Print
+Copyright 2026 Daniel Banecki
+
+Licensed under the Apache License, Version 2.0. See LICENSE.txt for the full terms.
+
+PX10 packet encoding is adapted from TiMini-Print v0.9:
+https://github.com/Dejniel/TiMini-Print/tree/v0.9
+
+The printer transport and raster modules are adapted from Entropi commit
+4f2aa4ce11349350d4b924e2a876655f0502f65b, with a direct RGBA snapshot API.

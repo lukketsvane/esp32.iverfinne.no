@@ -27,7 +27,7 @@ function estimateDepth(pixels, onProgress, signal) {
 
 function renderScene(host, cloud, bytes, signal) {
   const canvas = document.createElement('canvas');
-  canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none';
+  canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;-webkit-touch-callout:none;user-select:none';
   const gl = canvas.getContext('webgl', { alpha: false, antialias: false });
   if (!gl) throw new Error('3D-vising er ikkje tilgjengeleg på telefonen.');
   const shaders = [];let program,buffer,screenProgram,screenBuffer,target,texture;
@@ -122,7 +122,13 @@ function renderScene(host, cloud, bytes, signal) {
   const observer=globalThis.ResizeObserver?new ResizeObserver(redraw):null;observer?.observe(host);
   signal.addEventListener('abort',dispose,{once:true});host.appendChild(canvas);redraw();
   if(signal.aborted)dispose();
-  return {dispose,setPrimitiveLevel(level){const next=normalizePrimitiveLevel(level);if(!disposed&&next!==primitiveLevel){primitiveLevel=next;redraw()}}};
+  return {dispose,snapshot(){
+    if(disposed)throw new Error('Scena er lukka.');
+    cancelAnimationFrame(frame);draw();
+    const paper=document.createElement('canvas');paper.width=384;paper.height=Math.max(1,Math.min(1024,Math.round(384*canvas.height/canvas.width)));
+    const context=paper.getContext('2d');if(!context)throw new Error('Kunne ikkje lese scena.');
+    context.drawImage(canvas,0,0,paper.width,paper.height);return context.getImageData(0,0,paper.width,paper.height);
+  },setPrimitiveLevel(level){const next=normalizePrimitiveLevel(level);if(!disposed&&next!==primitiveLevel){primitiveLevel=next;redraw()}}};
 }
 
 export async function createDepthScene(host, blob, onProgress = () => {}, signal = new AbortController().signal, quality = 2) {

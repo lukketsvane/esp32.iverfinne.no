@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE)__/g,'');
+const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'');
 const verifiedStatus = { camera_ready: true, stream_ready: true, recovering: false, recovery_attempts: 0, last_error: '', framesize: 10, photo_framesize: 15, brightness: 0, psram: true };
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
@@ -28,6 +28,8 @@ function harness(options = {}) {
   const revoked = [];
   const objectUrls = new Map();
   const sceneCalls = [];
+  const printCalls = [];
+  const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)};
   const modelChecks = [];
   const preparations = [];
   const opened = [];
@@ -195,9 +197,10 @@ function harness(options = {}) {
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
     phoneModelsReady: async signal => { modelChecks.push(signal); return typeof options.modelsReady==='function'?options.modelsReady(signal):options.modelsReady!==false; },
     requestPhoneModels: async (signal,onProgress,source) => { preparations.push({signal,onProgress,source}); if(options.prepare)await options.prepare(signal,onProgress,source); },
+    createPrintClient:()=>({print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return Promise.resolve(true)},dispose(){}}),
     createDepthScene: async (host, blob, onProgress, signal, quality) => {
       sceneCalls.push({ host, blob, onProgress, signal, quality });
-      if (options.scene) return { setPrimitiveLevel() {}, ...await options.scene(host, blob, onProgress, signal, quality) };
+      if (options.scene) return { setPrimitiveLevel() {}, snapshot:()=>snapshot, ...await options.scene(host, blob, onProgress, signal, quality) };
       const error=new Error('Modellen manglar på telefonen.');error.code='PHONE_SETUP_REQUIRED';throw error;
     },
     setTimeout: (callback, delay) => timeout(callback, delay),
@@ -229,7 +232,7 @@ function harness(options = {}) {
   }
   function changeStudio(kind, level) { studioControls[kind] = level; for (const binding of studioBindings) binding.onChange(kind, level); }
   function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
-  return { elements, qualities, photoQualities, document, images, canvases, requests, revoked, objectUrls, sceneCalls, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
+  return { elements, qualities, photoQualities, document, images, canvases, requests, revoked, objectUrls, sceneCalls, printCalls, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
 }
 
 async function connectedCamera(options = {}) {
@@ -467,6 +470,23 @@ test('the review toggle switches views while keeping the JPEG as the only downlo
   assert.equal(app.get('save-photo').href,photoUrl);
   assert.match(app.get('save-photo').download,/\.jpg$/);
   assert.equal([...app.objectUrls.values()].some(blob=>blob.type==='application/octet-stream'),false);
+});
+
+test('holding a scene prints its snapshot and closing review invalidates the pending print',async()=>{
+  const app=await connectedCamera({scene:async()=>({dispose(){}})});await app.get('capture-plane').emit('click');await app.tick(0);const target=app.get('scene');
+  await app.get('photo-dialog').emit('pointerdown',{target});await app.tick(500);await app.get('photo-dialog').emit('pointerup',{target});
+  assert.equal(app.printCalls.length,1);assert.equal(app.printCalls[0].image,app.snapshot);assert.equal(app.printCalls[0].isCurrent(),true);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  await app.tick(100);await reviewTap(app);assert.equal(app.get('photo-dialog').open,true);
+  await app.get('close-photo').emit('click');assert.equal(app.printCalls[0].isCurrent(),false);
+});
+
+test('dragging or three fingers cannot become a printer hold',async()=>{
+  const app=await connectedCamera({scene:async()=>({dispose(){}})});await app.get('capture-plane').emit('click');await app.tick(0);const target=app.get('scene');
+  await app.get('photo-dialog').emit('pointerdown',{target});await app.get('photo-dialog').emit('pointermove',{target,clientX:180});await app.tick(600);await app.get('photo-dialog').emit('pointerup',{target});
+  for(const pointerId of [1,2,3])await app.get('photo-dialog').emit('pointerdown',{target,pointerId,isPrimary:pointerId===1});await app.tick(600);
+  for(const pointerId of [3,2,1])await app.get('photo-dialog').emit('pointerup',{target,pointerId,isPrimary:pointerId===1});
+  assert.equal(app.printCalls.length,0);assert.equal(app.get('photo-dialog').open,true);
 });
 
 test('missing phone models preserve the JPEG and offer phone preparation', async () => {

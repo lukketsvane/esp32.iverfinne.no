@@ -10,7 +10,8 @@ function deferred(){let resolve;const promise=new Promise(yes=>{resolve=yes});re
 
 function harness(options={}){
   let now=1000,nextTimer=0,nextUrl=0,mediaRequests=0,stopped=0;
-  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),downloads=[],sceneCalls=[],messages=[],studioBindings=[];
+  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),downloads=[],sceneCalls=[],messages=[],studioBindings=[],printCalls=[];
+  const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)};let printDisposed=false;
   const studioControls={quality:2,primitive:0,dispose(){}};
   const opener={postMessage:(data,origin)=>messages.push({data,origin})};
   class Element{
@@ -49,7 +50,9 @@ function harness(options={}){
     navigator:{mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},
     Viewfinder:class{clear(){}dispose(){}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
-    createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});return options.scene?{setPrimitiveLevel(){},...await options.scene(host,blob,progress,signal,quality)}:{dispose(){},setPrimitiveLevel(){}}},
+    PX10Printer:class{},cloudPrintJob:()=>new Uint8Array(),
+    createPrintClient:()=>({print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return Promise.resolve(true)},dispose(){printDisposed=true}}),
+    createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});return options.scene?{setPrimitiveLevel(){},snapshot:()=>snapshot,...await options.scene(host,blob,progress,signal,quality)}:{dispose(){},setPrimitiveLevel(){},snapshot:()=>snapshot}},
     performance:{now:()=>now},Date:class extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}},
     setTimeout:(callback,delay=0)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)
   });
@@ -58,7 +61,7 @@ function harness(options={}){
   async function emit(name,details={}){for(const callback of events.get(name)??[])callback({type:name,...details});await flush()}
   function changeStudio(kind,level){studioControls[kind]=level;for(const binding of studioBindings)binding.onChange(kind,level)}
   function gestureStudio(){for(const binding of studioBindings)binding.onGesture?.()}
-  return {get:id=>elements.get(id),opener,sceneCalls,studioControls,changeStudio,gestureStudio,messages,urls,downloads,tick,emit,media,get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
+  return {get:id=>elements.get(id),opener,sceneCalls,studioControls,changeStudio,gestureStudio,messages,urls,downloads,printCalls,snapshot,tick,emit,media,get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
 }
 
 async function photoFromDevice(app,blob=new Blob(['camera-jpeg'],{type:'image/jpeg'})){
@@ -109,6 +112,22 @@ test('the result saves the original JPEG and never exposes a 3D download',async(
   assert.equal(app.downloads[0].name,'entropi.jpg');
   assert.equal(app.urls.get(app.downloads[0].href),blob);
   assert.equal([...app.urls.values()].some(value=>value.type==='application/octet-stream'),false);
+});
+
+test('holding a completed scene prints its current view synchronously without capturing again',async()=>{
+  const app=harness();await photoFromDevice(app);
+  await app.get('studio').emit('pointerdown');await app.tick(500);await app.get('studio').emit('pointerup');
+  assert.equal(app.printCalls.length,1);assert.equal(app.printCalls[0].image,app.snapshot);assert.equal(app.printCalls[0].isCurrent(),true);
+  assert.equal(app.sceneCalls.length,1);await app.tick(100);await tap(app);assert.equal(app.get('studio').className,'studio done');
+  await app.get('reset').emit('click');assert.equal(app.printCalls[0].isCurrent(),false);
+  await app.emit('pagehide');assert.equal(app.printDisposed,true);
+});
+
+test('dragging out and back or adding another finger cancels a hold instead of printing',async()=>{
+  const app=harness();await photoFromDevice(app);
+  await app.get('studio').emit('pointerdown',{clientX:100});await app.get('studio').emit('pointermove',{clientX:150});await app.tick(600);await app.get('studio').emit('pointerup',{clientX:100});
+  await app.get('studio').emit('pointerdown',{pointerId:1});await app.get('studio').emit('pointerdown',{pointerId:2,isPrimary:false});await app.tick(600);await app.get('studio').emit('pointerup',{pointerId:1});
+  assert.equal(app.printCalls.length,0);assert.equal(app.get('studio').className,'studio done');
 });
 
 test('model failure keeps the original JPEG available for saving',async()=>{

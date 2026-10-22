@@ -1,11 +1,15 @@
 import { Viewfinder } from './vendor/viewfinder.mjs';
 import { createDepthScene } from './vendor/scene.mjs';
 import { attachStudioControls } from './vendor/studio.mjs';
+import { PX10Printer } from './vendor/print/printer.mjs';
+import { cloudPrintJob } from './vendor/print/cloud-raster.mjs';
+import { createPrintClient } from './vendor/print-client.mjs';
 
 const $=id=>document.getElementById(id),video=$('video'),finder=new Viewfinder($('viewfinder'));
 const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 let mode='camera',stream=null,photoBlob=null,photoName='entropi.jpg',scene=null,task=null,generation=0,openingCamera=false,hadCamera=false,pointer=null,lastTap=0,captureAfter=0;
 const studioControls=attachStudioControls([$('studio')],(kind,level)=>{if(kind==='primitive')scene?.setPrimitiveLevel(level)},()=>true,()=>{pointer=null;lastTap=0});
+const printClient=createPrintClient({printer:new PX10Printer(),buildJob:cloudPrintJob,report:message=>{$('status').textContent=message}});
 
 function state(next,message=''){
   mode=next;$('studio').className='studio '+next;$('status').textContent=message;
@@ -73,9 +77,11 @@ async function save(){
 $('capture-plane').addEventListener('click',()=>void capture());$('reset').addEventListener('click',reset);$('save').addEventListener('click',()=>void save());
 $('retry').addEventListener('click',()=>{if(photoBlob)void acceptPhoto(photoBlob,photoName);else{reset();void startCamera()}});
 $('studio').addEventListener('pointerdown',event=>{if(!event.isPrimary||event.target.closest('button,a')&&!event.target.closest('#capture-plane')){pointer=null;lastTap=0;return}pointer=mode==='working'||mode==='done'?{id:event.pointerId,x:event.clientX,y:event.clientY,time:performance.now()}:null});
-$('studio').addEventListener('pointerup',event=>{const tap=pointer;pointer=null;if(!tap||tap.id!==event.pointerId||performance.now()-tap.time>350||Math.hypot(event.clientX-tap.x,event.clientY-tap.y)>12){lastTap=0;return}const now=performance.now();if(lastTap&&now-lastTap<350){captureAfter=now+400;reset()}else lastTap=now});
+$('studio').addEventListener('pointerup',event=>{const tap=pointer;pointer=null;const now=performance.now();if(tap&&tap.id===event.pointerId&&now-tap.time>=500&&Math.hypot(event.clientX-tap.x,event.clientY-tap.y)<=12&&mode==='done'&&scene){lastTap=0;const source=scene;try{void printClient.print(source.snapshot(),()=>source===scene)}catch(error){$('status').textContent=error.message}return}if(!tap||tap.id!==event.pointerId||now-tap.time>350||Math.hypot(event.clientX-tap.x,event.clientY-tap.y)>12){lastTap=0;return}if(lastTap&&now-lastTap<350){captureAfter=now+400;reset()}else lastTap=now});
 $('studio').addEventListener('pointercancel',()=>{pointer=null;lastTap=0});
+$('studio').addEventListener('pointermove',event=>{if(pointer&&Math.hypot(event.clientX-pointer.x,event.clientY-pointer.y)>12){pointer=null;lastTap=0}},true);
+$('scene').addEventListener('contextmenu',event=>event.preventDefault());
 window.addEventListener('message',event=>{if(event.source===window.opener&&allowedOrigins.has(event.origin)&&event.data?.type==='entropi-photo')void acceptPhoto(event.data.blob,typeof event.data.name==='string'?event.data.name:'entropi.jpg')});
 document.addEventListener('visibilitychange',()=>{finder.active=!document.hidden&&mode!=='done'});
-window.addEventListener('pagehide',()=>{++generation;clearScene();stopCamera();finder.dispose();studioControls.dispose()},{once:true});
+window.addEventListener('pagehide',()=>{++generation;clearScene();stopCamera();finder.dispose();studioControls.dispose();printClient.dispose()},{once:true});
 try{const origin=new URL(document.referrer).origin;if(window.opener&&allowedOrigins.has(origin))window.opener.postMessage({type:'entropi-ready'},origin)}catch{}

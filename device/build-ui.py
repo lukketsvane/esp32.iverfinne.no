@@ -14,11 +14,13 @@ primitive = (shared / "pointcloud/primitive.mjs").read_text(encoding="utf-8").re
 gestures = (shared / "vendor/viewer-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
 scene = "const createDepthScene = (() => {\n" + math + "\n" + primitive + "\n" + gestures + "\n" + scene + "\nreturn createDepthScene;\n})();"
 studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("export ", "")
+printing = (shared / "vendor/print-client.mjs").read_text(encoding="utf-8").replace("export ", "")
+printing = "const createPrintClient = (() => {\n" + printing + "\nreturn createPrintClient;\n})();"
 assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
 bridge = "const { requestPhoneModels, phoneModelsReady } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady };\n})();"
-source = source.replace("__ENTROPI_VIEWFINDER__", renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
+source = source.replace("__ENTROPI_VIEWFINDER__", renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_PRINT_CLIENT__", printing).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
 
 def array(name, payload):
     rows = [", ".join(f"0x{byte:02x}" for byte in payload[i:i + 16]) for i in range(0, len(payload), 16)]

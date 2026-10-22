@@ -12,10 +12,12 @@ Oppsettet følgjer den opphavlege Entropi-sida: svart heilskjerm, ein liten opti
 
 I 3D-visinga roterer éin finger resultatet; to fingrar flyttar og zoomar. Tre fingrar opp viser fleire punkt, ned færre; mot høgre blir punkta skarpare, mot venstre mjukare. Retninga blir låst etter ei lita startrørsle. Justeringa skjer direkte i visinga utan ny modellkøyring.
 
+Hald inne 3D-resultatet i eit halvt sekund og slepp for å skrive ut den aktuelle visinga på **Luxorp.PX10-DAAF**. Nettappen brukar Bluetooth direkte i ein nettlesar med Web Bluetooth. Den lokale kamerasida opnar ei trygg utskriftsside på telefonen; trykk på printarsymbolet for å velje printaren. Sidan og utskriftskoden blir lagra under klargjeringa, og biletet går berre mellom fanene på telefonen. Utskrifta er 384 punkt brei med svart mønster på kvitt papir. På iPhone må nettlesaren ha Web Bluetooth-støtte.
+
 ## ESP32-CAM
 
-1. Opne [klargjeringa](https://esp32.iverfinne.no/prepare/) i Safari med internett og vent på «Telefonen er klar».
-2. Kople telefonen til **ENTROPI** utan passord, og kom tilbake til klargjeringssida i Safari. Bli på nettet utan internett.
+1. Opne [klargjeringa](https://esp32.iverfinne.no/prepare/) med internett og vent på «Telefonen er klar». Bruk same nettlesar gjennom heile flyten; utskrift krev Web Bluetooth-støtte.
+2. Kople telefonen til **ENTROPI** utan passord, og kom tilbake til klargjeringssida. Bli på nettet utan internett.
 3. Trykk **Opne kameraet**. Klargjeringssida overfører dei kontrollerte modellfilene lokalt til kameraet si side før første foto. Seinare kan du opne **http://192.168.4.1/** direkte; begge filene blir kontrollerte før kameraet blir tilgjengeleg.
 
 Klargjeringssida held på modellane ved tilkoplingsfeil og prøver igjen i same kamerafane. «Tilbake til kameraet» beheld fotoet som er ope. Kameraet brukar vanleg lokal HTTP utan DNS- eller portalomdirigering. Direkte opning utan modellane viser klargjering før opptak. Dersom nettlesardata blir sletta, klargjer telefonen på nytt.

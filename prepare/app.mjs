@@ -14,21 +14,21 @@ function waitForCamera(){stopLaunch();cameraConnected=false;launchFailed=false;b
 function fail(error,keepPrepared=false){stopLaunch();cameraConnected=false;if(keepPrepared){launchFailed=true;show('ready',error.message)}else{prepared=false;ready=false;show('error',error.message||'Telefonen kunne ikkje klargjerast.')}send({type:'entropi-models-error',session,code:error.code||'PHONE_SETUP_FAILED',message:status.textContent})}
 
 async function controlled(){
-  if(!navigator.serviceWorker)throw new Error('Opne klargjeringa i Safari med internett.');
+  if(!navigator.serviceWorker)throw new Error('Opne klargjeringa i nettlesaren med internett.');
   const expected=new URL('/prepare/sw.js',location.href).href,scope=new URL('/prepare/',location.href).href;let timer,changed;
   try{await Promise.race([
     (async()=>{
       const registration=await navigator.serviceWorker.getRegistration('/prepare/');if(registration?.scope!==scope||registration?.active?.scriptURL!==expected)await navigator.serviceWorker.register('/prepare/sw.js',{scope:'/prepare/'});await navigator.serviceWorker.ready;
       if(navigator.serviceWorker.controller?.scriptURL!==expected)await new Promise(resolve=>{changed=()=>{if(navigator.serviceWorker.controller?.scriptURL===expected)resolve()};navigator.serviceWorker.addEventListener('controllerchange',changed);changed()});
     })(),
-    new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Klargjeringa kunne ikkje lagrast. Opne sida i Safari med internett og prøv igjen.')),15000)})
+    new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Klargjeringa kunne ikkje lagrast. Opne sida i nettlesaren med internett og prøv igjen.')),15000)})
   ])}finally{clearTimeout(timer);if(changed)navigator.serviceWorker.removeEventListener('controllerchange',changed)}
 }
 
 async function prepare(){
   const generation=++preparation;task?.abort();const currentTask=task=new AbortController();stopLaunch();closeCameraPort();cancelDelivery();cameraConnected=launchFailed=false;prepared=false;ready=false;bar.removeAttribute('value');show('working','Klargjer telefonen …');
   try{
-    if(transfer&&!peer)throw new Error('Opne klargjeringa frå kameraet i Safari.');
+    if(transfer&&!peer)throw new Error('Opne klargjeringa frå kameraet i nettlesaren.');
     await controlled();if(closed||generation!==preparation)return;const response=await fetch('/pointcloud/models/manifest.json',{signal:currentTask.signal});if(!response.ok)throw new Error('Modellmanifestet manglar.');manifest=await response.json();
     if(closed||generation!==preparation)return;
     if(transfer){ready=true;show('waiting','Koplar til kameraet …');send({type:'entropi-models-ready'});return}
@@ -48,7 +48,7 @@ async function deliver(requestedSession){
     for(const [index,key] of ['asset','runtime'].entries()){
       const bytes=await loadCachedAsset(manifest[key]);if(closed||generation!==delivery)return;
       await new Promise((resolve,reject)=>{
-        const timer=setTimeout(()=>{pending=null;reject(new Error('Kameraet svara ikkje. Prøv igjen i Safari.'))},60000);
+        const timer=setTimeout(()=>{pending=null;reject(new Error('Kameraet svara ikkje. Prøv igjen i nettlesaren.'))},60000);
         pending={key,resolve:()=>{clearTimeout(timer);pending=null;resolve()},reject:error=>{clearTimeout(timer);pending=null;reject(error)}};
         try{peer.postMessage({type:'entropi-model-asset',session,key,bytes:bytes.buffer},peerOrigin,[bytes.buffer])}catch(error){pending.reject(error)}
       });
