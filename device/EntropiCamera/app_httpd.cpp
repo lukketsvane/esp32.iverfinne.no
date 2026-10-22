@@ -369,16 +369,6 @@ static esp_err_t indexHandler(httpd_req_t *request) {
   return httpd_resp_send(request, reinterpret_cast<const char *>(camera_ui_html_gz), sizeof(camera_ui_html_gz));
 }
 
-static esp_err_t captiveHandler(httpd_req_t *request, httpd_err_code_t) {
-  if (request->method != HTTP_GET && request->method != HTTP_HEAD)
-    return httpd_resp_send_err(request, HTTPD_404_NOT_FOUND, "Not found");
-  String location = "http://" + WiFi.softAPIP().toString() + "/?wifi";
-  httpd_resp_set_status(request, "302 Found");
-  httpd_resp_set_hdr(request, "Location", location.c_str());
-  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-  return httpd_resp_send(request, "", 0);
-}
-
 static bool registerHandler(httpd_handle_t server, const char *uri, esp_err_t (*handler)(httpd_req_t *)) {
   httpd_uri_t route = {};
   route.uri = uri;
@@ -433,7 +423,6 @@ void startCameraServer() {
     registerHandler(cameraHttpd, "/control", controlHandler);
     registerHandler(cameraHttpd, "/capture", captureHandler);
     registerHandler(cameraHttpd, "/pointcloud/*", assetHandler);
-    httpd_register_err_handler(cameraHttpd, HTTPD_404_NOT_FOUND, captiveHandler);
   } else {
     setServerError("Could not start HTTP server");
   }

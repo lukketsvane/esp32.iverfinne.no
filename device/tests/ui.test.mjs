@@ -34,7 +34,13 @@ function harness(options = {}) {
   const messages = [];
   const studioBindings = [];
   const studioControls = { quality: 2, primitive: 0, dispose() {} };
-  const childWindow = { postMessage: (data, origin) => messages.push({ data, origin }) };
+  const childWindow = { postMessage: (data, origin, ports) => messages.push({ data, origin, ports }) };
+  class MessageChannel {
+    constructor() {
+      const port=()=>({closed:false,onmessage:null,start(){},close(){this.closed=true},postMessage(data){if(!this.closed)this.peer.onmessage?.({data})}});
+      this.port1=port();this.port2=port();this.port1.peer=this.port2;this.port2.peer=this.port1;
+    }
+  }
   const elements = new Map();
   const stored = new Map(options.onboarded === false ? [] : [['entropi-onboarded', '2']]);
   const clockDate = class extends Date {
@@ -174,11 +180,11 @@ function harness(options = {}) {
   };
   const window = {
     addEventListener: document.addEventListener,
-    opener: options.opener ?? null,
+    opener: options.opener === true ? childWindow : options.opener ?? null,
     open: (url, name) => { opened.push({ url, name }); return options.popupBlocked ? null : childWindow; },
   };
   const context = vm.createContext({
-    document, window, Image: CameraImage, URL: BrowserURL, URLSearchParams, AbortController, Blob,
+    document, window, Image: CameraImage, URL: BrowserURL, URLSearchParams, AbortController, Blob, MessageChannel,
     File: class extends Blob { constructor(parts, name, properties) { super(parts, properties); this.name = name; } },
     navigator: {}, location: { href: 'http://192.168.4.1/' + (options.search ?? ''), search: options.search ?? '' }, Date: clockDate,
     localStorage: {
@@ -618,6 +624,57 @@ test('the captive Wi-Fi entry shows only the Safari handoff and performs no came
   assert.equal(app.get('safari-handoff').hidden,false);assert.equal(app.get('studio').hidden,true);
   assert.equal(app.requests.length,0);assert.equal(app.modelChecks.length,0);assert.equal(app.preparations.length,0);assert.equal(app.images.length,0);
   assert.equal(app.opened.length,0);assert.equal(app.get('onboarding').open,false);
+});
+
+test('the prepared opener hears camera readiness only after verified models and a live frame',async()=>{
+  const pending=deferred(),app=harness({search:'?connect',opener:true,modelsReady:()=>pending.promise,frames:false});await app.tick(150);
+  assert.equal(app.messages.length,0);
+  pending.resolve(true);await app.tick(150);assert.equal(app.messages.length,0);
+  app.images[0].naturalWidth=320;app.images[0].naturalHeight=240;await app.tick(150);
+  assert.equal(app.messages.length,1);assert.equal(app.messages[0].data.type,'entropi-camera-ready');
+  assert.equal(app.messages[0].origin,'https://esp32.iverfinne.no');
+  await app.get('brightness').emit('change');await app.tick(150);
+  assert.equal(app.messages.filter(message=>message.data.type==='entropi-camera-ready').length,1);
+});
+
+test('direct local entry sends no camera notifications to an unrelated opener',async()=>{
+  const app=await connectedCamera({opener:true});await app.emit('pagehide');assert.equal(app.messages.length,0);
+});
+
+test('pagehide reports leaving and a restored camera reports a fresh verified connection',async()=>{
+  const app=await connectedCamera({search:'?connect',opener:true}),left=[];
+  const port=app.messages[0].ports[0];port.onmessage=event=>left.push(event.data.type);await app.emit('pagehide');
+  assert.deepEqual(app.messages.map(message=>message.data.type),['entropi-camera-ready']);
+  assert.deepEqual(left,['entropi-camera-left']);assert.equal(port.peer.closed,true);assert.equal(app.get('capture-plane').disabled,true);
+  await app.emit('pageshow',{persisted:true});await app.tick(150);
+  assert.equal(app.messages.at(-1).data.type,'entropi-camera-ready');assert.notEqual(app.messages.at(-1).ports[0],port);assert.equal(app.modelChecks.length,2);
+});
+
+test('returning after another tab populated the phone cache completes setup without a transfer',async()=>{
+  let cached=false;const app=harness({modelsReady:()=>cached});await app.tick(150);
+  assert.equal(app.get('onboarding').open,true);app.document.hidden=true;await app.emit('visibilitychange');
+  cached=true;app.document.hidden=false;await app.emit('visibilitychange');await app.tick(150);
+  assert.equal(app.modelChecks.length,2);assert.equal(app.get('onboarding').open,false);assert.equal(app.get('capture-plane').disabled,false);
+  assert.equal(app.preparations.length,0);assert.equal(app.opened.length,0);
+});
+
+test('a failed initial cache check can recover on return without reloading the page',async()=>{
+  let checks=0;const app=harness({modelsReady:async()=>{if(++checks===1)throw new Error('Temporary read failure');return true}});await app.tick(150);
+  assert.match(app.get('onboarding-feedback').textContent,/Temporary read failure/);
+  app.document.hidden=true;await app.emit('visibilitychange');app.document.hidden=false;await app.emit('visibilitychange');await app.tick(150);
+  assert.equal(app.modelChecks.length,2);assert.equal(app.get('onboarding').open,false);assert.equal(app.get('capture-plane').disabled,false);
+  await app.get('connection').emit('click');assert.equal(app.get('onboarding-feedback').textContent,'');
+});
+
+test('an aborted setup cannot keep a restored verified camera stuck in its working state',async()=>{
+  const pending=deferred();let checks=0;
+  const app=harness({modelsReady:()=>++checks>1,prepare:()=>pending.promise});await app.tick(150);
+  await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-next').hidden,true);
+  await app.emit('pagehide');assert.equal(app.preparations[0].signal.aborted,true);
+  await app.emit('pageshow',{persisted:true});await app.tick(150);
+  pending.resolve();await app.tick(0);
+  assert.equal(app.get('onboarding').open,false);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.modelChecks.length,2);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/capture')),false);
 });
 
 async function reviewTap(app,details={}) {

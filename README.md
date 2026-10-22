@@ -16,7 +16,7 @@ Oppsettet følgjer den opphavlege Entropi-sida: svart heilskjerm, ein liten opti
 2. Kople telefonen til **ENTROPI** utan passord, og kom tilbake til klargjeringssida i Safari. Bli på nettet utan internett.
 3. Trykk **Opne kameraet**. Klargjeringssida overfører dei kontrollerte modellfilene lokalt til kameraet si side før første foto. Seinare kan du opne **http://192.168.4.1/** direkte; begge filene blir kontrollerte før kameraet blir tilgjengeleg.
 
-Wi-Fi-innloggingsvindauget viser berre ei kort rettleiing til Safari. Om det kjem tilbake, slå av Autopålogging for ENTROPI. Direkte opning av kameraet utan modellane viser klargjering før opptak. Dersom nettlesardata blir sletta, klargjer telefonen på nytt.
+Klargjeringssida held på modellane ved tilkoplingsfeil og prøver igjen i same kamerafane. «Tilbake til kameraet» beheld fotoet som er ope. Kameraet brukar vanleg lokal HTTP utan DNS- eller portalomdirigering. Direkte opning utan modellane viser klargjering før opptak. Dersom nettlesardata blir sletta, klargjer telefonen på nytt.
 
 - Søkjar og foto har separate oppløysingar. Foto kan bruke 1600 × 1200 med PSRAM; utan PSRAM blir begge avgrensa til 320 × 240.
 - Opptak pausar kameratilgangen, hentar ei fersk ramme og gjenopprettar søkjaren. Innstillingar blir lagra på kameraet.

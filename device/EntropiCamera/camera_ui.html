@@ -15,7 +15,7 @@
 </style>
 </head>
 <body>
-<section id="safari-handoff" class="handoff" hidden><h1>Opne Safari</h1><code>192.168.4.1</code><p>Lukk Wi-Fi-vindauget og vel å bruke nettet utan internett.</p></section>
+<section id="safari-handoff" class="handoff" hidden><h1>Tilbake til Safari</h1><code>esp32.iverfinne.no/prepare/</code><p>Vel å bruke nettet utan internett. Gå tilbake til klargjeringa og trykk «Opne kameraet».</p></section>
 <main id="studio" class="studio">
 <div class="finder" aria-hidden="true"><canvas id="finder"></canvas><span class="cross"></span><div id="progress" class="progress indeterminate" hidden><i></i></div></div>
 <button id="capture-plane" class="capture-plane" aria-label="Ta foto" disabled></button>
@@ -58,10 +58,17 @@ const sourceContext=source.getContext('2d');
 finder.source=source;
 const live=new Image();live.crossOrigin='anonymous';
 const streamUrl=new URL('/stream',location.href);streamUrl.port='81';
-let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,captureAfter=0;
+let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',parentReady=false,parentPort=null,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,captureAfter=0;
 const studioControls=attachStudioControls([studio,photoDialog],(kind,level)=>{if(kind==='primitive')sceneViewer?.setPrimitiveLevel(level)},()=>photoDialog.open||!onboarding.open&&!settingsDialog.open,()=>{reviewDown=reviewTap=null});
 const reviewing=()=>photoDialog.open;
 function notice(text,transient=false){clearTimeout(noticeTimer);$('notice').textContent=text;if(transient)noticeTimer=setTimeout(()=>{$('notice').textContent=''},4500)}
+function notifyCamera(type){
+  if(!entry.has('connect')||!window.opener)return;
+  try{
+    if(type==='entropi-camera-ready'){parentPort?.close();const channel=new MessageChannel();parentPort=channel.port1;window.opener.postMessage({type},'https://esp32.iverfinne.no',[channel.port2])}
+    else{parentPort?.postMessage({type});parentPort?.close();parentPort=null}
+  }catch{parentPort?.close();parentPort=null;parentReady=false}
+}
 function controls(){
   const disabled=busy||phoneWorking||!connected||connecting;
   for(const id of ['capture-plane','brightness'])$(id).disabled=disabled;
@@ -71,6 +78,7 @@ function controls(){
   $('last-photo').disabled=busy||connecting;$('progress').hidden=!busy;
   studio.classList.toggle('connected',connected);studio.classList.toggle('reconnecting',connecting);
   $('connection-label').textContent=connected?'Tilkopla':connecting?'Koplar til':deviceStatus?'Kamera ikkje klart':'Fråkopla';
+  if(phoneReady&&connected&&hasFrame&&!connecting&&!parentReady){parentReady=true;notifyCamera('entropi-camera-ready')}
 }
 async function request(path,type='json',timeout=8000){
   const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),timeout);
@@ -119,10 +127,11 @@ async function setupPhone(source=null){
   finally{if(phoneTask===task){phoneTask=null;phoneWorking=false;renderOnboarding();controls();if(!phoneReady&&!task.signal.aborted)showOnboarding()}}
 }
 async function checkPhone(){
-  const task=new AbortController();phoneTask?.abort();phoneTask=task;phoneReady=false;controls();
+  const task=new AbortController();phoneTask?.abort();phoneTask=task;phoneReady=false;phoneWorking=false;controls();
   try{
     const ready=await phoneModelsReady(task.signal);task.signal.throwIfAborted();phoneReady=ready;
-    if(!phoneReady){if(entry.has('connect')&&window.opener){phoneTask=null;void setupPhone(window.opener)}else showOnboarding()}
+    if(phoneReady){phoneError='';if(onboarding.open&&connected)onboarding.close()}
+    else if(entry.has('connect')&&window.opener){phoneTask=null;void setupPhone(window.opener)}else showOnboarding();
   }catch(error){if(!task.signal.aborted){phoneError=error.message;showOnboarding()}}
   finally{if(phoneTask===task)phoneTask=null;controls()}
 }
@@ -231,8 +240,8 @@ $('last-photo').addEventListener('click',()=>{if(photoUrl&&!busy){stopStream();p
 for(const dialog of [onboarding,settingsDialog])dialog.addEventListener('click',event=>{if(event.target===dialog&&(dialog!==onboarding||phoneReady&&!phoneWorking)){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)dialog.close()}});
 live.addEventListener('error',()=>{if(streaming&&!connecting&&!busy)loseConnection('Kamerabiletet stoppa. Koplar til på nytt …')});
 function suspend(){++connectGeneration;connecting=false;connected=false;clearTimeout(retryTimer);stopStream();controls()}
-function resume(){if(!document.hidden&&!reviewing())connect()}
-document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});window.addEventListener('pagehide',()=>{suspend();phoneTask?.abort()});window.addEventListener('pageshow',event=>{if(event.persisted)void checkPhone();resume()});window.addEventListener('online',resume);
+function resume(){if(!document.hidden&&!reviewing()){if(!phoneReady&&!phoneTask)void checkPhone();connect()}}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});window.addEventListener('pagehide',()=>{notifyCamera('entropi-camera-left');parentReady=false;suspend();phoneTask?.abort()});window.addEventListener('pageshow',event=>{if(event.persisted)void checkPhone();resume()});window.addEventListener('online',resume);
 setInterval(async()=>{
   if(!connected||busy||connecting||document.hidden||reviewing())return;
   const generation=connectGeneration;
