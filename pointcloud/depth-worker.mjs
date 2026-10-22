@@ -1,6 +1,6 @@
 import { env, InferenceSession, Tensor } from './vendor/ort.wasm.min.mjs';
 import { normalizedImage } from './math.mjs';
-import { loadAsset } from './assets.mjs';
+import { loadAsset, loadCachedAsset } from './assets.mjs';
 
 env.wasm.numThreads = 1;
 env.wasm.proxy = false;
@@ -16,8 +16,9 @@ self.onmessage = async event => {
     const response = await fetch(new URL('./models/manifest.json', import.meta.url), { cache: 'force-cache' });
     if (!response.ok) throw new Error('Modellmanifestet manglar.');
     const manifest = await response.json();
-    const model = await loadAsset(manifest.asset, percent => progress('loading-model', percent));
-    env.wasm.wasmBinary = await loadAsset(manifest.runtime, percent => progress('loading-runtime', percent));
+    const phoneOnly = location.protocol === 'http:' && (!['localhost','127.0.0.1','[::1]'].includes(location.hostname) || location.port === '19304');
+    const model = phoneOnly ? await loadCachedAsset(manifest.asset) : await loadAsset(manifest.asset, percent => progress('loading-model', percent));
+    env.wasm.wasmBinary = phoneOnly ? await loadCachedAsset(manifest.runtime) : await loadAsset(manifest.runtime, percent => progress('loading-runtime', percent));
     progress('starting');
     session = await InferenceSession.create(model, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
     input = new Tensor('float32', normalizedImage(new Uint8ClampedArray(rgba), width, height), [1,3,height,width]);
@@ -27,7 +28,7 @@ self.onmessage = async event => {
     const depthWidth = output.dims.at(-1), depthHeight = output.dims.at(-2);
     if (depth.length !== depthWidth * depthHeight) throw new Error('Ugyldig djupnekart.');
     self.postMessage({ type: 'result', depth: depth.buffer, width: depthWidth, height: depthHeight }, [depth.buffer]);
-  } catch (error) { self.postMessage({ type: 'error', message: error?.message || 'Djupneberekninga stoppa.' }); }
+  } catch (error) { self.postMessage({ type: 'error', code: error?.code || 'DEPTH_FAILED', message: error?.message || 'Djupneberekninga stoppa.' }); }
   finally {
     input?.dispose();
     for (const output of Object.values(outputs || {})) output.dispose();

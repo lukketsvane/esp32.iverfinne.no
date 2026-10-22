@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { sha256, loadAsset } from '../pointcloud/assets.mjs';
+import { sha256, loadAsset, loadCachedAsset, storeAsset } from '../pointcloud/assets.mjs';
+import { memoryIndexedDB } from './helpers/indexeddb.mjs';
 import { inferenceSize, normalizedImage, pointStride, imageToPointCloud, gaussianSplats } from '../pointcloud/math.mjs';
 import { createDepthScene } from '../vendor/scene.mjs';
 
@@ -71,7 +72,7 @@ test('SHA-256 works without a secure browser context, including padding boundari
   }
 });
 
-test('verified assets use the SD path before their pinned public download', async () => {
+test('online preparation uses its own verified model before a pinned public fallback', async () => {
   const bytes=new Uint8Array([1,2,3,4]),calls=[];
   const asset={local:'/pointcloud/model',url:'https://example.test/model',bytes:bytes.length,sha256:digest(bytes)};
   const result=await loadAsset(asset,()=>{},undefined,async url=>{calls.push(url);return new Response(bytes)});
@@ -79,7 +80,7 @@ test('verified assets use the SD path before their pinned public download', asyn
   assert.deepEqual(calls,[asset.local]);
 });
 
-test('missing or corrupt SD assets fall back to a verified public model download', async () => {
+test('a corrupt online model falls back to a verified pinned download', async () => {
   const bytes=new Uint8Array([1,2,3,4]),calls=[];
   const asset={local:'/pointcloud/model',url:'https://example.test/model',bytes:bytes.length,sha256:digest(bytes)};
   const result=await loadAsset(asset,()=>{},undefined,async url=>{calls.push(url);return new Response(url===asset.local?new Uint8Array([9,9,9,9]):bytes)});
@@ -90,8 +91,23 @@ test('missing or corrupt SD assets fall back to a verified public model download
 test('wrong checksums, truncated data and oversized streams never reach inference', async () => {
   const bytes=new Uint8Array([1,2,3,4]),asset={local:'/model',bytes:4,sha256:digest(bytes)};
   for(const data of [new Uint8Array([1,2,3]),new Uint8Array([9,9,9,9]),new Uint8Array([1,2,3,4,5])]) {
-    await assert.rejects(loadAsset(asset,()=>{},undefined,async()=>new Response(data)),/Djupnemodellen manglar/);
+    await assert.rejects(loadAsset(asset,()=>{},undefined,async()=>new Response(data)),{code:'PHONE_SETUP_REQUIRED'});
   }
+});
+
+test('camera inference loads only verified phone cache and never requires a card or network', async () => {
+  const previous=globalThis.indexedDB;globalThis.indexedDB=memoryIndexedDB();
+  const bytes=new Uint8Array([1,2,3,4]),asset={bytes:4,sha256:digest(bytes)};
+  try{
+    await assert.rejects(loadCachedAsset(asset),{code:'PHONE_SETUP_REQUIRED'});
+    assert.deepEqual(await storeAsset(asset,bytes),bytes);
+    assert.deepEqual(await loadCachedAsset(asset),bytes);
+    await assert.rejects(storeAsset(asset,new Uint8Array([9,9,9,9])),/kontrollerast/);
+    assert.deepEqual(await loadCachedAsset(asset),bytes);
+    const db=await new Promise(resolve=>{const request=indexedDB.open('entropi-depth-v1',1);request.onsuccess=()=>resolve(request.result)});
+    await new Promise(resolve=>{const transaction=db.transaction('assets','readwrite');transaction.objectStore('assets').put(new Uint8Array([9,9,9,9]).buffer,asset.sha256);transaction.oncomplete=resolve});
+    await assert.rejects(loadCachedAsset(asset),{code:'PHONE_SETUP_REQUIRED'});
+  }finally{if(previous===undefined)delete globalThis.indexedDB;else globalThis.indexedDB=previous}
 });
 
 test('abort prevents model fetching and scene allocation', async () => {

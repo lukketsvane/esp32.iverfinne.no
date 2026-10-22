@@ -70,8 +70,31 @@ async function verified(bytes, asset) {
   return digest === asset.sha256;
 }
 
+function checkAsset(asset) {
+  if (!Number.isSafeInteger(asset?.bytes) || asset.bytes <= 0 || !/^[a-f0-9]{64}$/.test(asset.sha256)) throw new Error('Ugyldig modellmanifest.');
+}
+
+function setupRequired(message = 'Djupnemodellen manglar på telefonen. Opne esp32.iverfinne.no/prepare/ med internett først.') {
+  const error = new Error(message);error.code = 'PHONE_SETUP_REQUIRED';return error;
+}
+
+export async function loadCachedAsset(asset) {
+  checkAsset(asset);
+  const stored = await cached(asset.sha256);
+  if (!(stored instanceof ArrayBuffer) || !await verified(new Uint8Array(stored), asset)) throw setupRequired();
+  return new Uint8Array(stored);
+}
+
+export async function storeAsset(asset, bytes) {
+  checkAsset(asset);
+  if (!(bytes instanceof Uint8Array) || !await verified(bytes, asset)) throw new Error('Modellfila kunne ikkje kontrollerast.');
+  const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer : bytes.slice().buffer;
+  if (!await cached(asset.sha256, buffer)) throw setupRequired('Telefonen kunne ikkje lagre modellen. Opne klargjeringa i Safari og prøv igjen.');
+  return loadCachedAsset(asset);
+}
+
 export async function loadAsset(asset, onProgress = () => {}, signal, fetcher = fetch) {
-  if (!Number.isSafeInteger(asset.bytes) || asset.bytes <= 0 || !/^[a-f0-9]{64}$/.test(asset.sha256)) throw new Error('Ugyldig modellmanifest.');
+  checkAsset(asset);
   signal?.throwIfAborted();
   const stored = await cached(asset.sha256);
   if (stored && await verified(new Uint8Array(stored), asset)) { onProgress(100); return new Uint8Array(stored); }
@@ -105,5 +128,5 @@ export async function loadAsset(asset, onProgress = () => {}, signal, fetcher = 
       return bytes;
     } catch (error) { if (signal?.aborted) throw signal.reason || error; }
   }
-  throw new Error('Djupnemodellen manglar. Bruk minnekortet med modellfilene eller last dei ned med internett på telefonen.');
+  throw setupRequired();
 }

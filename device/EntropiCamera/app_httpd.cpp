@@ -15,8 +15,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Preferences.h>
-#include <SD_MMC.h>
-#include <errno.h>
 #include "esp_camera.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
@@ -29,7 +27,6 @@
 static httpd_handle_t cameraHttpd = nullptr;
 static httpd_handle_t streamHttpd = nullptr;
 static SemaphoreHandle_t cameraMutex = nullptr;
-static SemaphoreHandle_t storageMutex = nullptr;
 static portMUX_TYPE stateMux = portMUX_INITIALIZER_UNLOCKED;
 static Preferences preferences;
 static bool preferencesReady = false;
@@ -47,35 +44,10 @@ static volatile unsigned recoveryAttempts = 0;
 static uint32_t nextRecovery = 0;
 static char lastError[96] = "Camera is starting";
 static const char *serverError = "";
-static const char *storageState = "missing";
-static const char *storageError = "No microSD card";
-static bool storageMounted = false;
-static uint32_t nextStorageAttempt = 0;
-static uint64_t photoSequence = 0;
-static constexpr unsigned PAGE_SIZE = 12;
-
 struct PhotoFrame {
   uint8_t *data = nullptr;
   size_t length = 0;
 };
-
-struct StorageLock {
-  bool acquired;
-  explicit StorageLock(uint32_t timeout = 250) : acquired(storageMutex && xSemaphoreTake(storageMutex, pdMS_TO_TICKS(timeout)) == pdTRUE) {}
-  ~StorageLock() { if (acquired) xSemaphoreGive(storageMutex); }
-};
-
-struct StorageStatus {
-  const char *state;
-  const char *error;
-};
-
-static StorageStatus storageSnapshot() {
-  portENTER_CRITICAL(&stateMux);
-  StorageStatus status = {storageState, storageError};
-  portEXIT_CRITICAL(&stateMux);
-  return status;
-}
 
 static void cameraMessage(const char *error) {
   portENTER_CRITICAL(&stateMux);
@@ -208,115 +180,6 @@ void cameraMaintenance() {
   unlockCamera();
 }
 
-static void setStorage(const char *state, const char *error = "") {
-  portENTER_CRITICAL(&stateMux);
-  storageState = state;
-  storageError = error;
-  portEXIT_CRITICAL(&stateMux);
-}
-
-static const char *baseName(const char *name) {
-  const char *slash = strrchr(name, '/');
-  return slash ? slash + 1 : name;
-}
-
-static bool validPhotoName(const char *name, bool temporary = false) {
-  if (strlen(name) != 32 || strncmp(name, "entropi-", 8) != 0) return false;
-  for (unsigned i = 8; i < 28; i++) if (name[i] < '0' || name[i] > '9') return false;
-  return strcmp(name + 28, ".jpg") == 0 || (temporary && strcmp(name + 28, ".tmp") == 0);
-}
-
-static bool mountStorage() {
-  if (storageMounted) return true;
-  if (int32_t(millis() - nextStorageAttempt) < 0) return false;
-  nextStorageAttempt = millis() + 5000;
-  SD_MMC.end();
-  if (!SD_MMC.begin("/sdcard", true, false) || SD_MMC.cardType() == CARD_NONE) {
-    SD_MMC.end();
-    setStorage("missing", "No readable microSD card");
-    return false;
-  }
-  File root = SD_MMC.open("/");
-  if (!root || !root.isDirectory()) {
-    root.close();
-    SD_MMC.end();
-    setStorage("error", "Could not open microSD card");
-    return false;
-  }
-  for (File entry = root.openNextFile(); entry; entry = root.openNextFile()) {
-    const char *name = baseName(entry.name());
-    if (!entry.isDirectory() && validPhotoName(name, true)) {
-      uint64_t sequence = strtoull(name + 8, nullptr, 10);
-      if (sequence > photoSequence) photoSequence = sequence;
-    }
-    entry.close();
-  }
-  root.close();
-  storageMounted = true;
-  setStorage("ready");
-  return true;
-}
-
-static void storageFailed(const char *error) {
-  uint64_t total = SD_MMC.totalBytes();
-  uint64_t used = SD_MMC.usedBytes();
-  setStorage(total && used >= total - min<uint64_t>(total, 4096) ? "full" : "error", error);
-  storageMounted = false;
-  nextStorageAttempt = millis() + 5000;
-}
-
-static bool savePhoto(const PhotoFrame &photo, char *savedName, size_t capacity) {
-  savedName[0] = 0;
-  StorageLock lock;
-  if (!lock.acquired || !storageMounted) return false;
-  uint64_t total = SD_MMC.totalBytes();
-  uint64_t used = SD_MMC.usedBytes();
-  if (total && (used >= total || total - used < photo.length + 4096)) {
-    setStorage("full", "MicroSD card is full");
-    return false;
-  }
-  char name[40], finalPath[44], temporaryPath[44];
-  do {
-    if (photoSequence == UINT64_MAX) {
-      setStorage("error", "Photo numbering is exhausted");
-      return false;
-    }
-    photoSequence++;
-    snprintf(name, sizeof(name), "entropi-%020llu.jpg", static_cast<unsigned long long>(photoSequence));
-    snprintf(finalPath, sizeof(finalPath), "/%s", name);
-    snprintf(temporaryPath, sizeof(temporaryPath), "/entropi-%020llu.tmp", static_cast<unsigned long long>(photoSequence));
-  } while (SD_MMC.exists(finalPath) || SD_MMC.exists(temporaryPath));
-  if (preferencesReady) preferences.putULong64("photo_seq", photoSequence);
-  File file = SD_MMC.open(temporaryPath, FILE_WRITE);
-  if (!file) {
-    storageFailed("Could not create photo on microSD card");
-    return false;
-  }
-  size_t written = 0;
-  while (written < photo.length) {
-    size_t count = file.write(photo.data + written, min<size_t>(16384, photo.length - written));
-    if (!count) break;
-    written += count;
-  }
-  file.flush();
-  bool complete = written == photo.length && file.size() == photo.length;
-  file.close();
-  if (!complete || !SD_MMC.rename(temporaryPath, finalPath)) {
-    storageFailed(complete ? "Could not commit photo on microSD card" : "Photo write was incomplete");
-    return false;
-  }
-  File saved = SD_MMC.open(finalPath, FILE_READ);
-  bool confirmed = saved && saved.size() == photo.length;
-  saved.close();
-  if (!confirmed) {
-    storageFailed("Could not verify saved photo on microSD card");
-    return false;
-  }
-  snprintf(savedName, capacity, "%s", name);
-  setStorage("ready");
-  return true;
-}
-
 static String quoted(const char *value) {
   String result = "\"";
   for (const char *p = value; *p; p++) {
@@ -324,11 +187,6 @@ static String quoted(const char *value) {
     if (static_cast<unsigned char>(*p) >= 32) result += *p;
   }
   return result + "\"";
-}
-
-static String storageJson() {
-  StorageStatus status = storageSnapshot();
-  return "{\"state\":" + quoted(status.state) + ",\"error\":" + quoted(status.error) + "}";
 }
 
 static esp_err_t sendJson(httpd_req_t *request, const String &json) {
@@ -359,7 +217,7 @@ static esp_err_t statusHandler(httpd_req_t *request) {
   json += ",\"photo_framesize\":" + String(static_cast<int>(photoSize));
   json += ",\"brightness\":" + String(brightness);
   json += ",\"led_intensity\":" + String(ledDuty);
-  json += ",\"storage\":" + storageJson() + "}";
+  json += "}";
   return sendJson(request, json);
 }
 
@@ -445,108 +303,18 @@ static bool capturePhoto(PhotoFrame &photo) {
 static esp_err_t captureHandler(httpd_req_t *request) {
   PhotoFrame photo;
   if (!capturePhoto(photo)) return unavailable(request, "Could not capture photo");
-  char savedName[40];
-  savePhoto(photo, savedName, sizeof(savedName));
-  StorageStatus storage = storageSnapshot();
   httpd_resp_set_type(request, "image/jpeg");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   httpd_resp_set_hdr(request, "Content-Disposition", "inline; filename=capture.jpg");
-  httpd_resp_set_hdr(request, "X-Storage-State", storage.state);
-  httpd_resp_set_hdr(request, "X-Storage-Error", storage.error);
-  if (savedName[0]) httpd_resp_set_hdr(request, "X-Photo-Name", savedName);
   esp_err_t result = httpd_resp_send(request, reinterpret_cast<const char *>(photo.data), photo.length);
   free(photo.data);
   return result;
 }
 
-static esp_err_t photosHandler(httpd_req_t *request) {
-  char before[40] = {};
-  if (httpd_req_get_url_query_len(request) && (!queryValue(request, "before", before, sizeof(before)) || !validPhotoName(before)))
-    return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid gallery cursor");
-  char names[PAGE_SIZE + 1][40] = {};
-  unsigned count = 0;
-  StorageLock lock;
-  if (lock.acquired && storageMounted) {
-    File root = SD_MMC.open("/");
-    if (!root || !root.isDirectory()) {
-      storageFailed("Could not read microSD gallery");
-    } else {
-      errno = 0;
-      for (File entry = root.openNextFile(); entry; entry = root.openNextFile()) {
-        const char *name = baseName(entry.name());
-        if (!entry.isDirectory() && validPhotoName(name) && (!before[0] || strcmp(name, before) < 0)) {
-          unsigned position = 0;
-          while (position < count && strcmp(names[position], name) > 0) position++;
-          if (position <= PAGE_SIZE) {
-            unsigned end = min<unsigned>(count, PAGE_SIZE);
-            for (unsigned i = end; i > position; i--) strcpy(names[i], names[i - 1]);
-            snprintf(names[position], sizeof(names[position]), "%s", name);
-            if (count < PAGE_SIZE + 1) count++;
-          }
-        }
-        entry.close();
-        errno = 0;
-      }
-      if (errno) {
-        count = 0;
-        storageFailed("Could not finish reading microSD gallery");
-      }
-      root.close();
-    }
-  }
-  String json = "{\"photos\":[";
-  for (unsigned i = 0; i < min<unsigned>(count, PAGE_SIZE); i++) {
-    if (i) json += ',';
-    json += "{\"name\":" + quoted(names[i]) + "}";
-  }
-  json += "],\"next\":";
-  json += count > PAGE_SIZE ? quoted(names[PAGE_SIZE - 1]) : String("null");
-  json += ",\"storage\":" + storageJson() + "}";
-  return sendJson(request, json);
-}
-
-static esp_err_t sendFile(httpd_req_t *request, const char *path, const char *type, size_t expected = 0) {
-  StorageLock lock;
-  if (!lock.acquired) return unavailable(request, "MicroSD card is busy");
-  if (!storageMounted) return unavailable(request, storageSnapshot().error);
-  File file = SD_MMC.open(path, FILE_READ);
-  if (!file || file.isDirectory()) return httpd_resp_send_err(request, HTTPD_404_NOT_FOUND, "File was not found");
-  if (expected && file.size() != expected) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "File is incomplete");
-  httpd_resp_set_type(request, type);
-  httpd_resp_set_hdr(request, "Cache-Control", "private, max-age=86400");
-  uint8_t buffer[1024];
-  size_t remaining = file.size();
-  esp_err_t result = ESP_OK;
-  while (remaining && result == ESP_OK) {
-    size_t count = file.read(buffer, min<size_t>(remaining, sizeof(buffer)));
-    if (!count) {
-      storageFailed("Could not read complete file from microSD card");
-      result = ESP_FAIL;
-      break;
-    }
-    remaining -= count;
-    result = httpd_resp_send_chunk(request, reinterpret_cast<const char *>(buffer), count);
-  }
-  file.close();
-  if (result == ESP_OK) result = httpd_resp_send_chunk(request, nullptr, 0);
-  return result;
-}
-
-static esp_err_t photoHandler(httpd_req_t *request) {
-  char name[40];
-  if (!queryValue(request, "name", name, sizeof(name)) || !validPhotoName(name))
-    return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid photo name");
-  char path[44];
-  snprintf(path, sizeof(path), "/%s", name);
-  httpd_resp_set_hdr(request, "X-Photo-Name", name);
-  return sendFile(request, path, "image/jpeg");
-}
-
 static esp_err_t assetHandler(httpd_req_t *request) {
   size_t length = strcspn(request->uri, "?");
   for (const CameraAsset &asset : cameraAssets) {
-    if (strlen(asset.uri) != length || strncmp(asset.uri, request->uri, length)) continue;
-    if (!asset.data) return sendFile(request, asset.uri, asset.type, asset.length);
+    if (!asset.data || strlen(asset.uri) != length || strncmp(asset.uri, request->uri, length)) continue;
     httpd_resp_set_type(request, asset.type);
     httpd_resp_set_hdr(request, "Content-Encoding", "gzip");
     httpd_resp_set_hdr(request, "Cache-Control", "public, max-age=86400");
@@ -627,29 +395,14 @@ static void deviceWorker(void *) {
     unlockCamera();
   }
   nextRecovery = millis() + 5000;
-  uint32_t nextStorageCheck = 0;
   for (;;) {
     cameraMaintenance();
-    if (int32_t(millis() - nextStorageCheck) >= 0) {
-      StorageLock lock(0);
-      if (lock.acquired) {
-        if (storageMounted) {
-          File root = SD_MMC.open("/");
-          if (!root || !root.isDirectory()) storageFailed("MicroSD card is unavailable");
-          root.close();
-        } else {
-          mountStorage();
-        }
-        nextStorageCheck = millis() + 5000;
-      }
-    }
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
 void startCameraServer() {
   cameraMutex = xSemaphoreCreateMutex();
-  storageMutex = xSemaphoreCreateMutex();
   hasPsram = psramFound();
   preferencesReady = preferences.begin("entropi", false);
   if (preferencesReady) {
@@ -660,7 +413,6 @@ void startCameraServer() {
     photoSize = photoAllowed(savedPhoto) ? static_cast<framesize_t>(savedPhoto) : FRAMESIZE_QVGA;
     brightness = constrain(savedBrightness, -2, 2);
     ledDuty = constrain(preferences.getInt("led_intensity", 0), 0, 255);
-    photoSequence = preferences.getULong64("photo_seq", 0);
   } else if (!hasPsram) {
     photoSize = FRAMESIZE_QVGA;
   }
@@ -680,8 +432,6 @@ void startCameraServer() {
     registerHandler(cameraHttpd, "/status", statusHandler);
     registerHandler(cameraHttpd, "/control", controlHandler);
     registerHandler(cameraHttpd, "/capture", captureHandler);
-    registerHandler(cameraHttpd, "/photos", photosHandler);
-    registerHandler(cameraHttpd, "/photo", photoHandler);
     registerHandler(cameraHttpd, "/pointcloud/*", assetHandler);
     httpd_register_err_handler(cameraHttpd, HTTPD_404_NOT_FOUND, captiveHandler);
   } else {
@@ -695,6 +445,6 @@ void startCameraServer() {
       streamHttpd = nullptr;
     }
   } else setServerError("Could not start stream server");
-  if (!cameraMutex || !storageMutex || xTaskCreate(deviceWorker, "entropi-device", 8192, nullptr, 1, nullptr) != pdPASS)
+  if (!cameraMutex || xTaskCreate(deviceWorker, "entropi-device", 8192, nullptr, 1, nullptr) != pdPASS)
     cameraMessage("Could not start camera maintenance");
 }

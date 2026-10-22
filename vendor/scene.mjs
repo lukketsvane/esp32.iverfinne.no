@@ -13,7 +13,7 @@ function estimateDepth(pixels, onProgress, signal) {
     signal.addEventListener('abort', abort, { once: true });
     worker.onmessage = ({ data }) => {
       if (data.type === 'progress') onProgress(data);
-      else if (data.type === 'error') finish(new Error(data.message));
+      else if (data.type === 'error') finish(Object.assign(new Error(data.message), {code:data.code}));
       else if (data.type === 'result') finish(null, { depth: new Float32Array(data.depth), width: data.width, height: data.height });
     };
     worker.onerror = () => finish(new Error('Telefonen kunne ikkje berekne djupna.'));

@@ -1,5 +1,4 @@
 import gzip
-import json
 import re
 from pathlib import Path
 
@@ -14,7 +13,11 @@ math = (shared / "pointcloud/math.mjs").read_text(encoding="utf-8").replace("exp
 primitive = (shared / "pointcloud/primitive.mjs").read_text(encoding="utf-8").replace("export ", "")
 scene = "const createDepthScene = (() => {\n" + math + "\n" + primitive + "\n" + scene + "\nreturn createDepthScene;\n})();"
 studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("export ", "")
-source = source.replace("__ENTROPI_VIEWFINDER__", renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio)
+assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace("export ", "")
+bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
+bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
+bridge = "const requestPhoneModels = (() => {\n" + assets + "\n" + bridge + "\nreturn requestPhoneModels;\n})();"
+source = source.replace("__ENTROPI_VIEWFINDER__", renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
 
 def array(name, payload):
     rows = [", ".join(f"0x{byte:02x}" for byte in payload[i:i + 16]) for i in range(0, len(payload), 16)]
@@ -32,9 +35,6 @@ for i, path in enumerate(sorted((shared / "pointcloud").rglob("*"))):
     headers.append(array(name, data))
     mime = "application/javascript" if path.suffix == ".mjs" else "application/json" if path.suffix == ".json" else "text/plain"
     entries.append(f'  {{"/{path.relative_to(shared).as_posix()}", {name}, sizeof({name}), "{mime}"}}')
-manifest = json.loads((shared / "pointcloud/models/manifest.json").read_text(encoding="utf-8"))
-for key, path, mime in [("asset", "models/model_quantized.onnx", "application/octet-stream"), ("runtime", "vendor/ort-wasm-simd-threaded.wasm", "application/wasm")]:
-    entries.append(f'  {{"/pointcloud/{path}", nullptr, {manifest[key]["bytes"]}, "{mime}"}}')
 headers.append("const CameraAsset cameraAssets[] = {\n" + ",\n".join(entries) + "\n};\n")
 (sketch / "camera_assets.h").write_text("\n".join(headers), encoding="utf-8", newline="\n")
 preview = root / "preview"
