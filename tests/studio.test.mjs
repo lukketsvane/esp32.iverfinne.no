@@ -30,25 +30,34 @@ function harness(options={}){
   return {roots,controls,changes,document,window,emit,advance:duration=>{now+=duration},get gestures(){return gestures}};
 }
 
-test('both scenes start with four ticks per side, quality two and C64 style',()=>{
-  const app=harness();assert.equal(app.controls.quality,2);assert.equal(app.controls.primitive,0);
+test('both views start with two image types, photo selected and four primitive styles',()=>{
+  const app=harness();assert.equal(app.controls.image,0);assert.equal(app.controls.primitive,0);assert.equal('quality' in app.controls,false);
   for(const root of app.roots){
     const rails=root.children.filter(element=>element.tagName==='DIV'),ranges=root.children.filter(element=>element.tagName==='INPUT');
-    assert.equal(rails.length,2);assert.deepEqual(rails.map(rail=>rail.children.length),[4,4]);
-    assert.deepEqual(ranges.map(range=>range.value),['2','0']);
-    assert.equal(rails[0].children[1].classList.contains('chosen'),true);assert.equal(rails[1].children[3].classList.contains('chosen'),true);
+    assert.equal(rails.length,2);assert.deepEqual(rails.map(rail=>rail.children.length),[2,4]);
+    assert.deepEqual(ranges.map(range=>range.value),['0','0']);assert.deepEqual(ranges.map(range=>range.max),['1','3']);
+    assert.equal(ranges[0].getAttribute('aria-label'),'Bilettype');assert.equal(ranges[0].getAttribute('aria-valuetext'),'Svart-kvittfoto');
+    assert.equal(rails[0].children[0].classList.contains('chosen'),true);assert.equal(rails[1].children[3].classList.contains('chosen'),true);
   }
   assert.equal(app.changes.length,0);
 });
 
-test('left and right touch edges choose independent four-level controls',()=>{
+test('the right upper half selects photo and lower half selects splats independently of the left styles',()=>{
   const app=harness();
   assert.equal(app.emit('pointerdown',{clientX:4,clientY:100}).prevented,true);
-  assert.equal(app.controls.primitive,3);assert.equal(app.controls.quality,2);
+  assert.equal(app.controls.primitive,3);assert.equal(app.controls.image,0);
   app.emit('pointerup',{clientX:4,clientY:100});app.emit('pointerdown',{clientX:386,clientY:800});
-  assert.equal(app.controls.quality,0);assert.equal(app.controls.primitive,3);
-  app.emit('pointermove',{clientX:386,clientY:100});assert.equal(app.controls.quality,3);
-  assert.deepEqual(app.changes,[['primitive',3],['quality',0],['quality',3]]);
+  assert.equal(app.controls.image,1);assert.equal(app.controls.primitive,3);
+  app.emit('pointermove',{clientX:386,clientY:100});assert.equal(app.controls.image,0);
+  assert.deepEqual(app.changes,[['primitive',3],['image',1],['image',0]]);
+});
+
+test('the image rail has two stable half-screen choices and clamps its accessible range',()=>{
+  const app=harness();
+  for(const [y,expected] of [[0,0],[421,0],[422,1],[844,1]]){app.emit('pointerdown',{clientX:386,clientY:y});assert.equal(app.controls.image,expected);app.emit('pointerup',{clientX:386,clientY:y})}
+  const range=app.roots[0].children.find(element=>element.tagName==='INPUT');range.value='8';range.listeners.get('input')();assert.equal(app.controls.image,1);
+  range.value='-1';range.listeners.get('input')();assert.equal(app.controls.image,0);
+  assert.equal(app.roots[1].children.find(element=>element.tagName==='INPUT').value,'0');
 });
 
 test('an unchanged edge choice still clears a previous scene tap and consumes the ghost click',()=>{
@@ -78,7 +87,7 @@ test('mouse gestures, central touches, auxiliary controls and disabled screens r
 
 test('cancel and disposal release the controls and preserve accessible keyboard selection',()=>{
   const app=harness(),range=app.roots[0].children.find(element=>element.tagName==='INPUT');
-  range.value='3';range.listeners.get('input')();assert.equal(app.controls.quality,3);
+  range.value='1';range.listeners.get('input')();assert.equal(app.controls.image,1);assert.equal(range.getAttribute('aria-valuetext'),'Splats');
   app.emit('pointerdown',{clientX:4});app.emit('pointercancel',{clientX:4});assert.equal(app.emit('pointerdown').prevented,false);
   app.controls.dispose();assert.equal(app.document.head.children.length,0);assert.equal(app.roots[0].children.length,0);assert.equal(app.roots[1].children.length,0);
   assert.equal(app.emit('pointerdown',{clientX:4}).prevented,false);

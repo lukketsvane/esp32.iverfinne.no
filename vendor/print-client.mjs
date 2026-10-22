@@ -33,7 +33,7 @@ export function createPrintClient({printer,buildJob,report=()=>{}}={}){
           const data=event.data;
           if(data.type==='entropi-print-ready'&&!sent){
             sent=true;const bytes=new Uint8Array(image.data);
-            popup.postMessage({type:'entropi-print-image',session,width:image.width,height:image.height,data:bytes.buffer},origin,[bytes.buffer]);
+            popup.postMessage({type:'entropi-print-image',session,width:image.width,height:image.height,photo:image.photo===true,data:bytes.buffer},origin,[bytes.buffer]);
           }else if(data.type==='entropi-print-started'&&sent)attempted.add(image);
           else if(data.type==='entropi-print-result'&&sent&&typeof data.ok==='boolean')finish(data.ok,data.ok?'Sendt til skrivaren.':data.message||'Utskrifta vart avbroten.');
         };

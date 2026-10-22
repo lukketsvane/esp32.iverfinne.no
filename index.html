@@ -3,17 +3,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Entropi">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="/manifest.webmanifest">
+<script type="module" src="/pwa.mjs"></script>
 <meta name="description" content="Eit foto, ei lita romleg skisse. Kamera og djupneberekning på telefonen.">
 <title>Entropi</title>
 <link rel="stylesheet" href="/style.css">
 <main id="studio" class="studio camera">
   <video id="video" autoplay muted playsinline aria-hidden="true" tabindex="-1"></video>
-  <div id="finder" class="finder" aria-hidden="true"><canvas id="viewfinder"></canvas><i class="cross"></i><div id="progress" class="progress indeterminate" hidden><i></i></div></div>
+  <div id="finder" class="finder" aria-hidden="true"><canvas id="viewfinder"></canvas><i class="cross"></i></div>
+  <img id="photo" class="photo" alt="Svart-kvitt foto" hidden>
+  <div id="progress" class="progress indeterminate" hidden><i></i></div>
   <button id="capture-plane" class="capture-plane" type="button" aria-label="Opne kameraet"></button>
   <div id="scene" class="cloud hidden" role="img" aria-label="3D-scene. Dra for å rotere, klyp for å zoome. Dobbelttrykk for eit nytt foto."></div>
   <button id="retry" class="retry-plane" type="button" aria-label="Prøv igjen" hidden><i class="retry-mark" aria-hidden="true"></i></button>
   <button id="reset" class="access-control" type="button" aria-label="Ta eit nytt foto" hidden><i class="plus" aria-hidden="true"></i></button>
   <button id="save" class="access-control download" type="button" aria-label="Lagre originalfoto" hidden><i class="download-mark" aria-hidden="true"></i></button>
+  <a class="access-control device-link" href="/prepare/" aria-label="Kople til ESP32-kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9a14 14 0 0 1 18 0M6 12a9 9 0 0 1 12 0M9 15a4 4 0 0 1 6 0M12 19h.01"/></svg></a>
   <span id="status" class="sr-only" role="status" aria-live="polite"></span>
 </main>
 <script type="module" src="/app.mjs"></script>

@@ -122,7 +122,7 @@ function renderScene(host, cloud, bytes, signal) {
   const observer=globalThis.ResizeObserver?new ResizeObserver(redraw):null;observer?.observe(host);
   signal.addEventListener('abort',dispose,{once:true});host.appendChild(canvas);redraw();
   if(signal.aborted)dispose();
-  return {dispose,snapshot(){
+  return {dispose,refresh:redraw,snapshot(){
     if(disposed)throw new Error('Scena er lukka.');
     cancelAnimationFrame(frame);draw();
     const paper=document.createElement('canvas');paper.width=384;paper.height=Math.max(1,Math.min(1024,Math.round(384*canvas.height/canvas.width)));

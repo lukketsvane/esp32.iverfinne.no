@@ -17,7 +17,7 @@ window.addEventListener('message',event=>{
   const data=event.data;
   if(closed||image||!origin||event.source!==opener||event.origin!==origin||data?.type!=='entropi-print-image'||data.session!==session)return;
   if(data.width!==384||!Number.isInteger(data.height)||data.height<1||data.height>1024||!(data.data instanceof ArrayBuffer)||data.data.byteLength!==data.width*data.height*4){fail('Utskriftsbiletet er ugyldig.');return}
-  image={width:data.width,height:data.height,data:new Uint8ClampedArray(data.data)};button.disabled=false;status.textContent='Kople til skrivaren og skriv ut.';
+  image={width:data.width,height:data.height,data:new Uint8ClampedArray(data.data),photo:data.photo===true};button.disabled=false;status.textContent='Kople til skrivaren og skriv ut.';
 });
 button.addEventListener('click',async()=>{
   if(complete&&!closed){try{opener.focus()}catch{}return}

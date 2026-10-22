@@ -11,8 +11,9 @@ export function ditherCloudRGBA(rgba,width,height){
   return ditherRGBA(paper,width,height);
 }
 
-export function cloudPrintJob({data,width,height}){
+export function cloudPrintJob({data,width,height,photo=false}){
   if(width!==WIDTH||!Number.isInteger(height)||height<1||height>1024||!(data instanceof Uint8Array||data instanceof Uint8ClampedArray)||data.length!==width*height*4)throw new Error('Ugyldige utskriftsdata.');
+  if(photo)return buildPrintJob(ditherRGBA(data,width,height));
   let first=height,last=-1;
   for(let y=0;y<height;y++)for(let x=0;x<WIDTH;x++){
     const at=(y*WIDTH+x)*4;

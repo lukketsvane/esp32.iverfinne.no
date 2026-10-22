@@ -1,5 +1,6 @@
 import gzip
 import re
+from urllib.parse import quote
 from pathlib import Path
 
 root = Path(__file__).resolve().parent
@@ -16,11 +17,13 @@ scene = "const createDepthScene = (() => {\n" + math + "\n" + primitive + "\n" +
 studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing = (shared / "vendor/print-client.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing = "const createPrintClient = (() => {\n" + printing + "\nreturn createPrintClient;\n})();"
+printing += "\n" + (shared / "vendor/photo.mjs").read_text(encoding="utf-8").replace("export ", "")
 assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
 bridge = "const { requestPhoneModels, phoneModelsReady } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady };\n})();"
 source = source.replace("__ENTROPI_VIEWFINDER__", renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_PRINT_CLIENT__", printing).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
+source = source.replace("__ENTROPI_ICON__", "data:image/svg+xml," + quote((shared / "favicon.svg").read_text(encoding="utf-8"), safe=""))
 
 def array(name, payload):
     rows = [", ".join(f"0x{byte:02x}" for byte in payload[i:i + 16]) for i in range(0, len(payload), 16)]
