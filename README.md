@@ -12,7 +12,7 @@ Oppsettet følgjer den opphavlege Entropi-sida: svart heilskjerm, ein liten opti
 
 ## ESP32-CAM
 
-Kople telefonen til **ENTROPI**, passord **entropi2026**, og opne **http://192.168.4.1/** i Safari.
+Kople telefonen til det opne Wi-Fi-nettet **ENTROPI** utan passord, og opne **http://192.168.4.1/** i Safari.
 
 - Søkjar og foto har separate oppløysingar. Foto kan bruke 1600 × 1200 med PSRAM; utan PSRAM blir begge avgrensa til 320 × 240.
 - Opptak pausar kameratilgangen, hentar ei fersk ramme og gjenopprettar søkjaren. Innstillingar blir lagra på kameraet.

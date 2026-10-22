@@ -137,7 +137,6 @@ function harness(options = {}) {
       if (!events.has(name)) events.set(name, []);
       events.get(name).push(callback);
     },
-    createRange: () => ({ selectNodeContents() {} }),
   };
   class CameraImage extends Element {
     constructor() { super('', 'IMG'); this.naturalWidth = 0; this.naturalHeight = 0; images.push(this); }
@@ -177,7 +176,6 @@ function harness(options = {}) {
   };
   const window = {
     addEventListener: document.addEventListener,
-    getSelection: () => ({ removeAllRanges() {}, addRange() {} }),
     open: (url, name) => { opened.push({ url, name }); return options.popupBlocked ? null : childWindow; },
   };
   const context = vm.createContext({
@@ -359,6 +357,16 @@ test('the explicit setup helper remains usable when browser storage is denied', 
   assert.equal(app.get('onboarding').open, false);
   await app.get('capture-plane').emit('click');
   assert.equal(app.get('photo-dialog').open, true);
+});
+
+test('the connection helper exposes the open ENTROPI network without password fields or copying', async () => {
+  const app=harness({search:'?setup',frames:false});await app.tick(150);
+  assert.equal(app.get('onboarding').open,true);
+  assert.match(app.get('onboarding-copy').innerHTML,/ENTROPI/);
+  assert.match(app.get('onboarding-copy').innerHTML,/Nettet er ope/);
+  assert.equal(app.get('password'),undefined);
+  assert.equal(app.get('copy-password'),undefined);
+  assert.doesNotMatch(html,/entropi2026|copy-password|navigator\.clipboard|\bid=["']password["']/i);
 });
 
 test('preview and photo resolution use independent controls', async () => {
