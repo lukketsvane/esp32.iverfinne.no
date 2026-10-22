@@ -372,7 +372,7 @@ static esp_err_t indexHandler(httpd_req_t *request) {
 static esp_err_t captiveHandler(httpd_req_t *request, httpd_err_code_t) {
   if (request->method != HTTP_GET && request->method != HTTP_HEAD)
     return httpd_resp_send_err(request, HTTPD_404_NOT_FOUND, "Not found");
-  String location = "http://" + WiFi.softAPIP().toString() + "/";
+  String location = "http://" + WiFi.softAPIP().toString() + "/?wifi";
   httpd_resp_set_status(request, "302 Found");
   httpd_resp_set_hdr(request, "Location", location.c_str());
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");

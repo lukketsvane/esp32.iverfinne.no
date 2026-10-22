@@ -16,7 +16,7 @@ studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("exp
 assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
-bridge = "const requestPhoneModels = (() => {\n" + assets + "\n" + bridge + "\nreturn requestPhoneModels;\n})();"
+bridge = "const { requestPhoneModels, phoneModelsReady } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady };\n})();"
 source = source.replace("__ENTROPI_VIEWFINDER__", renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
 
 def array(name, payload):

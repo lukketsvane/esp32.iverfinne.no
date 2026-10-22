@@ -1,8 +1,16 @@
-import { storeAsset } from '../pointcloud/assets.mjs';
+import { loadCachedAsset, storeAsset } from '../pointcloud/assets.mjs';
 
-export function requestPhoneModels(signal,onProgress=()=>{}){
+const modelManifest=signal=>fetch('/pointcloud/models/manifest.json',{cache:'force-cache',signal}).then(response=>{if(!response.ok)throw new Error('Modellmanifestet manglar.');return response.json()});
+
+export async function phoneModelsReady(signal){
+  const manifest=await modelManifest(signal);
+  try{for(const key of ['asset','runtime']){signal?.throwIfAborted();await loadCachedAsset(manifest[key])}signal?.throwIfAborted();return true}
+  catch(error){signal?.throwIfAborted();if(error.code==='PHONE_SETUP_REQUIRED')return false;throw error}
+}
+
+export function requestPhoneModels(signal,onProgress=()=>{},source=null){
   signal?.throwIfAborted();
-  const origin='https://esp32.iverfinne.no',helper=window.open(origin+'/prepare/?transfer','entropi-models');
+  const origin='https://esp32.iverfinne.no',helper=source||window.open(origin+'/prepare/?transfer','entropi-models');
   if(!helper)return Promise.reject(new Error('Tillat opning av klargjeringa og prøv igjen.'));
   const random=new Uint8Array(16);crypto.getRandomValues(random);
   const session=Array.from(random,value=>value.toString(16).padStart(2,'0')).join('');
@@ -11,7 +19,8 @@ export function requestPhoneModels(signal,onProgress=()=>{}){
     const keys=['asset','runtime'];
     const finish=error=>{
       if(finished)return;finished=true;clearTimeout(timer);window.removeEventListener('message',message);signal?.removeEventListener('abort',abort);
-      try{helper.close()}catch{}
+      if(error&&source)try{helper.postMessage({type:'entropi-models-cancel',session},origin)}catch{}
+      if(!source)try{helper.close()}catch{}
       if(error)reject(error);else resolve();
     };
     const abort=()=>finish(signal.reason||new DOMException('Avbrote.','AbortError'));
@@ -37,6 +46,7 @@ export function requestPhoneModels(signal,onProgress=()=>{}){
     let timer=setTimeout(()=>finish(new Error('Opne esp32.iverfinne.no/prepare/ med internett éin gong, og prøv igjen.')),10000);
     window.addEventListener('message',message);signal?.addEventListener('abort',abort,{once:true});
     if(signal?.aborted){abort();return}
-    fetch('/pointcloud/models/manifest.json',{cache:'force-cache',signal}).then(response=>{if(!response.ok)throw new Error('Modellmanifestet manglar.');return response.json()}).then(value=>{manifest=value;start()}).catch(finish);
+    if(source)helper.postMessage({type:'entropi-models-connect'},origin);
+    modelManifest(signal).then(value=>{manifest=value;start()}).catch(finish);
   });
 }

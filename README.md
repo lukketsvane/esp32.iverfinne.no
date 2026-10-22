@@ -12,11 +12,11 @@ Oppsettet følgjer den opphavlege Entropi-sida: svart heilskjerm, ein liten opti
 
 ## ESP32-CAM
 
-1. Opne [klargjeringa](https://esp32.iverfinne.no/prepare/) i Safari med internett og vent på «Klar».
-2. Kople telefonen til det opne Wi-Fi-nettet **ENTROPI** utan passord, og opne **http://192.168.4.1/** i full Safari.
-3. Ved første foto: trykk på klargjeringssymbolet. Dei kontrollerte modellfilene blir overførte mellom to vindauge på telefonen og lagra for kameraet si lokale side. Deretter fungerer 3D utan internett.
+1. Opne [klargjeringa](https://esp32.iverfinne.no/prepare/) i Safari med internett og vent på «Telefonen er klar».
+2. Kople telefonen til **ENTROPI** utan passord, og kom tilbake til klargjeringssida i Safari. Bli på nettet utan internett.
+3. Trykk **Opne kameraet**. Klargjeringssida overfører dei kontrollerte modellfilene lokalt til kameraet si side før første foto. Seinare kan du opne **http://192.168.4.1/** direkte; begge filene blir kontrollerte før kameraet blir tilgjengeleg.
 
-Safari og Wi-Fi-innloggingsvindauget kan ha skilde lagringsmiljø. Bruk full Safari for både klargjering og kamera. Dersom nettlesardata blir sletta, klargjer telefonen på nytt.
+Wi-Fi-innloggingsvindauget viser berre ei kort rettleiing til Safari. Om det kjem tilbake, slå av Autopålogging for ENTROPI. Direkte opning av kameraet utan modellane viser klargjering før opptak. Dersom nettlesardata blir sletta, klargjer telefonen på nytt.
 
 - Søkjar og foto har separate oppløysingar. Foto kan bruke 1600 × 1200 med PSRAM; utan PSRAM blir begge avgrensa til 320 × 240.
 - Opptak pausar kameratilgangen, hentar ei fersk ramme og gjenopprettar søkjaren. Innstillingar blir lagra på kameraet.

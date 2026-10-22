@@ -18,15 +18,15 @@ function harness(options={}){
   const controller=new AbortController();
   const context=vm.createContext({
     window:{open(url){opened=url;return options.popupBlocked?null:helper},addEventListener:(name,listener)=>listeners.add(listener),removeEventListener:(name,listener)=>listeners.delete(listener)},
-    storeAsset:options.store??storeAsset,fetch:async()=>new Response(JSON.stringify(manifest)),crypto:webcrypto,Uint8Array,ArrayBuffer,DOMException,
+    storeAsset:options.store??storeAsset,loadCachedAsset,fetch:options.fetch??(async()=>new Response(JSON.stringify(manifest))),crypto:webcrypto,Uint8Array,ArrayBuffer,DOMException,
     setTimeout:(callback,delay)=>{timers.set(delay,callback);return delay},clearTimeout:id=>timers.delete(id)
   });
   vm.runInContext(source,context);
-  const promise=context.requestPhoneModels(controller.signal,update=>progress.push(update));promise.then(()=>{settled=true},()=>{settled=true});
+  const promise=options.start===false?null:context.requestPhoneModels(controller.signal,update=>progress.push(update),options.existing?helper:null);promise?.then(()=>{settled=true},()=>{settled=true});
   async function emit(data,details={}){await Promise.all([...listeners].map(listener=>listener({data,origin,source:helper,...details})));await flush()}
   async function ready(){await emit({type:'entropi-models-ready'});return messages.find(message=>message.data.type==='entropi-models-request')?.data.session}
   const asset=(key,session,data=bytes[key])=>({type:'entropi-model-asset',session,key,bytes:data.slice().buffer});
-  return {promise,controller,messages,progress,helper,emit,ready,asset,expire:async()=>{for(const callback of [...timers.values()])callback();await flush()},get opened(){return opened},get closed(){return closed},get settled(){return settled}};
+  return {promise,controller,messages,progress,helper,emit,ready,asset,modelsReady:()=>context.phoneModelsReady(controller.signal),expire:async()=>{for(const callback of [...timers.values()])callback();await flush()},get opened(){return opened},get closed(){return closed},get settled(){return settled}};
 }
 
 async function withDatabase(callback,options){
@@ -94,4 +94,38 @@ test('a cache-missing helper error keeps its actionable code and requires the cu
   await app.emit({type:'entropi-models-error',session,code:'PHONE_SETUP_REQUIRED',message:'Prepare online'});
   await assert.rejects(app.promise,{code:'PHONE_SETUP_REQUIRED',message:'Prepare online'});
   assert.equal(app.closed,true);
+});
+
+test('phone readiness verifies both cached files without opening a window',async()=>{
+  await withDatabase(async()=>{
+    const app=harness({start:false});assert.equal(await app.modelsReady(),false);
+    await storeAsset(manifest.asset,bytes.asset);assert.equal(await app.modelsReady(),false);
+    await storeAsset(manifest.runtime,bytes.runtime);assert.equal(await app.modelsReady(),true);
+    assert.equal(app.opened,false);
+    app.controller.abort();await assert.rejects(app.modelsReady(),{name:'AbortError'});
+  });
+});
+
+test('readiness does not conceal manifest or network failures as an unprepared phone',async()=>{
+  const app=harness({start:false,fetch:async()=>{throw new Error('Camera unavailable')}});
+  await assert.rejects(app.modelsReady(),/Camera unavailable/);
+  assert.equal(app.opened,false);
+});
+
+test('a prepared HTTPS opener is reused and remains open after verified transfer',async()=>{
+  await withDatabase(async()=>{
+    const app=harness({existing:true});assert.equal(app.opened,false);
+    assert.equal(app.messages[0].data.type,'entropi-models-connect');assert.equal(app.messages[0].target,origin);
+    const session=await app.ready();
+    await app.emit(app.asset('asset',session));await app.emit(app.asset('runtime',session));await app.emit({type:'entropi-models-complete',session});await app.promise;
+    assert.equal(app.closed,false);assert.equal(await loadCachedAsset(manifest.runtime).then(value=>value.length),bytes.runtime.length);
+  });
+});
+
+test('aborting or rejecting a reused HTTPS opener leaves it available for another attempt',async()=>{
+  const aborted=harness({existing:true});aborted.controller.abort();await assert.rejects(aborted.promise,{name:'AbortError'});assert.equal(aborted.closed,false);
+  assert.equal(aborted.messages.at(-1).data.type,'entropi-models-cancel');assert.equal(aborted.messages.at(-1).target,origin);
+  const rejected=harness({existing:true}),session=await rejected.ready();await rejected.emit({type:'entropi-models-error',session,code:'PHONE_SETUP_REQUIRED',message:'Prepare first'});
+  await assert.rejects(rejected.promise,{code:'PHONE_SETUP_REQUIRED'});assert.equal(rejected.closed,false);
+  assert.deepEqual({...rejected.messages.at(-1).data},{type:'entropi-models-cancel',session});
 });

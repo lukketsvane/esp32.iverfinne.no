@@ -28,6 +28,7 @@ function harness(options = {}) {
   const revoked = [];
   const objectUrls = new Map();
   const sceneCalls = [];
+  const modelChecks = [];
   const preparations = [];
   const opened = [];
   const messages = [];
@@ -173,6 +174,7 @@ function harness(options = {}) {
   };
   const window = {
     addEventListener: document.addEventListener,
+    opener: options.opener ?? null,
     open: (url, name) => { opened.push({ url, name }); return options.popupBlocked ? null : childWindow; },
   };
   const context = vm.createContext({
@@ -185,7 +187,8 @@ function harness(options = {}) {
     },
     Viewfinder: class { constructor(canvas) { this.canvas = canvas; } },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
-    requestPhoneModels: async (signal,onProgress) => { preparations.push({signal,onProgress}); if(options.prepare)await options.prepare(signal,onProgress); },
+    phoneModelsReady: async signal => { modelChecks.push(signal); return typeof options.modelsReady==='function'?options.modelsReady(signal):options.modelsReady!==false; },
+    requestPhoneModels: async (signal,onProgress,source) => { preparations.push({signal,onProgress,source}); if(options.prepare)await options.prepare(signal,onProgress,source); },
     createDepthScene: async (host, blob, onProgress, signal, quality) => {
       sceneCalls.push({ host, blob, onProgress, signal, quality });
       if (options.scene) return { setPrimitiveLevel() {}, ...await options.scene(host, blob, onProgress, signal, quality) };
@@ -220,7 +223,7 @@ function harness(options = {}) {
   }
   function changeStudio(kind, level) { studioControls[kind] = level; for (const binding of studioBindings) binding.onChange(kind, level); }
   function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
-  return { elements, qualities, photoQualities, document, images, canvases, requests, revoked, objectUrls, sceneCalls, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
+  return { elements, qualities, photoQualities, document, images, canvases, requests, revoked, objectUrls, sceneCalls, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
 }
 
 async function connectedCamera(options = {}) {
@@ -281,7 +284,7 @@ test('repeated shutter input sends only one capture request while capture is pen
 });
 
 test('leaving photo review removes the dialog and resumes the live stream', async () => {
-  const app = await connectedCamera();
+  const app = await connectedCamera({scene:async()=>({dispose(){}})});
   await app.get('capture-plane').emit('click');
   assert.equal(app.get('photo-dialog').open, true);
   assert.equal(app.images[0].src, '');
@@ -348,8 +351,9 @@ test('hidden page cannot accept an in-flight connection response as connected', 
   assert.equal(app.images[0].src, '');
 });
 
-test('the explicit setup helper remains usable when browser storage is denied', async () => {
-  const app = await connectedCamera({ storageDenied: true, search: '?setup' });
+test('the connection helper remains usable when optional browser storage is denied', async () => {
+  const app = await connectedCamera({ storageDenied: true });
+  await app.get('connection').emit('click');
   assert.equal(app.get('onboarding').open, true);
   await app.get('onboarding-next').emit('click');
   assert.equal(app.get('onboarding').open, false);
@@ -360,8 +364,8 @@ test('the explicit setup helper remains usable when browser storage is denied', 
 test('the connection helper exposes the open ENTROPI network without password fields or copying', async () => {
   const app=harness({search:'?setup',frames:false});await app.tick(150);
   assert.equal(app.get('onboarding').open,true);
-  assert.match(app.get('onboarding-copy').innerHTML,/ENTROPI/);
-  assert.match(app.get('onboarding-copy').innerHTML,/Nettet er ope/);
+  assert.match(html,/Klargjer telefonen med internett før du koplar til ENTROPI/);
+  assert.match(html,/Nettet er ope/);
   assert.equal(app.get('password'),undefined);
   assert.equal(app.get('copy-password'),undefined);
   assert.doesNotMatch(html,/entropi2026|copy-password|navigator\.clipboard|\bid=["']password["']/i);
@@ -467,8 +471,8 @@ test('missing phone models preserve the JPEG and offer phone preparation', async
   assert.equal(app.get('scene').hidden,true);
   assert.equal(app.get('save-photo').href,app.get('photo').src);
   assert.match(app.get('save-photo').download,/\.jpg$/);
-  assert.match(app.get('scene-status').innerHTML,/Klargjer telefonen med internett/);
-  assert.match(app.get('scene-status').innerHTML,/https:\/\/esp32\.iverfinne\.no\/prepare\//);
+  assert.equal(app.get('onboarding').open,true);
+  assert.equal(app.get('onboarding-prepare').hidden,false);
   assert.equal(app.get('retry-scene').hidden,false);
   assert.equal(app.get('retry-scene').getAttribute('aria-label'),'Klargjer telefonen');
   assert.equal(app.opened.length,0);
@@ -494,7 +498,7 @@ test('explicit phone preparation retries the same JPEG after model transfer', as
   await app.get('capture-plane').emit('click');await app.tick(0);
   const jpeg=app.sceneCalls[0].blob,url=app.get('save-photo').href;
   assert.equal(app.preparations.length,0);
-  await app.get('retry-scene').emit('click');await app.tick(0);
+  await app.get('onboarding-next').emit('click');await app.tick(0);
   assert.equal(app.preparations.length,1);
   assert.equal(app.sceneCalls[1].blob,jpeg);
   assert.equal(app.get('save-photo').href,url);
@@ -502,24 +506,24 @@ test('explicit phone preparation retries the same JPEG after model transfer', as
   assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
 });
 
-test('closing review during phone preparation aborts transfer and cannot start a late scene', async () => {
+test('leaving the page during phone preparation aborts transfer and cannot enable a late capture', async () => {
   const pending=deferred(),app=await connectedCamera({prepare:()=>pending.promise});
   await app.get('capture-plane').emit('click');await app.tick(0);
-  await app.get('retry-scene').emit('click');await app.tick(0);
+  await app.get('onboarding-next').emit('click');await app.tick(0);
   assert.equal(app.preparations.length,1);
-  await app.get('close-photo').emit('click');
+  await app.emit('pagehide');
   assert.equal(app.preparations[0].signal.aborted,true);
   pending.resolve();await app.tick(150);
   assert.equal(app.sceneCalls.length,1);
-  assert.equal(app.get('photo-dialog').open,false);
-  assert.match(app.images[0].src,/:81\/stream/);
+  assert.equal(app.get('capture-plane').disabled,true);
+  assert.equal(app.images[0].src,'');
 });
 
 test('failed model transfer keeps the original JPEG and exposes a retry', async () => {
   const app=await connectedCamera({prepare:async()=>{throw new Error('Transfer failed')}});
   await app.get('capture-plane').emit('click');await app.tick(0);
   const url=app.get('save-photo').href;
-  await app.get('retry-scene').emit('click');await app.tick(0);
+  await app.get('onboarding-next').emit('click');await app.tick(0);
   assert.equal(app.get('save-photo').href,url);
   assert.equal(app.get('photo').hidden,false);
   assert.equal(app.get('retry-scene').hidden,false);
@@ -559,11 +563,61 @@ test('a late scene from a previous capture cannot replace the current photo scen
   assert.equal(app.get('photo-dialog').open,true);
 });
 
-test('a first visit goes directly to the camera without an onboarding dialog or file chooser', async () => {
+test('a verified phone cache opens the camera without onboarding or a file chooser', async () => {
   const app=await connectedCamera({onboarded:false,storageDenied:true});
   assert.equal(app.get('onboarding').open,false);
   assert.doesNotMatch(html,/<input\b[^>]*\btype=["']file["']/i);
   assert.equal(app.opened.length,0);
+});
+
+test('first-time setup blocks photo requests until an explicit verified transfer completes',async()=>{
+  const pending=deferred(),app=harness({modelsReady:false,prepare:()=>pending.promise,scene:async()=>({dispose(){}})});await app.tick(150);
+  assert.equal(app.get('studio').classList.contains('connected'),true);
+  assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.get('onboarding').open,true);assert.equal(app.preparations.length,0);
+  await app.get('capture-plane').emit('click');assert.equal(app.requests.some(request=>request.url.startsWith('/capture')),false);
+  let prevented=false;await app.get('onboarding').emit('cancel',{preventDefault(){prevented=true}});assert.equal(prevented,true);
+  await app.get('onboarding-next').emit('click');await app.get('onboarding-next').emit('click');await app.tick(0);
+  assert.equal(app.preparations.length,1);assert.equal(app.get('onboarding-next').hidden,true);
+  pending.resolve();await app.tick(0);assert.equal(app.get('onboarding').open,false);assert.equal(app.get('capture-plane').disabled,false);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/capture')),false);
+  await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+});
+
+test('a prepared HTTPS opener provisions the camera before its first photo',async()=>{
+  const pending=deferred(),opener={},app=harness({search:'?connect',opener,modelsReady:false,prepare:()=>pending.promise});await app.tick(150);
+  assert.equal(app.preparations.length,1);assert.equal(app.preparations[0].source,opener);
+  assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.opened.length,0);
+  pending.resolve();await app.tick(0);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.get('onboarding').open,false);
+  assert.equal(app.sceneCalls.length,0);assert.equal(app.requests.some(request=>request.url.startsWith('/capture')),false);
+});
+
+test('capture waits for the actual phone cache check rather than a previous visit flag',async()=>{
+  const pending=deferred(),app=harness({modelsReady:()=>pending.promise,onboarded:true});await app.tick(150);
+  assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.preparations.length,0);
+  pending.resolve(false);await app.tick(0);assert.equal(app.get('onboarding').open,true);assert.equal(app.get('capture-plane').disabled,true);
+});
+
+test('returning after an interrupted cache check verifies the phone again before enabling capture',async()=>{
+  const pending=deferred();let checks=0;
+  const app=harness({modelsReady:()=>++checks===1?pending.promise:true});await app.tick(150);
+  await app.emit('pagehide');assert.equal(app.modelChecks[0].aborted,true);
+  pending.resolve(true);await app.tick(0);assert.equal(app.get('capture-plane').disabled,true);
+  await app.emit('pageshow',{persisted:true});await app.tick(150);
+  assert.equal(app.modelChecks.length,2);assert.equal(app.get('capture-plane').disabled,false);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/capture')),false);
+});
+
+test('a readiness failure explains the error without enabling capture or opening a popup',async()=>{
+  const app=harness({modelsReady:async()=>{throw new Error('Manifest unavailable')}});await app.tick(150);
+  assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.get('onboarding').open,true);
+  assert.match(app.get('onboarding-feedback').textContent,/Manifest unavailable/);assert.equal(app.opened.length,0);
+});
+
+test('the captive Wi-Fi entry shows only the Safari handoff and performs no camera or model requests',async()=>{
+  const app=harness({search:'?wifi'});await app.tick(1000);
+  assert.equal(app.get('safari-handoff').hidden,false);assert.equal(app.get('studio').hidden,true);
+  assert.equal(app.requests.length,0);assert.equal(app.modelChecks.length,0);assert.equal(app.preparations.length,0);assert.equal(app.images.length,0);
+  assert.equal(app.opened.length,0);assert.equal(app.get('onboarding').open,false);
 });
 
 async function reviewTap(app,details={}) {
