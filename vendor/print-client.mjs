@@ -1,4 +1,4 @@
-export function createPrintClient({printer,buildJob,report=()=>{}}={}){
+export function createPrintClient({printer,devicePrinter,buildJob,report=()=>{}}={}){
   const feedback=message=>report(/rate.?limit|too many BLE requests/i.test(String(message))?'Prøv igjen.':message);
   const attempted=new WeakSet();let disposed=false,busy=false,pending=null,completed=null,directImage=null;
   const valid=image=>image&&image.width===384&&Number.isInteger(image.height)&&image.height>0&&image.height<=1024&&(image.data instanceof Uint8Array||image.data instanceof Uint8ClampedArray)&&image.data.length===image.width*image.height*4;
@@ -11,6 +11,11 @@ export function createPrintClient({printer,buildJob,report=()=>{}}={}){
     if(!valid(image)){feedback('Utskriftsbiletet er ugyldig.');return false}
     busy=true;feedback('');
     try{
+      if(devicePrinter){
+        const job=buildJob(image);if(disposed||!isCurrent())return false;
+        const result=await devicePrinter.print(fresh(),job,()=>!disposed&&isCurrent());
+        if(disposed||!isCurrent()||result?.state!=='sent')return false;attempted.add(image);return true;
+      }
       if(printer){
         const connecting=printer.device?printer.start():printer.choose();
         if(!await connecting||!printer.ready){if(!disposed)feedback(printer.lastError||(printer.supported?'Skrivaren er ikkje tilkopla.':'Bluetooth er ikkje tilgjengeleg i denne nettlesaren.'));return false}
@@ -44,8 +49,8 @@ export function createPrintClient({printer,buildJob,report=()=>{}}={}){
         const poll=setInterval(()=>{if(disposed||!isCurrent()||popup.closed)finish(false)},250);
         pending=()=>finish(false);window.addEventListener('message',messageReceived);
       });
-    }catch(error){directImage=null;if(!disposed)feedback(error.message||'Kunne ikkje skrive ut.');return false}
+    }catch(error){directImage=null;if(!disposed&&isCurrent()&&error.name!=='AbortError')feedback(error.message||'Kunne ikkje skrive ut.');return false}
     finally{busy=false}
   }
-  return {print,dispose(){if(disposed)return;disposed=true;window.removeEventListener('pagehide',pagehide);pending?.();try{completed?.close()}catch{}completed=null;printer?.dispose()}};
+  return {print,dispose(){if(disposed)return;disposed=true;window.removeEventListener('pagehide',pagehide);pending?.();try{completed?.close()}catch{}completed=null;printer?.dispose();devicePrinter?.dispose()}};
 }

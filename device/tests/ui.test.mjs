@@ -30,7 +30,7 @@ function harness(options = {}) {
   const sceneCalls = [];
   const viewers=[];
   const printCalls = [], saves=[], encodedSnapshots=[],photoViews=[];
-  let printReport=()=>{};
+  let printReport=()=>{},printConfiguration;
   const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)},nativeSnapshot={width:640,height:960,data:new Uint8ClampedArray(640*960*4)};
   const modelChecks = [];
   const preparations = [];
@@ -188,7 +188,8 @@ function harness(options = {}) {
     createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
     phoneModelsReady: async signal => { modelChecks.push(signal); return typeof options.modelsReady==='function'?options.modelsReady(signal):options.modelsReady!==false; },
     requestPhoneModels: async (signal,onProgress,source) => { preparations.push({signal,onProgress,source}); if(options.prepare)await options.prepare(signal,onProgress,source); },
-    createPrintClient:({report})=>{printReport=report;return {print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return options.print?options.print(image,isCurrent,report):Promise.resolve(true)},dispose(){}}},
+    createDevicePrinter:()=>({native:true}),cloudPrintJob:image=>new Uint8Array([image.width&255]),
+    createPrintClient:configuration=>{printConfiguration=configuration;printReport=configuration.report;return {print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return options.print?options.print(image,isCurrent,printReport):Promise.resolve(true)},dispose(){}}},
     photoSnapshot:(image,pose,native=false)=>({width:native?1600:384,height:native?1200:288,data:new Uint8ClampedArray((native?1600*1200:384*288)*4),photo:true,image,pose:{...pose},native}),
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},
     savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
@@ -228,7 +229,7 @@ function harness(options = {}) {
   function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
   function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
-  return { elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, viewers, printCalls, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
+  return { elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
 }
 
 async function connectedCamera(options = {}) {
@@ -643,6 +644,13 @@ test('only a valid new JPEG resets photo framing and printing receives the curre
   const resets=app.photoResets;await app.get('close-photo').emit('click');await app.get('capture-plane').emit('click');
   assert.equal(app.photoResets,resets);assert.equal(app.photoGestureState.scale,2.5);
   await app.get('retry-capture').emit('click');assert.equal(app.photoResets,resets+1);assert.equal(app.photoGestureState.scale,1);
+});
+
+test('native device printing holds capture and MJPEG until terminal while preserving the current photo',async()=>{
+  const pending=deferred(),app=await connectedCamera({print:()=>pending.promise});assert.equal(app.printConfiguration.devicePrinter.native,true);assert.equal(typeof app.printConfiguration.buildJob,'function');
+  await app.get('capture-plane').emit('click');app.gesturePhoto({scale:2,x:20,y:-10});const original=app.get('photo').src,printing=app.get('print-photo').emit('click');await flush();
+  assert.equal(app.printCalls.length,1);assert.equal(app.get('print-photo').disabled,true);await app.get('close-photo').emit('click');assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.get('progress').hidden,false);assert.equal(app.images[0].src,'');await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  pending.resolve(true);await printing;assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.get('progress').hidden,true);assert.match(app.images[0].src,/\/stream/);assert.equal(app.opened.length,0);await app.get('last-photo').emit('click');assert.equal(app.get('photo').src,original);assert.equal(app.photoGestureState.scale,2);assert.equal(app.photoGestureState.x,20);
 });
 
 test('returning from working or failed splats measures photo framing after its full viewport is restored',async()=>{

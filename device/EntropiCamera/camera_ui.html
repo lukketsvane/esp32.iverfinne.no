@@ -69,17 +69,17 @@ photoView.setStyle(studioControls.photo);finder.setStyle(studioControls.photo);
 let liveGestures=null;
 photoGestures=attachPhotoGestures($('photo'),{enabled:()=>photoDialog.open&&studioControls.image===0&&!onboarding.open,onChange:pose=>{if(pose.scale!==photoPose.scale||pose.x!==photoPose.x||pose.y!==photoPose.y||pose.grain!==photoPose.grain||pose.contrast!==photoPose.contrast){reviewDown=reviewTap=null;photoPose={scale:pose.scale,x:pose.x,y:pose.y,grain:pose.grain,contrast:pose.contrast}}photoView.setTone(pose);finder.setTone(pose);if(liveGestures)Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter()}});
 liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>!photoDialog.open&&studioControls.image===0&&!onboarding.open&&!busy,onChange:pose=>{captureAfter=Date.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
-const printClient=createPrintClient({report:printFeedback});
+const printClient=createPrintClient({devicePrinter:createDevicePrinter(),buildJob:cloudPrintJob,report:printFeedback});
 const reviewing=()=>photoDialog.open;
 function notice(text,transient=false){clearTimeout(noticeTimer);$('notice').textContent=text;if(transient)noticeTimer=setTimeout(()=>{$('notice').textContent=''},4500)}
 function printFeedback(message){clearTimeout(printTimer);$('print-status').textContent=message;$('print-status').hidden=!message;if(message)printTimer=setTimeout(()=>{$('print-status').hidden=true},6000)}
 async function printCurrent(){
   if(printBusy||!photoDialog.open||!photoBlob||studioControls.image===1&&!sceneVisible)return;
   const mode=studioControls.image,blob=photoBlob,source=sceneViewer;
-  printBusy=true;refreshReview();printFeedback('');
+  printBusy=true;stopStream();controls();refreshReview();printFeedback('');
   try{await printClient.print(mode===0?photoView.snapshot(photoGestures.state):source.snapshot(),()=>photoDialog.open&&photoBlob===blob&&studioControls.image===mode&&(mode===0||source===sceneViewer))}
   catch(error){printFeedback(error.message||'Kunne ikkje skrive ut.')}
-  finally{printBusy=false;refreshReview()}
+  finally{printBusy=false;controls();refreshReview();resumeStream()}
 }
 function notifyCamera(type){
   if(!entry.has('connect')||!window.opener)return;
@@ -89,9 +89,9 @@ function notifyCamera(type){
   }catch{parentPort?.close();parentPort=null;parentReady=false}
 }
 function controls(){
-  const disabled=busy||!connected||connecting;
+  const disabled=busy||printBusy||!connected||connecting;
   $('capture-plane').disabled=disabled;$('retry-capture').disabled=disabled;$('retry-capture').hidden=!captureFailed||busy;
-  $('last-photo').disabled=busy;$('progress').hidden=!busy;
+  $('last-photo').disabled=busy;$('progress').hidden=!(busy||printBusy);
   studio.classList.toggle('connected',connected);studio.classList.toggle('reconnecting',connecting);
   $('connection-label').textContent=connected?'Tilkopla':connecting?'Koplar til':deviceStatus?'Kamera ikkje klart':'Fråkopla';
   if(connected&&hasFrame&&!connecting&&!parentReady){parentReady=true;notifyCamera('entropi-camera-ready')}
@@ -112,7 +112,7 @@ function healthMessage(s){return !s?'Ser etter kameraet …':s.camera_ready&&s.s
 function acceptStatus(status){deviceStatus=status;cameraStatus=status.camera_ready?status:null;controls()}
 function stopStream(){streaming=false;clearInterval(frameTimer);live.removeAttribute('src');finder.active=!document.hidden}
 function startStream(){
-  if(streaming||document.hidden||reviewing()||busy||!cameraStatus)return;
+  if(streaming||document.hidden||reviewing()||busy||printBusy||!cameraStatus)return;
   streaming=true;finder.active=true;live.src=streamUrl.href+'?t='+Date.now();
   frameTimer=setInterval(()=>{if(!streaming||!live.naturalWidth)return;try{sourceContext.drawImage(live,0,0,source.width,source.height);hasFrame=true}catch{loseConnection('Kamerabiletet kunne ikkje visast.')}},50);
 }
@@ -182,7 +182,7 @@ async function showPhoto(blob,signal){
   refreshReview();if(studioControls.image===1)void makeScene();
 }
 async function takePhoto(){
-  if(busy||connecting||!connected||onboarding.open||reviewing()||Date.now()<captureAfter)return;
+  if(busy||printBusy||connecting||!connected||onboarding.open||reviewing()||Date.now()<captureAfter)return;
   busy=true;captureFailed=false;stopStream();controls();notice('');
   const task=new AbortController();captureTask=task;
   try{

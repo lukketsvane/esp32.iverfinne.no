@@ -19,6 +19,9 @@ studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("exp
 studio += "\n" + (shared / "vendor/photo-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing = (shared / "vendor/print-client.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing = "const createPrintClient = (() => {\n" + printing + "\nreturn createPrintClient;\n})();"
+native_print = "\n".join((shared / ("vendor/print/" + name + ".mjs")).read_text(encoding="utf-8").replace("export ", "") for name in ["px10-protocol", "raster", "cloud-raster"])
+native_print = re.sub(r"^import .*?;\s*", "", native_print, flags=re.MULTILINE)
+printing += "\nconst cloudPrintJob = (() => {\n" + native_print + "\nreturn cloudPrintJob;\n})();\n" + (shared / "vendor/print/device-printer.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing += "\n" + (shared / "vendor/photo.mjs").read_text(encoding="utf-8").replace("export ", "")
 photo_view = (shared / "vendor/photo-view.mjs").read_text(encoding="utf-8").replace("export ", "")
 photo_view = re.sub(r"^import .*?;\s*", "", photo_view, flags=re.MULTILINE)

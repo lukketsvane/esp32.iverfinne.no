@@ -7,11 +7,11 @@ import vm from 'node:vm';
 const source=(await readFile(new URL('../vendor/print-client.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 const image=()=>({width:384,height:1,data:new Uint8ClampedArray(384*4).fill(255)});
-function harness({printer,buildJob=()=>new Uint8Array([1,2,3]),blocked=false}={}){
+function harness({printer,devicePrinter,buildJob=()=>new Uint8Array([1,2,3]),blocked=false}={}){
   const listeners=new Map(),opened=[],messages=[],reports=[],polls=new Map(),timeouts=new Map();let closed=false;
   const popup={closed:false,postMessage:(data,origin,ports)=>messages.push({data,origin,ports}),close(){closed=true;this.closed=true}};
   const context=vm.createContext({WeakSet,Uint8Array,Uint8ClampedArray,crypto:webcrypto,window:{open:(url,name)=>{opened.push({url,name});popup.closed=false;return blocked?null:popup},addEventListener:(name,listener)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(listener)},removeEventListener:(name,listener)=>listeners.get(name)?.delete(listener)},setTimeout:(callback,delay)=>{timeouts.set(delay,callback);return delay},clearTimeout:id=>timeouts.delete(id),setInterval:(callback,delay)=>{polls.set(delay,callback);return delay},clearInterval:id=>polls.delete(id)});
-  vm.runInContext(source,context);const client=context.createPrintClient({printer,buildJob,report:message=>reports.push(message)});
+  vm.runInContext(source,context);const client=context.createPrintClient({printer,devicePrinter,buildJob,report:message=>reports.push(message)});
   async function emit(data,details={}){for(const listener of [...listeners.get('message')??[]])listener({data,source:popup,origin:'https://esp32.iverfinne.no',...details});await flush()}
   return {client,popup,opened,messages,reports,emit,expire:async delay=>{timeouts.get(delay)?.();await flush()},hide:async(persisted=false)=>{for(const listener of [...listeners.get('pagehide')??[]])listener({persisted});await flush()},poll:async()=>{for(const callback of [...polls.values()])callback();await flush()},get deadline(){return timeouts.get(300000)},get session(){return opened.at(-1)?.url.split('#')[1]},get closed(){return closed}};
 }
@@ -20,6 +20,17 @@ function directPrinter(choose=async()=>true){
   const printer={supported:true,ready:false,device:null,addEventListener(name,callback){listener=callback},async choose(){choices++;const result=await choose();this.ready=result;if(result)this.device={};return result},async start(){return this.ready},enqueue(id,bytes){jobs.push({id,bytes});return true},dispose(){disposed=true}};
   return {printer,jobs,status:detail=>listener?.({detail}),get choices(){return choices},get disposed(){return disposed}};
 }
+
+test('the device transport sends raster bytes once and stays busy until the board finishes without a popup',async()=>{
+  let finish,disposed=false;const jobs=[],bytes=new Uint8Array([4,5,6]),devicePrinter={print(id,data,current){jobs.push({id,data,current});return new Promise(resolve=>finish=resolve)},dispose(){disposed=true}},app=harness({devicePrinter,buildJob:()=>bytes}),snapshot=image();
+  const printing=app.client.print(snapshot);assert.equal(jobs.length,1);assert.match(jobs[0].id,/^[a-f0-9]{32}$/);assert.equal(jobs[0].data,bytes);assert.equal(jobs[0].current(),true);assert.equal(await app.client.print(image()),false);assert.equal(app.opened.length,0);await app.hide(true);assert.equal(jobs[0].current(),true);
+  finish({state:'sent'});assert.equal(await printing,true);assert.equal(await app.client.print(snapshot),false);assert.deepEqual(app.reports,['']);app.client.dispose();assert.equal(disposed,true);
+});
+
+test('a failed board job permits only an explicit fresh attempt and stale completions stay silent',async()=>{
+  const jobs=[];let fail=true,current=true,finish;const devicePrinter={async print(id,data,isCurrent){jobs.push({id,isCurrent});if(fail)throw new Error('Skrivaren svara ikkje.');return await new Promise(resolve=>finish=resolve)},dispose(){}},app=harness({devicePrinter}),snapshot=image();
+  assert.equal(await app.client.print(snapshot),false);assert.match(app.reports.at(-1),/svara ikkje/);fail=false;const printing=app.client.print(snapshot,()=>current);assert.equal(jobs.length,2);assert.notEqual(jobs[0].id,jobs[1].id);current=false;finish({state:'sent'});assert.equal(await printing,false);assert.equal(app.opened.length,0);assert.equal(app.reports.at(-1),'');app.client.dispose();
+});
 
 test('a direct print invokes the native chooser in the same gesture and queues one immutable job',async()=>{
   const device=directPrinter(),app=harness({printer:device.printer}),snapshot=image();

@@ -24,6 +24,7 @@
 #include "camera_assets.h"
 #include "board_config.h"
 #include "jpeg_frame.h"
+#include "px10_printer.h"
 
 static httpd_handle_t cameraHttpd = nullptr;
 static httpd_handle_t streamHttpd = nullptr;
@@ -311,6 +312,7 @@ static bool capturePhoto(PhotoFrame &photo) {
 }
 
 static esp_err_t captureHandler(httpd_req_t *request) {
+  if (printerBusy()) return unavailable(request, "Printer is busy");
   PhotoFrame photo;
   if (!capturePhoto(photo)) return unavailable(request, "Could not capture photo");
   httpd_resp_set_type(request, "image/jpeg");
@@ -334,12 +336,13 @@ static esp_err_t assetHandler(httpd_req_t *request) {
 }
 
 static esp_err_t streamHandler(httpd_req_t *request) {
+  if (printerBusy()) return unavailable(request, "Printer is busy");
   if (!cameraReady) return unavailable(request, "Camera is unavailable");
   httpd_resp_set_type(request, "multipart/x-mixed-replace;boundary=entropi-frame");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "*");
   unsigned staleFrames = 0;
-  while (cameraReady && !recovering) {
+  while (cameraReady && !recovering && !printerBusy()) {
     PhotoFrame photo;
     if (!lockCamera(250)) {
       vTaskDelay(pdMS_TO_TICKS(20));
@@ -379,10 +382,10 @@ static esp_err_t indexHandler(httpd_req_t *request) {
   return httpd_resp_send(request, reinterpret_cast<const char *>(camera_ui_html_gz), sizeof(camera_ui_html_gz));
 }
 
-static bool registerHandler(httpd_handle_t server, const char *uri, esp_err_t (*handler)(httpd_req_t *)) {
+static bool registerHandler(httpd_handle_t server, const char *uri, esp_err_t (*handler)(httpd_req_t *), httpd_method_t method = HTTP_GET) {
   httpd_uri_t route = {};
   route.uri = uri;
-  route.method = HTTP_GET;
+  route.method = method;
   route.handler = handler;
   if (httpd_register_uri_handler(server, &route) == ESP_OK) return true;
   setServerError("Could not register HTTP endpoint");
@@ -397,11 +400,35 @@ static void deviceWorker(void *) {
   nextRecovery = millis() + 5000;
   for (;;) {
     cameraMaintenance();
+    int64_t cutoff = 0;
+    if (!printerBusy() && printerCameraCheckRequested(cutoff)) {
+      unsigned width = 0, height = 0;
+      size_t length = 0;
+      bool valid = false, soi = false, eoi = false, fresh = false;
+      if (lockCamera(500)) {
+        int64_t deadline = esp_timer_get_time() + 1000000;
+        for (unsigned attempt = 0; attempt < 4 && cameraReady; attempt++) {
+          camera_fb_t *frame = waitForFrame(deadline);
+          if (!frame) break;
+          int64_t timestamp = int64_t(frame->timestamp.tv_sec) * 1000000 + frame->timestamp.tv_usec;
+          length = frame->len;
+          fresh = timestamp >= cutoff;
+          soi = length >= 2 && frame->buf[0] == 0xff && frame->buf[1] == 0xd8;
+          eoi = length >= 2 && frame->buf[length - 2] == 0xff && frame->buf[length - 1] == 0xd9;
+          valid = fresh && jpegDimensions(frame->buf, length, width, height);
+          esp_camera_fb_return(frame);
+          if (fresh) break;
+        }
+        unlockCamera();
+      }
+      Serial.printf("Printer camera check: valid=%u fresh=%u jpeg=%ux%u bytes=%u SOI=%u EOI=%u internal=%u largest=%u psram=%u\n", valid, fresh, width, height, static_cast<unsigned>(length), soi, eoi, static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    }
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
 void startCameraServer() {
+  startPrinterBridge();
   cameraMutex = xSemaphoreCreateMutex();
   hasPsram = psramFound();
   preferencesReady = preferences.begin("entropi", false);
@@ -433,6 +460,8 @@ void startCameraServer() {
     registerHandler(cameraHttpd, "/control", controlHandler);
     registerHandler(cameraHttpd, "/capture", captureHandler);
     registerHandler(cameraHttpd, "/pointcloud/*", assetHandler);
+    registerHandler(cameraHttpd, "/print", printerUploadHandler, HTTP_POST);
+    registerHandler(cameraHttpd, "/print-status", printerStatusHandler);
   } else {
     setServerError("Could not start HTTP server");
   }
