@@ -7,6 +7,7 @@ root = Path(__file__).resolve().parent
 sketch = root / "EntropiCamera"
 shared = root.parent
 source = (sketch / "camera_ui.html").read_text(encoding="utf-8")
+palettes = (shared / "vendor/color-schemes.mjs").read_text(encoding="utf-8").replace("export ", "")
 renderer = (shared / "vendor/viewfinder.mjs").read_text(encoding="utf-8").replace("export class Viewfinder", "class Viewfinder", 1)
 renderer = re.sub(r"^import .*?;\s*", "", renderer, flags=re.MULTILINE)
 scene = (shared / "vendor/scene.mjs").read_text(encoding="utf-8").replace("export async function", "async function")
@@ -30,7 +31,7 @@ assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace(
 bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
 bridge = "const { requestPhoneModels, phoneModelsReady } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady };\n})();"
-source = source.replace("__ENTROPI_VIEWFINDER__", renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_PRINT_CLIENT__", printing).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
+source = source.replace("__ENTROPI_VIEWFINDER__", palettes + "\n" + renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_PRINT_CLIENT__", printing).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
 source = source.replace("__ENTROPI_ICON__", "data:image/svg+xml," + quote((shared / "favicon.svg").read_text(encoding="utf-8"), safe=""))
 
 def array(name, payload):
