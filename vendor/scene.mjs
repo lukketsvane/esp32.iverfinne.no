@@ -40,16 +40,16 @@ function renderScene(host, cloud, bytes, signal) {
   const fitDistance=(width,height)=>Math.max(.3,cloud.radius/Math.sin(Math.atan(Math.min(1,width/height)/focal))*1.08);
   let canvas=null,gpu=null,gestures=null,observer=null,yaw=initialYaw,pitch=initialPitch,zoom=1,panX=0,panY=0,pointScale=1,opacity=1,density=1,definition=.5,frame=0,disposed=false,primitiveLevel=0,targetWidth=0,targetHeight=0,geometryDirty=true,uploadDirty=true,needsGPU=false,paletteId='original',reveal=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches?1:0,revealAt=null;
   function recolor(){
-    const scheme=resolveColorScheme(paletteId),original=scheme.id==='original';
+    const scheme=resolveColorScheme(paletteId);
     let minZ=Infinity,maxZ=-Infinity;
-    if(!original)for(let i=0;i<cloud.count;i++){
+    for(let i=0;i<cloud.count;i++){
       const z=cloud.positions[i*3+2];minZ=Math.min(minZ,z);maxZ=Math.max(maxZ,z);
     }
     const span=Math.max(1e-6,maxZ-minZ);
     for(let i=0;i<cloud.count;i++){
       const base=i*32+24,r=bytes[base],g=bytes[base+1],b=bytes[base+2];
       const z=cloud.positions[i*3+2],depth=(z-minZ)/span,light=(r*.2126+g*.7152+b*.0722)/255;
-      const ink=original?nearestC64(r,g,b):gaussianInk(scheme,depth,light,(i*17%31)/31-.5);
+      const ink=gaussianInk(scheme,depth,light,(i*17%31)/31-.5);
       for(let c=0;c<3;c++)colors[i*4+c]=ink[c]/255;
       colors[i*4+3]=bytes[base+3]/255;
     }
@@ -149,8 +149,8 @@ function renderScene(host, cloud, bytes, signal) {
     gl.clear(gl.COLOR_BUFFER_BIT);gl.drawArrays(gl.POINTS,0,order.length);
     if(primitiveLevel){
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,width,height);gl.disable(gl.BLEND);gl.useProgram(screenProgram);gl.bindBuffer(gl.ARRAY_BUFFER,screenBuffer);for(const [at] of attributes)gl.disableVertexAttribArray(at);gl.enableVertexAttribArray(screenPosition);gl.vertexAttribPointer(screenPosition,2,gl.FLOAT,false,0,0);
-      const mode=PRIMITIVE_MODES[primitiveLevel],scheme=resolveColorScheme(paletteId),ink=scheme.id==='original'?mode.palette:scheme.colors,palette=new Float32Array(48);for(let i=0;i<ink.length;i++)for(let c=0;c<3;c++)palette[i*3+c]=ink[i][c]/255;
-      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);gl.uniform1i(screenUniforms.image,0);gl.uniform2f(screenUniforms.size,size.width,size.height);gl.uniform3fv(screenUniforms['palette[0]'],palette);gl.uniform1i(screenUniforms.count,ink.length);gl.uniform1i(screenUniforms.level,scheme.id==='original'?primitiveLevel:0);gl.uniform1f(screenUniforms.dither,mode.dither/255);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+      const mode=PRIMITIVE_MODES[primitiveLevel],ink=resolveColorScheme(paletteId).colors,palette=new Float32Array(48);for(let i=0;i<ink.length;i++)for(let c=0;c<3;c++)palette[i*3+c]=ink[i][c]/255;
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);gl.uniform1i(screenUniforms.image,0);gl.uniform2f(screenUniforms.size,size.width,size.height);gl.uniform3fv(screenUniforms['palette[0]'],palette);gl.uniform1i(screenUniforms.count,ink.length);gl.uniform1i(screenUniforms.level,primitiveLevel);gl.uniform1f(screenUniforms.dither,mode.dither/255);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
     }
     return reveal<1;
   }

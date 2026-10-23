@@ -1,9 +1,9 @@
 import {photoSnapshot} from './photo.mjs';
-import {resolveColorScheme,ditherInk} from './color-schemes.mjs';
+import {resolveColorScheme} from './color-schemes.mjs';
 
 export function processPhoto(source,width,height,style,grain,contrast,schemeId='original'){
   contrast=Math.max(1,contrast);
-  const scheme=resolveColorScheme(schemeId),colored=scheme.id!=='original';
+  const scheme=resolveColorScheme(schemeId);
   const cols=Math.ceil(width/grain),rows=Math.ceil(height/grain),values=new Float32Array(cols*rows);
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
     let sum=0,count=0;
@@ -12,7 +12,9 @@ export function processPhoto(source,width,height,style,grain,contrast,schemeId='
   }
   const bayer=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
-    const index=y*cols+x,old=values[index],value=old>=(style===1?(bayer[(y%4)*4+x%4]+.5)*255/16:128)?255:0;
+    const index=y*cols+x,old=values[index];
+    if(scheme.tones===4){values[index]=Math.max(0,Math.min(3,Math.floor(old/256*4+(bayer[(y%4)*4+x%4]+.5)/16-.5)));continue}
+    const value=old>=(style===1?(bayer[(y%4)*4+x%4]+.5)*255/16:128)?255:0;
     values[index]=value;
     if(style<=1)continue;
     const error=(old-value)/(style===2?16:8);
@@ -28,7 +30,7 @@ export function processPhoto(source,width,height,style,grain,contrast,schemeId='
   const data=new Uint8ClampedArray(source.length);
   for(let y=0;y<height;y++)for(let x=0;x<width;x++){
     const index=(y*width+x)*4,value=values[Math.floor(y/grain)*cols+Math.floor(x/grain)];
-    if(colored){const color=ditherInk(scheme,value===255,source[index]/255);data[index]=color[0];data[index+1]=color[1];data[index+2]=color[2]}
+    if(scheme.tones===4){const color=scheme.colors[value];data[index]=color[0];data[index+1]=color[1];data[index+2]=color[2]}
     else data[index]=data[index+1]=data[index+2]=value;
     data[index+3]=source[index+3];
   }

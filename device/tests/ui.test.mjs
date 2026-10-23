@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { COLOR_SCHEMES } from '../../vendor/color-schemes.mjs';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]);
@@ -37,7 +38,7 @@ function harness(options = {}) {
   const opened = [];
   const messages = [];
   const studioBindings = [];
-  const studioControls = { image: 0, primitive: 0, photo:1, setImage:level=>changeStudio('image',level), dispose() {} },finders=[];
+  const studioControls = { image: 0, primitive: 0, photo:0, setImage:level=>changeStudio('image',level), dispose() {} },finders=[];
   let colorBinding=null;
   const photoGestureState={scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1},liveGestureState={...photoGestureState},photoRefreshes=[];let photoGestureBinding,liveGestureBinding,photoResets=0;
   const photoGestureController={state:photoGestureState,reset(){photoResets++;Object.assign(photoGestureState,{scale:1,x:0,y:0});photoGestureBinding.onChange(photoGestureState)},refresh(){photoRefreshes.push({working:elements.get('photo-dialog').classList.contains('working'),error:elements.get('photo-dialog').classList.contains('error')});photoGestureBinding.onChange(photoGestureState)},dispose(){}};
@@ -184,10 +185,11 @@ function harness(options = {}) {
       getItem(key) { if (options.storageDenied) throw new Error('Storage denied'); return stored.get(key) ?? null; },
       setItem(key, value) { if (options.storageDenied) throw new Error('Storage denied'); stored.set(key, value); },
     },
+    COLOR_SCHEMES,
     Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};this.captures=[];finders.push(this) }capture(source){const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;this.captures.push({source,url:source.src,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
-    readColorScheme:kind=>stored.get('entropi-color-'+kind+'-v1')??'original',
-    saveColorScheme:(kind,id)=>stored.set('entropi-color-'+kind+'-v1',id),
+    readColorScheme:kind=>stored.get('entropi-screen-'+kind+'-v2')??'macintosh',
+    saveColorScheme:(kind,id)=>stored.set('entropi-screen-'+kind+'-v2',id),
     attachColorSchemeControls:(hosts,getKind,getSelection,onChoose,enabled)=>{
       colorBinding={hosts,getKind,getSelection,onChoose,enabled};return {refresh(){},dispose(){}};
     },
@@ -426,7 +428,7 @@ test('splats check models only when selected and use fixed quality',async()=>{
   await app.get('capture-plane').emit('click');await app.tick(0);
   const url=app.get('photo').src;app.changeStudio('primitive',3);app.changeStudio('image',1);await app.tick(0);
   assert.equal(app.modelChecks.length,1);assert.equal(app.sceneCalls.length,1);assert.equal(app.sceneCalls[0].quality,2);
-  assert.equal(app.sceneCalls[0].blob,app.objectUrls.get(url));assert.equal(styles.at(-1),3);
+  assert.equal(app.sceneCalls[0].blob,app.objectUrls.get(url));assert.equal(styles.at(-1),2);
   assert.equal(app.get('scene').hidden,false);assert.equal(app.get('photo').hidden,true);
   assert.equal(app.get('photo').src,url);assert.equal(app.get('scene-status').textContent,'');
 });
@@ -954,9 +956,9 @@ test('primitive changes affect the cached scene while image mode leaves fixed qu
   const styles=[],app=await connectedCamera({splats:true,scene:async()=>({dispose(){},setPrimitiveLevel(level){styles.push(level)}})});
   await app.get('capture-plane').emit('click');await app.tick(0);assert.equal(app.sceneCalls[0].quality,2);
   app.changeStudio('image',0);app.changeStudio('primitive',3);app.changeStudio('image',1);await app.tick(0);
-  assert.equal(app.sceneCalls.length,1);assert.equal(styles.at(-1),3);
+  assert.equal(app.sceneCalls.length,1);assert.equal(styles.at(-1),2);
   await app.get('close-photo').emit('click');await app.get('capture-plane').emit('click');await app.tick(0);
-  assert.equal(app.sceneCalls[1].quality,2);assert.equal(styles.at(-1),3);
+  assert.equal(app.sceneCalls[1].quality,2);assert.equal(styles.at(-1),2);
 });
 
 test('a rail gesture clears a pending result tap even when its value is unchanged', async () => {
@@ -994,33 +996,29 @@ test('photo style and three-finger tone feed the rendered save and print source 
 });
 
 test('photo and splat styles stay independent while the same original JPEG and scene are reused',async()=>{
-  const styles=[],app=await connectedCamera({scene:async()=>({dispose(){},setPrimitiveLevel:value=>styles.push(value)})});await app.get('capture-plane').emit('click');const view=app.photoViews[0],url=app.get('photo').src;app.changeStudio('photo',3);app.changeStudio('image',1);await app.tick(0);assert.equal(view.shown,false);app.changeStudio('primitive',2);assert.equal(styles.at(-1),2);app.changeStudio('image',0);assert.equal(view.shown,true);assert.equal(view.style,3);app.changeStudio('photo',1);app.changeStudio('image',1);await app.tick(0);assert.equal(app.sceneCalls.length,1);assert.equal(app.studioControls.primitive,2);assert.equal(view.style,1);assert.equal(view.sources.length,1);assert.equal(app.get('photo').src,url);
+  const styles=[],app=await connectedCamera({scene:async()=>({dispose(){},setPrimitiveLevel:value=>styles.push(value)})});await app.get('capture-plane').emit('click');const view=app.photoViews[0],url=app.get('photo').src;app.changeStudio('photo',3);app.changeStudio('image',1);await app.tick(0);assert.equal(view.shown,false);app.changeStudio('primitive',2);assert.equal(styles.at(-1),2);app.changeStudio('image',0);assert.equal(view.shown,true);assert.equal(view.style,1);app.changeStudio('photo',1);app.changeStudio('image',1);await app.tick(0);assert.equal(app.sceneCalls.length,1);assert.equal(app.studioControls.primitive,2);assert.equal(view.style,1);assert.equal(view.sources.length,1);assert.equal(app.get('photo').src,url);
 });
 
 test('live dithering and tone use the captured photo style without a three-finger shutter click',async()=>{
-  const app=await connectedCamera(),finder=app.finders[0],view=app.photoViews[0];assert.equal(finder.style,1);assert.equal(view.style,1);app.changeStudio('photo',2);assert.equal(finder.style,2);assert.equal(app.gestureLive({grain:3,contrast:1.5}),true);assert.deepEqual(finder.tone,{grain:3,contrast:1.5});await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,0);await app.tick(401);await app.get('capture-plane').emit('click');assert.equal(view.sources.length,1);assert.equal(view.style,2);assert.deepEqual(view.tone,{grain:3,contrast:1.5});assert.equal(app.gestureLive({grain:1}),false);app.gesturePhoto({grain:5,contrast:2});assert.deepEqual(finder.tone,{grain:5,contrast:2});assert.equal(app.liveGestureState.grain,5);assert.equal(app.sceneCalls.length,0);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  const app=await connectedCamera(),finder=app.finders[0],view=app.photoViews[0];assert.equal(finder.style,3);assert.equal(view.style,3);app.changeStudio('photo',2);assert.equal(finder.style,1);assert.equal(app.gestureLive({grain:3,contrast:1.5}),true);assert.deepEqual(finder.tone,{grain:3,contrast:1.5});await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,0);await app.tick(401);await app.get('capture-plane').emit('click');assert.equal(view.sources.length,1);assert.equal(view.style,1);assert.deepEqual(view.tone,{grain:3,contrast:1.5});assert.equal(app.gestureLive({grain:1}),false);app.gesturePhoto({grain:5,contrast:2});assert.deepEqual(finder.tone,{grain:5,contrast:2});assert.equal(app.liveGestureState.grain,5);assert.equal(app.sceneCalls.length,0);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
 });
 
 
-test('photo and Gaussian palettes are independent and recolour existing scenes without rerunning depth', async()=>{
+test('historical profiles change photo and Gaussian output independently without new inference',async()=>{
   const app=await connectedCamera({scene:async()=>({dispose(){}})});
-  assert.equal(app.paletteKind(),'photo');
-  assert.equal(app.finders[0].palette,'original');
-  app.choosePalette('coral');
-  assert.equal(app.photoViews[0].palette,'coral');
-  assert.equal(app.finders[0].palette,'coral');
-  assert.equal(app.stored.get('entropi-color-photo-v1'),'coral');
-  await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.finders[0].palette,'macintosh');
+  app.changeStudio('photo',4);
+  assert.equal(app.photoViews[0].palette,'bluecrt');
+  assert.equal(app.finders[0].palette,'bluecrt');
+  assert.equal(app.stored.get('entropi-screen-photo-v2'),'bluecrt');
+  await app.get('capture-plane').emit('click');
   app.changeStudio('image',1);await app.tick(0);
-  assert.equal(app.paletteKind(),'depth');
-  assert.equal(app.selectedPalette(),'original');
-  assert.equal(app.viewers[0].palette,'original');
-  const firstInferences=app.sceneCalls.length;
-  app.choosePalette('ember');
-  assert.equal(app.viewers[0].palette,'ember');
-  assert.equal(app.sceneCalls.length,firstInferences);
-  assert.equal(app.stored.get('entropi-color-depth-v1'),'ember');
+  assert.equal(app.viewers[0].palette,'macintosh');
+  const inferences=app.sceneCalls.length;
+  app.changeStudio('primitive',2);
+  assert.equal(app.viewers[0].palette,'ibmcga');
+  assert.equal(app.sceneCalls.length,inferences);
+  assert.equal(app.stored.get('entropi-screen-depth-v2'),'ibmcga');
   app.changeStudio('image',0);
-  assert.equal(app.paletteKind(),'photo');
-  assert.equal(app.selectedPalette(),'coral');
+  assert.equal(app.photoViews[0].palette,'bluecrt');
 });
