@@ -1,4 +1,5 @@
 import {processPhoto} from './photo-view.mjs';
+import {normalizeAdjustments} from './image-adjustments.mjs';
 
 function finderSourceSize(source){
   if(!source)return {width:0,height:0};
@@ -32,7 +33,7 @@ function maskFinderFrame(data,projection){for(let i=0;i<projection.warp.length;i
 
 export class Viewfinder {
   constructor(canvas){
-    this.canvas=canvas;this.active=true;this.disposed=false;this.source=null;this.style=0;this.palette='original';this.grain=1;this.contrast=1;
+    this.canvas=canvas;this.active=true;this.disposed=false;this.source=null;this.style=0;this.palette='original';this.grain=1;this.contrast=1;this.adjustments=null;this.rotation=0;
     this.context=canvas.getContext('2d');this.sampleCanvas=canvas.ownerDocument.createElement('canvas');this.sampleContext=this.sampleCanvas.getContext('2d',{willReadFrequently:true});
     this.fit();let previous=-Infinity;
     const frame=time=>{if(this.disposed)return;this.animation=requestAnimationFrame(frame);if(!this.active||document.hidden||time-previous<50)return;previous=time;this.draw(time)};
@@ -40,7 +41,9 @@ export class Viewfinder {
   }
   setStyle(level){this.style=Number.isFinite(level)?Math.max(0,Math.min(3,Math.round(level))):0}
   setPalette(id){this.palette=id}
-  setTone({grain=this.grain,contrast=this.contrast}={}){if(Number.isFinite(grain))this.grain=Math.max(1,Math.min(8,grain));if(Number.isFinite(contrast))this.contrast=Math.max(.5,Math.min(3,contrast))}
+  setRotation(value){if(Number.isFinite(value))this.rotation=value}
+  setAdjustments(value){this.adjustments=normalizeAdjustments(value);this.contrast=this.adjustments.contrast}
+  setTone({grain=this.grain,contrast=this.contrast}={}){if(Number.isFinite(grain))this.grain=Math.max(1,Math.min(8,grain));if(Number.isFinite(contrast)){this.contrast=Math.max(.5,Math.min(3,contrast));if(this.adjustments)this.adjustments={...this.adjustments,contrast:this.contrast}}}
   draw(time=0){
     const source=this.source;if(!source||!this.context||!this.sampleContext)return;
     const video=source instanceof HTMLVideoElement;if(video&&source.readyState<2)return;
@@ -48,12 +51,13 @@ export class Viewfinder {
     this.fit();
     try{
       paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,false);this.time=time;
-      const displayWidth=this.canvas.getBoundingClientRect?.().width||this.canvas.width,step=this.grain*this.canvas.width/displayWidth;
-      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,step,this.contrast,this.palette));maskFinderFrame(this.output.data,this.projection);this.context.putImageData(this.output,0,0);
+      const rect=this.canvas.parentElement?.getBoundingClientRect?.()??this.canvas.getBoundingClientRect?.(),displayWidth=rect?.width||this.canvas.width,displayHeight=rect?.height||displayWidth*1.5;
+      const radians=this.rotation*Math.PI/180,c=Math.abs(Math.cos(radians)),s=Math.abs(Math.sin(radians)),fit=Math.min(displayWidth/(this.canvas.width*c+this.canvas.height*s),displayHeight/(this.canvas.width*s+this.canvas.height*c)),step=this.grain/fit;
+      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,step,this.contrast,this.palette,this.adjustments));maskFinderFrame(this.output.data,this.projection);this.context.putImageData(this.output,0,0);
     }catch{}
   }
   fit(){
-    const rect=this.canvas.getBoundingClientRect?.(),w=rect?.width>0?Math.max(1,Math.round(Math.min(rect.width,240))):240,h=Math.max(1,Math.round(w*1.5));if(this.canvas.width===w&&this.canvas.height===h)return;
+    const rect=this.canvas.parentElement?.getBoundingClientRect?.()??this.canvas.getBoundingClientRect?.(),w=rect?.width>0?Math.max(1,Math.round(Math.min(rect.width,240))):240,h=Math.max(1,Math.round(w*1.5));if(this.canvas.width===w&&this.canvas.height===h)return;
     this.canvas.width=this.sampleCanvas.width=w;this.canvas.height=this.sampleCanvas.height=h;this.output=this.context?.createImageData(w,h);
     this.projection=finderProjection(w,h);this.pixels=new Uint8ClampedArray(w*h*4);
     this.canvas.style.imageRendering='pixelated';

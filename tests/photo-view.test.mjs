@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
+const adjustmentCode=(await readFile(new URL('../vendor/image-adjustments.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
 const colors=(await readFile(new URL('../vendor/color-schemes.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
 const retro=(await readFile(new URL('../vendor/retro-modes.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/gm,'').replace(/^export /gm,'');
 const photo=(await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8')).replace(/^export /gm,''),view=(await readFile(new URL('../vendor/photo-view.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/gm,'').replace(/^export /gm,'');
@@ -14,8 +15,10 @@ function harness(width=16,height=12,pixels){
       createImageData(w,h){return {data:new Uint8ClampedArray(w*h*4)}},
       putImageData(image){canvas.pixels=image.data.slice();writes++},
       getImageData(){return {data:canvas.pixels.slice()}},
+      fillRect(){canvas.pixels=new Uint8ClampedArray(canvas.width*canvas.height*4)},translate(){},scale(){},rotate(){this.rotated=true},
       drawImage(image,...args){
-        draws++;const source=image.pixels,sw=image.naturalWidth||image.width,sh=image.naturalHeight||image.height,[sx,sy,cw,ch,dx,dy,dw,dh]=args.length===4?[0,0,sw,sh,...args]:args;
+        draws++;if(this.rotated)return; // Rotation geometry is covered by rotation-snapshot.test; this harness inspects the processed source.
+        const source=image.pixels,sw=image.naturalWidth||image.width,sh=image.naturalHeight||image.height,[sx,sy,cw,ch,dx,dy,dw,dh]=args.length===4?[0,0,sw,sh,...args]:args;
         canvas.pixels=new Uint8ClampedArray(canvas.width*canvas.height*4);
         for(let y=0;y<dh;y++)for(let x=0;x<dw;x++){
           const from=(Math.min(sh-1,Math.floor(sy+(y+.5)*ch/dh))*sw+Math.min(sw-1,Math.floor(sx+(x+.5)*cw/dw)))*4,to=((dy+y)*canvas.width+dx+x)*4;
@@ -27,7 +30,7 @@ function harness(width=16,height=12,pixels){
   }};
   const image={ownerDocument:document,naturalWidth:width,naturalHeight:height,src:'blob:original-jpeg',style:{opacity:'',transform:'translate(0px, 0px) scale(1)'},pixels:pixels||new Uint8ClampedArray(width*height*4).fill(255),after(canvas){this.next=canvas}};
   const context=vm.createContext({document,Uint8ClampedArray,Float32Array,Math,Number,Boolean,Error,requestAnimationFrame(callback){frames.set(++serial,callback);return serial},cancelAnimationFrame(id){frames.delete(id)}});
-  vm.runInContext(colors+'\n'+retro+'\n'+photo+'\n'+view,context);
+  vm.runInContext(adjustmentCode+'\n'+colors+'\n'+retro+'\n'+photo+'\n'+view,context);
   return {image,view:context.createPhotoView(image),process:context.processPhoto,canvas:()=>image.next,canvases,flush(){for(const [id,callback]of [...frames]){frames.delete(id);callback()}},get pending(){return frames.size},get draws(){return draws},get writes(){return writes}};
 }
 function gray(width,height,value=(x,y)=>(x*19+y*31)%256){const data=new Uint8ClampedArray(width*height*4);for(let y=0;y<height;y++)for(let x=0;x<width;x++){const i=(y*width+x)*4;data[i]=data[i+1]=data[i+2]=typeof value==='function'?value(x,y):value;data[i+3]=255}return data}
@@ -67,28 +70,28 @@ test('grain creates larger uniform cells and contrast changes dither without int
 });
 
 test('photo review restores soft contrast without lifting black margins or lowering white pixels',()=>{
-  const input=gray(32,8,x=>[0,80,175,255][Math.floor(x/8)]),app=harness(32,8,input);app.view.setSource();app.view.setStyle(1);app.flush();const normal=app.canvas().pixels.slice();
+  const input=gray(32,8,x=>[0,80,175,255][Math.floor(x/8)]),app=harness(32,8,input);app.view.setSource();app.view.show(true);app.view.setStyle(1);app.flush();const normal=app.canvas().pixels.slice();
   app.view.setTone({contrast:.5});app.flush();const soft=app.canvas().pixels;assert.notDeepEqual([...soft],[...normal]);assert.deepEqual([...soft],[...app.process(input,32,8,1,1,.5)]);
   for(let y=0;y<8;y++)for(let x=0;x<8;x++){assert.equal(soft[(y*32+x)*4],0);assert.equal(soft[(y*32+x+24)*4],255)}
 });
 
 test('tone updates coalesce and zoom refresh never rereads or reprocesses photo pixels',()=>{
-  const app=harness();app.view.setSource();const initialWrites=app.writes;app.view.setStyle(1);app.view.setTone({grain:2,contrast:1.2});app.view.setTone({grain:4,contrast:2});assert.equal(app.pending,1);assert.equal(app.writes,initialWrites);app.flush();assert.equal(app.writes,initialWrites+1);assert.equal(app.draws,1);
+  const app=harness();app.view.setSource();app.view.show(true);const initialWrites=app.writes;app.view.setStyle(1);app.view.setTone({grain:2,contrast:1.2});app.view.setTone({grain:4,contrast:2});assert.equal(app.pending,1);assert.equal(app.writes,initialWrites);app.flush();assert.equal(app.writes,initialWrites+1);assert.equal(app.draws,1);
   app.image.style.transform='translate(20px, -7px) scale(2)';app.view.refresh();app.view.refresh();app.view.setTone({grain:4,contrast:2});assert.equal(app.canvas().style.transform,app.image.style.transform);assert.equal(app.pending,0);assert.equal(app.writes,initialWrites+1);assert.equal(app.draws,1);
 });
 
 test('save and print snapshots flush the same visible processed pixels without changing the JPEG',()=>{
-  const app=harness(384,16,gray(384,16));app.view.setSource();app.view.setStyle(3);app.view.setTone({grain:2,contrast:1.6});assert.equal(app.pending,1);
+  const app=harness(384,16,gray(384,16));app.view.setSource();app.view.show(true);app.view.setStyle(3);app.view.setTone({grain:2,contrast:1.6});assert.equal(app.pending,1);
   const saved=app.view.snapshot(undefined,true),printed=app.view.snapshot();assert.equal(app.pending,0);assert.equal(saved.width,384);assert.equal(saved.height,16);assert.deepEqual([...saved.data],[...app.canvas().pixels]);assert.deepEqual([...printed.data],[...saved.data]);assert.equal(saved.photo,true);assert.equal(printed.photo,true);binary(saved.data);assert.equal(app.image.src,'blob:original-jpeg');
   const crop=app.view.snapshot({scale:2,x:0,y:0,width:384,height:16},true);assert.equal(crop.width,192);assert.equal(crop.height,8);binary(crop.data);
 });
 
 test('every photo style disables interpolation for saved and printed snapshots',()=>{
-  const app=harness(385,17,gray(385,17));app.view.setSource();for(let style=0;style<4;style++)for(const native of [false,true]){app.view.setStyle(style);const snapshot=app.view.snapshot(undefined,native);assert.equal(app.canvases.at(-1).context.imageSmoothingEnabled,false);binary(snapshot.data);assert.equal(snapshot.width,native?385:384)}
+  const app=harness(385,17,gray(385,17));app.view.setSource();app.view.show(true);for(let style=0;style<4;style++)for(const native of [false,true]){app.view.setStyle(style);const snapshot=app.view.snapshot(undefined,native);assert.equal(app.canvases.at(-1).context.imageSmoothingEnabled,false);binary(snapshot.data);assert.equal(snapshot.width,native?385:384)}
 });
 
 test('a separately decoded source replaces stale DOM pixels and limits the longest side to 2048',()=>{
-  const app=harness(1,1),decoded={naturalWidth:4096,naturalHeight:2,pixels:gray(4096,2,90)};app.view.setSource(decoded);assert.equal(app.canvas().width,2048);assert.equal(app.canvas().height,1);assert.equal(app.canvas().pixels[0],0);assert.equal(app.image.src,'blob:original-jpeg');assert.equal(app.image.naturalWidth,1);
+  const app=harness(1,1),decoded={naturalWidth:4096,naturalHeight:2,pixels:gray(4096,2,90)};app.view.setSource(decoded);app.view.show(true);assert.equal(app.canvas().width,2048);assert.equal(app.canvas().height,1);assert.equal(app.canvas().pixels[0],0);assert.equal(app.image.src,'blob:original-jpeg');assert.equal(app.image.naturalWidth,1);
 });
 
 test('invalid input, clamped controls and disposal cannot leave stale rendering work or opacity',()=>{
@@ -107,7 +110,7 @@ test('historical palettes save exactly the RGB pixels shown by the photo canvas'
     source[at+3]=255;
   }
   const app=harness(width,height,source);
-  app.view.setSource();
+  app.view.setSource();app.view.show(true);
   for(const id of ['appleii','c64','zx']){
     app.view.setPalette(id);
     const exported=app.view.snapshot(undefined,true),visible=app.canvas().pixels;
@@ -130,7 +133,7 @@ test('review and exports convert global CSS pixel size using the contained image
   const width=64,height=48,input=gray(width,height),app=harness(width,height,input);
   let rect={width:32,height:12};
   app.image.getBoundingClientRect=()=>rect;
-  app.view.setSource();app.view.setTone({grain:2});app.view.setStyle(1);app.flush();
+  app.view.setSource();app.view.show(true);app.view.setTone({grain:2});app.view.setStyle(1);app.flush();
   for(const id of ['macintosh','ibm5151','ibmcga','gameboy','bluecrt','amber','appleii','c64','zx']){
     app.view.setPalette(id);app.flush();
     const expected=app.process(input,width,height,1,8,1,id);
@@ -146,16 +149,67 @@ test('review and exports convert global CSS pixel size using the contained image
   app.view.dispose();
 });
 
-test('hidden decoded photos use the parent layout immediately and replacement sources cannot reuse stale scale',()=>{
+test('hidden decoded photos cache source immediately and use current parent layout when shown',()=>{
   const app=harness(64,48,gray(64,48));
   app.image.getBoundingClientRect=()=>({width:0,height:0});
   app.image.parentElement={getBoundingClientRect:()=>({width:16,height:12})};
   app.view.setTone({grain:2});app.view.setSource();
-  assert.deepEqual([...app.canvas().pixels],[...app.process(app.image.pixels,64,48,0,8,1)]);
-  const decoded={width:32,height:24,pixels:gray(32,24)};app.view.setSource(decoded);
-  assert.deepEqual([...app.canvas().pixels],[...app.process(decoded.pixels,32,24,0,4,1)]);
-  app.image.parentElement.getBoundingClientRect=()=>({width:0,height:0});
-  app.view.setSource(decoded);
-  assert.deepEqual([...app.canvas().pixels],[...app.process(decoded.pixels,32,24,0,2,1)]);
+  assert.equal(app.draws,1);assert.equal(app.writes,0);assert.equal(app.pending,0);
+  app.view.show(true);assert.deepEqual([...app.canvas().pixels],[...app.process(app.image.pixels,64,48,0,8,1)]);
+  const decoded={width:32,height:24,pixels:gray(32,24)};app.view.show(false);app.view.setSource(decoded);
+  assert.equal(app.draws,2);assert.equal(app.writes,1);assert.equal(app.pending,0);
+  app.view.show(true);assert.deepEqual([...app.canvas().pixels],[...app.process(decoded.pixels,32,24,0,4,1)]);
+  app.image.parentElement.getBoundingClientRect=()=>({width:0,height:0});app.view.show(false);app.view.setSource(decoded);
+  app.view.show(true);assert.deepEqual([...app.canvas().pixels],[...app.process(decoded.pixels,32,24,0,2,1)]);
   app.view.dispose();
+});
+
+test('photo adjustments match the preview processor and preserve the original source and exports',()=>{
+  const source=gray(32,24),app=harness(32,24,source);app.view.setSource();app.view.show(true);app.view.setTone({grain:2});
+  const original=app.image.pixels.slice();
+  for(const id of ['macintosh','ibm5151','ibmcga','gameboy','bluecrt','amber','appleii','c64','zx'])for(const dither of ['threshold','bayer','floyd','atkinson']){
+    const settings={black:25,white:230,gamma:1.6,contrast:1.3,dither,strength:.7};app.view.setPalette(id);app.view.setAdjustments(settings);app.flush();
+    const expected=app.process(source,32,24,0,2,1.3,id,settings);
+    assert.deepEqual([...app.canvas().pixels],[...expected],id+' / '+dither);
+    assert.deepEqual([...app.view.snapshot(undefined,true).data],[...expected]);
+  }
+  app.view.setTone({contrast:2});app.flush();assert.deepEqual([...app.canvas().pixels],[...app.process(source,32,24,0,2,2,'zx',{black:25,white:230,gamma:1.6,contrast:2,dither:'atkinson',strength:.7})]);
+  assert.deepEqual(app.image.pixels,original);app.view.dispose();
+});
+
+test('rotated photo pixel size follows the untransformed viewport and rotated contained bounds',()=>{
+  const source=gray(64,96),app=harness(64,96,source);app.image.parentElement={getBoundingClientRect:()=>({width:32,height:48})};app.image.getBoundingClientRect=()=>({width:500,height:500});
+  app.view.setSource();app.view.show(true);app.view.setStyle(1);app.view.setTone({grain:2});
+  for(const angle of [0,45,90]){
+    app.view.refresh({rotation:angle});app.flush();const radians=angle*Math.PI/180,c=Math.abs(Math.cos(radians)),s=Math.abs(Math.sin(radians)),fit=Math.min(32/(64*c+96*s),48/(64*s+96*c));
+    assert.deepEqual([...app.canvas().pixels],[...app.process(source,64,96,1,Math.round(2/fit),1)]);
+  }
+  app.view.dispose();
+});
+
+
+test('hidden tone and rotation updates stay dirty without frames until review is shown',()=>{
+  const source=gray(64,96),app=harness(64,96,source),settings={black:30,white:220,gamma:1.8,contrast:1.3,dither:'bayer',strength:.6};
+  app.image.parentElement={getBoundingClientRect:()=>({width:32,height:48})};app.view.setSource();
+  app.view.setPalette('bluecrt');app.view.setStyle(1);app.view.setTone({grain:2});app.view.setAdjustments(settings);
+  for(const rotation of [15,45,90])app.view.refresh({rotation});
+  assert.equal(app.pending,0);assert.equal(app.writes,0);assert.equal(app.draws,1);assert.equal(app.canvas().hidden,true);
+  app.view.show(true);assert.equal(app.writes,1);assert.equal(app.pending,0);
+  assert.deepEqual([...app.canvas().pixels],[...app.process(source,64,96,1,6,1.3,'bluecrt',settings)]);
+  app.view.setAdjustments({...settings,gamma:2.2});assert.equal(app.pending,1);app.view.show(false);assert.equal(app.pending,0);app.flush();assert.equal(app.writes,1);
+  app.view.refresh({rotation:0});app.view.show(true);assert.equal(app.writes,2);
+  assert.deepEqual([...app.canvas().pixels],[...app.process(source,64,96,1,4,1.3,'bluecrt',{...settings,gamma:2.2})]);app.view.dispose();
+});
+
+test('a hidden snapshot flushes the latest controls and pose without showing or rereading the photo',()=>{
+  const source=gray(64,96),app=harness(64,96,source),settings={black:20,white:230,gamma:1.7,contrast:1.2,dither:'atkinson',strength:.8};
+  app.image.parentElement={getBoundingClientRect:()=>({width:32,height:48})};app.view.setSource();app.view.setPalette('amber');app.view.setTone({grain:2});app.view.setAdjustments(settings);
+  assert.equal(app.pending,0);assert.equal(app.writes,0);
+  app.view.snapshot({rotation:90,width:32,height:48},true);
+  assert.equal(app.writes,1);assert.equal(app.pending,0);assert.equal(app.canvas().hidden,true);assert.equal(app.image.style.opacity,'');
+  assert.deepEqual([...app.canvas().pixels],[...app.process(source,64,96,0,6,1.2,'amber',settings)]);
+  app.view.setAdjustments({...settings,contrast:2});app.view.refresh({rotation:45});assert.equal(app.pending,0);app.view.snapshot(undefined,true);
+  const fit=Math.min(32/((64+96)*Math.SQRT1_2),48/((64+96)*Math.SQRT1_2));
+  assert.deepEqual([...app.canvas().pixels],[...app.process(source,64,96,0,Math.round(2/fit),2,'amber',{...settings,contrast:2})]);
+  assert.equal(app.writes,2);assert.equal(app.pending,0);assert.equal(app.canvas().hidden,true);assert.deepEqual(app.image.pixels,source);app.view.dispose();
 });

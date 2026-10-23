@@ -187,3 +187,21 @@ test('lost capture and disposal release touch state and every pointer listener',
   assert.deepEqual(calls.touch,[true,false,true,false]);assert.equal(surface.listeners.size,0);
   surface.send('pointerdown',3,100,300);assert.deepEqual(calls.touch,[true,false,true,false]);
 });
+
+test('two-finger twist unwraps angle boundaries alongside anchored pixel pinch',()=>{
+  const surface=canvas(),calls=callbacks(),twists=[],scales=[];
+  const gestures=attachViewerGestures(surface,{...calls.options,onTwist:value=>twists.push(value),onPinchScale:value=>scales.push(value)});
+  const point=(angle,r=100)=>({x:200+r*Math.cos(angle*Math.PI/180),y:300+r*Math.sin(angle*Math.PI/180)});
+  surface.send('pointerdown',1,200,300);let p=point(170);surface.send('pointerdown',2,p.x,p.y);
+  p=point(190,150);surface.send('pointermove',2,p.x,p.y);assert.ok(Math.abs(twists.at(-1)-20)<1e-9);assert.ok(Math.abs(scales.at(-1)-1.5)<1e-9);
+  for(let angle=210;angle<=550;angle+=20){p=point(angle,150);surface.send('pointermove',2,p.x,p.y)}
+  assert.ok(Math.abs(twists.reduce((sum,value)=>sum+value,0)-380)<1e-9);assert.deepEqual(calls.rotate,[]);gestures.dispose();
+});
+
+test('twist rebases after adding, removing and cancelling fingers',()=>{
+  const surface=canvas(),calls=callbacks(),twists=[],gestures=attachViewerGestures(surface,{...calls.options,onTwist:value=>twists.push(value)});
+  surface.send('pointerdown',1,100,300);surface.send('pointerdown',2,200,300);surface.send('pointermove',2,100,400);assert.equal(twists.at(-1),90);
+  surface.send('pointerdown',3,200,500);surface.send('pointerup',3,200,500);surface.send('pointermove',2,0,300);assert.equal(twists.at(-1),90);
+  surface.send('pointerup',2,0,300);surface.send('pointerdown',4,100,200);surface.send('pointermove',4,200,300);assert.equal(twists.at(-1),90);
+  gestures.cancel();const count=twists.length;surface.send('pointermove',4,300,500);assert.equal(twists.length,count);gestures.dispose();
+});

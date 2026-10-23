@@ -39,9 +39,19 @@ export function photoSnapshot(image,pose,native=false,nearest=false){
     const fit=Math.min(pose.width/width,pose.height/height)*pose.scale,left=(pose.width-width*fit)/2+pose.x,top=(pose.height-height*fit)/2+pose.y;
     x=Math.max(0,-left)/fit;y=Math.max(0,-top)/fit;w=(Math.min(pose.width,left+width*fit)-Math.max(0,left))/fit;h=(Math.min(pose.height,top+height*fit)-Math.max(0,top))/fit;
   }
-  const canvas=document.createElement('canvas');canvas.width=native?Math.max(1,Math.round(w)):384;canvas.height=native?Math.max(1,Math.round(h)):Math.max(1,Math.min(1024,Math.round(384*h/w)));
+  const angle=Number.isFinite(pose?.rotation)?pose.rotation%360*Math.PI/180:0;
+  const cosine=Math.abs(Math.cos(angle)),sine=Math.abs(Math.sin(angle)),rotatedWidth=angle?w*cosine+h*sine:w,rotatedHeight=angle?w*sine+h*cosine:h;
+  const canvas=document.createElement('canvas');
+  canvas.width=native?Math.max(1,angle?Math.ceil(rotatedWidth-1e-9):Math.round(w)):384;
+  canvas.height=native?Math.max(1,angle?Math.ceil(rotatedHeight-1e-9):Math.round(h)):Math.max(1,Math.min(1024,Math.round(384*rotatedHeight/rotatedWidth)));
   const context=canvas.getContext('2d');if(!context)throw new Error('Kunne ikkje lese fotoet.');
-  context.imageSmoothingEnabled=!nearest;context.drawImage(image,x,y,w,h,0,0,canvas.width,canvas.height);
+  context.imageSmoothingEnabled=!nearest;
+  if(angle){
+    // Export the complete rotated image, including the black corners seen in the studio.
+    context.fillStyle='#000';context.fillRect(0,0,canvas.width,canvas.height);
+    context.translate(canvas.width/2,canvas.height/2);context.scale(canvas.width/rotatedWidth,canvas.height/rotatedHeight);context.rotate(angle);
+    context.drawImage(image,x,y,w,h,-w/2,-h/2,w,h);
+  }else context.drawImage(image,x,y,w,h,0,0,canvas.width,canvas.height);
   const data=context.getImageData(0,0,canvas.width,canvas.height).data;
   return {width:canvas.width,height:canvas.height,data,photo:true};
 }

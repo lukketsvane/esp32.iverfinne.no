@@ -1,4 +1,5 @@
 import { resolveColorScheme } from './color-schemes.mjs';
+import {normalizeAdjustments,applyLevels} from './image-adjustments.mjs';
 
 const bayer=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
 const clamp=value=>Math.max(0,Math.min(255,value));
@@ -7,7 +8,7 @@ const brightness=(r,g,b)=>.2126*r+.7152*g+.0722*b;
 
 export function toneContrast(value,contrast){return contrast<1?(value<127.5?127.5*(value/127.5)**contrast:255-127.5*((255-value)/127.5)**contrast):clamp((value-127.5)*contrast+127.5)}
 
-function sampleGrid(source,width,height,gridWidth,gridHeight,contrast,grain){
+function sampleGrid(source,width,height,gridWidth,gridHeight,contrast,grain,settings){
   const rgb=new Uint8Array(gridWidth*gridHeight*3);
   for(let y=0;y<gridHeight;y++)for(let x=0;x<gridWidth;x++){
     let r=0,g=0,b=0;
@@ -18,9 +19,9 @@ function sampleGrid(source,width,height,gridWidth,gridHeight,contrast,grain){
       r+=source[at];g+=source[at+1];b+=source[at+2];
     }
     const i=(y*gridWidth+x)*3;
-    rgb[i]=toneContrast(r*.25,contrast);
-    rgb[i+1]=toneContrast(g*.25,contrast);
-    rgb[i+2]=toneContrast(b*.25,contrast);
+    rgb[i]=settings?applyLevels(r*.25,settings):toneContrast(r*.25,contrast);
+    rgb[i+1]=settings?applyLevels(g*.25,settings):toneContrast(g*.25,contrast);
+    rgb[i+2]=settings?applyLevels(b*.25,settings):toneContrast(b*.25,contrast);
   }
   return rgb;
 }
@@ -70,10 +71,10 @@ function colorCellMode(rgb,width,height,palette,mode){
   return indices;
 }
 
-function appleHiResMode(rgb,width,height){
+function appleHiResMode(rgb,width,height,strength=1){
   const bits=new Uint8Array(width*height),indices=new Uint8Array(width*height);
   for(let y=0;y<height;y++)for(let x=0;x<width;x++){
-    const at=(y*width+x)*3,threshold=(bayer[(y&3)*4+(x&3)]+.5)*255/16;
+    const at=(y*width+x)*3,threshold=127.5+((bayer[(y&3)*4+(x&3)]+.5)*255/16-127.5)*strength;
     bits[y*width+x]=brightness(rgb[at],rgb[at+1],rgb[at+2])>=threshold?1:0;
   }
   const palette=[[0,0,0],[0,214,56],[184,45,255],[255,255,255],[255,137,40],[55,112,255]];
@@ -98,14 +99,15 @@ function appleHiResMode(rgb,width,height){
   return indices;
 }
 
-export function renderRetroPixels(source,width,height,schemeId,contrast=1,grain=1){
+export function renderRetroPixels(source,width,height,schemeId,contrast=1,grain=1,adjustments){
   const scheme=resolveColorScheme(schemeId);
   if(!scheme.mode)throw new Error('Ukjend skjermmodus.');
   // The profile controls its inks and colour-cell rules, never pixel size.
   grain=Number.isFinite(grain)?Math.max(1,Math.round(grain)):1;
   const gridWidth=Math.max(1,Math.ceil(width/grain)),gridHeight=Math.max(1,Math.ceil(height/grain));
-  const rgb=sampleGrid(source,width,height,gridWidth,gridHeight,Math.max(.5,Math.min(3,contrast)),grain);
-  const indexes=scheme.mode==='appleii'?appleHiResMode(rgb,gridWidth,gridHeight):colorCellMode(rgb,gridWidth,gridHeight,scheme.colors,scheme.mode);
+  const settings=adjustments?normalizeAdjustments({contrast,...adjustments}):null;
+  const rgb=sampleGrid(source,width,height,gridWidth,gridHeight,Math.max(.5,Math.min(3,contrast)),grain,settings);
+  const indexes=scheme.mode==='appleii'?appleHiResMode(rgb,gridWidth,gridHeight,settings?.strength??1):colorCellMode(rgb,gridWidth,gridHeight,scheme.colors,scheme.mode);
   const palette=scheme.mode==='appleii'?[[0,0,0],[0,214,56],[184,45,255],[255,255,255],[255,137,40],[55,112,255]]:scheme.colors;
   const output=new Uint8ClampedArray(source.length);
   for(let y=0;y<height;y++){

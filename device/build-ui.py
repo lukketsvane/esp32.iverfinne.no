@@ -7,7 +7,11 @@ root = Path(__file__).resolve().parent
 sketch = root / "EntropiCamera"
 shared = root.parent
 source = (sketch / "camera_ui.html").read_text(encoding="utf-8")
-palettes = (shared / "vendor/color-schemes.mjs").read_text(encoding="utf-8").replace("export ", "")
+adjustments = (shared / "vendor/image-adjustments.mjs").read_text(encoding="utf-8").replace("export ", "")
+# Keep module-private names scoped when flattening the shared modules into classic scripts.
+adjustment_exports = "DITHER_TYPES, DEFAULT_ADJUSTMENTS, normalizeAdjustments, readAdjustments, saveAdjustments, applyLevels"
+adjustments = "const { " + adjustment_exports + " } = (() => {\n" + adjustments + "\nreturn { " + adjustment_exports + " };\n})();"
+palettes = adjustments + "\n" + (shared / "vendor/color-schemes.mjs").read_text(encoding="utf-8").replace("export ", "")
 retro = (shared / "vendor/retro-modes.mjs").read_text(encoding="utf-8").replace("export ", "")
 palettes += "\n" + re.sub(r"^import .*?;\s*", "", retro, flags=re.MULTILINE)
 renderer = (shared / "vendor/viewfinder.mjs").read_text(encoding="utf-8").replace("export class Viewfinder", "class Viewfinder", 1)

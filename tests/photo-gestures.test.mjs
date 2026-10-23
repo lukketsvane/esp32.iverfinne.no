@@ -4,7 +4,7 @@ import { attachPhotoGestures } from '../vendor/photo-gestures.mjs';
 
 function harness(options={}){
   const events=new Map(),captured=new Set(),changes=[],rect={left:0,top:0,width:390,height:844};let enabled=true;
-  const image={naturalWidth:1920,naturalHeight:1080,style:{},parentElement:{getBoundingClientRect:()=>rect},addEventListener:(name,handler)=>events.set(name,handler),removeEventListener:name=>events.delete(name),setPointerCapture:id=>captured.add(id),hasPointerCapture:id=>captured.has(id),releasePointerCapture:id=>captured.delete(id)};
+  const image={naturalWidth:1920,naturalHeight:1080,style:{transform:''},parentElement:{getBoundingClientRect:()=>rect},addEventListener:(name,handler)=>events.set(name,handler),removeEventListener:name=>events.delete(name),setPointerCapture:id=>captured.add(id),hasPointerCapture:id=>captured.has(id),releasePointerCapture:id=>captured.delete(id)};
   const control=attachPhotoGestures(image,{enabled:()=>enabled,onChange:state=>changes.push({...state}),...options});
   function emit(name,id,x,y,details={}){const event={pointerType:'touch',pointerId:id,clientX:x,clientY:y,prevented:false,stopped:false,preventDefault(){this.prevented=true},stopImmediatePropagation(){this.stopped=true},...details};events.get(name)?.(event);if(['pointerup','pointercancel','lostpointercapture'].includes(name))captured.delete(id);return event}
   const pinch=()=>{emit('pointerdown',1,100,422);emit('pointerdown',2,200,422);emit('pointermove',1,0,422);emit('pointermove',2,300,422)};
@@ -94,4 +94,35 @@ test('cancelling a pinch releases stale pointers and preserves size for a fresh 
     assert.equal(app.captured.size,0);app.emit('pointerdown',3,100,422);app.emit('pointermove',3,200,422);assert.equal(app.control.state.grain,3);
     app.emit('pointerdown',4,300,422);app.emit('pointermove',4,350,422);assert.equal(app.control.state.grain,4.5);app.control.dispose();
   }
+});
+
+test('two-finger twist rotates and contains the photo while pinch changes pixel size',()=>{
+  const app=harness();app.control.refresh();app.control.state.contrast=1.8;
+  app.emit('pointerdown',1,100,100);app.emit('pointerdown',2,200,100);app.emit('pointermove',2,100,300);
+  assert.ok(Math.abs(app.control.state.rotation-90)<1e-9);assert.equal(app.control.state.grain,2);assert.equal(app.control.state.contrast,1.8);
+  const [,angle,scale]=app.image.style.transform.match(/rotate\(([-\d.e+]+)deg\) scale\(([-\d.e+]+)\)/);
+  assert.equal(Number(angle),90);assert.ok(Math.abs(Number(scale)-16/9)<1e-12);
+  const fit=Math.min(app.rect.width/1920,app.rect.height/1080)*Number(scale);
+  assert.ok(Math.abs(1080*fit-app.rect.width)<1e-9);assert.ok(1920*fit<=app.rect.height);
+  app.control.reset();assert.equal(app.control.state.rotation,0);assert.equal(app.control.state.grain,2);assert.equal(app.control.state.contrast,1.8);assert.equal(app.image.style.transform,'');app.control.dispose();
+});
+
+test('twist unwraps the angle boundary and accumulates full turns without jumps',()=>{
+  const app=harness();app.control.refresh();const point=degrees=>({x:150+50*Math.cos(degrees*Math.PI/180),y:300+50*Math.sin(degrees*Math.PI/180)});
+  app.emit('pointerdown',1,150,300);let p=point(170);app.emit('pointerdown',2,p.x,p.y);
+  for(let angle=190;angle<=550;angle+=20){p=point(angle);app.emit('pointermove',2,p.x,p.y);assert.ok(Math.abs(app.control.state.rotation-(angle-170))<1e-9)}
+  assert.ok(Math.abs(app.control.state.rotation-380)<1e-9);assert.ok(Math.abs(app.control.state.grain-1)<1e-9);app.control.dispose();
+});
+
+test('finger transitions rebase twist without changing the accumulated orientation',()=>{
+  const app=harness();app.control.refresh();const turn=(id,angle,type='pointermove')=>{const r=angle*Math.PI/180;app.emit(type,id,150+60*Math.cos(r),300+60*Math.sin(r))};
+  app.emit('pointerdown',1,150,300);turn(2,0,'pointerdown');turn(2,30);assert.ok(Math.abs(app.control.state.rotation-30)<1e-9);
+  app.emit('pointerdown',3,300,500);app.emit('pointerup',3,300,500);turn(2,40);assert.ok(Math.abs(app.control.state.rotation-40)<1e-9);
+  app.emit('pointerup',2,0,0);turn(4,-120,'pointerdown');assert.ok(Math.abs(app.control.state.rotation-40)<1e-9);turn(4,-100);assert.ok(Math.abs(app.control.state.rotation-60)<1e-9);
+  app.control.cancel();app.emit('pointermove',4,100,100);assert.ok(Math.abs(app.control.state.rotation-60)<1e-9);app.control.dispose();
+});
+
+test('live twist reports rotation while leaving the capture interaction plane untransformed',()=>{
+  const app=harness({toneOnly:true});app.control.refresh();app.emit('pointerdown',1,100,100);app.emit('pointerdown',2,200,100);app.emit('pointermove',2,100,200);
+  assert.equal(app.control.state.rotation,90);assert.equal(app.changes.at(-1).rotation,90);assert.equal(app.image.style.transform,'');app.control.dispose();
 });

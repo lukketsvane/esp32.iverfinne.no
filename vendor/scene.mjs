@@ -3,6 +3,8 @@ import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, 
 import { attachViewerGestures, progressiveIndices } from './viewer-gestures.mjs';
 import { resolveColorScheme, gaussianInk } from './color-schemes.mjs';
 import { renderRetroPixels } from './retro-modes.mjs';
+import { normalizeAdjustments, applyLevels } from './image-adjustments.mjs';
+import { processPhoto } from './photo-view.mjs';
 
 let depthWorker=null,depthIdle=0,depthCancel=null;
 function releaseDepthWorker(){clearTimeout(depthIdle);depthIdle=0;depthWorker?.terminate();depthWorker=null}
@@ -39,9 +41,10 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
   for(let i=0;i<cloud.count;i++){const color=nearestC64(bytes[i*32+24],bytes[i*32+25],bytes[i*32+26]);for(let c=0;c<3;c++)colors[i*4+c]=color[c]/255;colors[i*4+3]=bytes[i*32+27]/255}
   const pointers=new Map(),focal=1/Math.tan(24*Math.PI/180),initialYaw=-Math.atan(.16),initialPitch=Math.atan(.045/Math.hypot(.16,1)),near=.01,far=Math.max(100,cloud.radius*1000);
   const fitDistance=(width,height)=>Math.max(.3,cloud.radius/Math.sin(Math.atan(Math.min(1,width/height)/focal))*1.08);
-  let canvas=null,gpu=null,gestures=null,observer=null,yaw=initialYaw,pitch=initialPitch,zoom=1,panX=0,panY=0,pointScale=1,opacity=1,density=1,definition=.5,frame=0,disposed=false,primitiveLevel=0,pixelSize=1,targetWidth=0,targetHeight=0,geometryDirty=true,uploadDirty=true,needsGPU=false,paletteId='original',reveal=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches?1:0,revealAt=null;
+  let canvas=null,gpu=null,gestures=null,observer=null,yaw=initialYaw,pitch=initialPitch,roll=0,zoom=1,panX=0,panY=0,pointScale=1,opacity=1,density=1,definition=.5,frame=0,disposed=false,primitiveLevel=0,pixelSize=1,targetWidth=0,targetHeight=0,geometryDirty=true,uploadDirty=true,needsGPU=false,paletteId='original',adjustments=normalizeAdjustments(),colorsDirty=false,reveal=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches?1:0,revealAt=null;
   function recolor(){
-    const scheme=resolveColorScheme(paletteId),retro=scheme.mode?renderRetroPixels(sourcePixels,cloud.sourceWidth,cloud.sourceHeight,scheme.id,1,1):null;
+    const scheme=resolveColorScheme(paletteId),raster=adjustments.dither!=='profile'?processPhoto(sourcePixels,cloud.sourceWidth,cloud.sourceHeight,scheme.style,1,adjustments.contrast,scheme.id,adjustments):scheme.mode?renderRetroPixels(sourcePixels,cloud.sourceWidth,cloud.sourceHeight,scheme.id,adjustments.contrast,1,adjustments):null;
+    const hasLevels=adjustments.black!==0||adjustments.white!==255||adjustments.gamma!==1||adjustments.contrast!==1;
     let minZ=Infinity,maxZ=-Infinity;
     for(let i=0;i<cloud.count;i++){
       const z=cloud.positions[i*3+2];minZ=Math.min(minZ,z);maxZ=Math.max(maxZ,z);
@@ -50,11 +53,11 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
     for(let i=0;i<cloud.count;i++){
       const base=i*32+24,r=bytes[base],g=bytes[base+1],b=bytes[base+2];
       const z=cloud.positions[i*3+2],depth=(z-minZ)/span,light=(r*.2126+g*.7152+b*.0722)/255;
-      const ink=retro?retro.subarray(cloud.pixelOffsets[i],cloud.pixelOffsets[i]+3):gaussianInk(scheme,depth,light,(i*17%31)/31-.5);
+      const ink=raster?raster.subarray(cloud.pixelOffsets[i],cloud.pixelOffsets[i]+3):gaussianInk(scheme,hasLevels?applyLevels(depth*255,adjustments)/255:depth,hasLevels?applyLevels(light*255,adjustments)/255:light,((i*17%31)/31-.5)*adjustments.strength);
       for(let c=0;c<3;c++)colors[i*4+c]=ink[c]/255;
       colors[i*4+3]=bytes[base+3]/255;
     }
-    geometryDirty=true;
+    colorsDirty=false;geometryDirty=true;
   }
   function createGPU(next){
     const gl=next.getContext('webgl',{alpha:false,antialias:false});
@@ -107,6 +110,7 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
     gestures=attachViewerGestures(canvas,{
       initialDensity:density,
       onRotate:rotate,
+      onTwist(degrees){api.setRotation(roll+degrees)},
       onPinchStart(){pinchPixelSize=pixelSize},
       onPinchScale(scale){if(api.onPixelSize)api.onPixelSize(Math.max(1,Math.min(8,pinchPixelSize*scale)))},
       onTransform(dx,dy,scale,focusX,focusY){
@@ -127,6 +131,8 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
   }
   function rebuildPoints(){
     const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);rotation.set([cy,sp*sy,-cp*sy,0,cp,sp,sy,-sp*cy,cp*cy]);
+    const cr=Math.cos(roll*Math.PI/180),sr=Math.sin(roll*Math.PI/180);
+    for(let column=0;column<3;column++){const at=column*3,x=rotation[at],y=rotation[at+1];rotation[at]=cr*x+sr*y;rotation[at+1]=-sr*x+cr*y}
     for(const i of order)depths[i]=rotation[2]*cloud.positions[i*3]+rotation[5]*cloud.positions[i*3+1]+rotation[8]*cloud.positions[i*3+2];
     order.sort((a,b)=>depths[a]-depths[b]);
     for(let n=0;n<order.length;n++){
@@ -150,6 +156,7 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
     if(size.width!==targetWidth||size.height!==targetHeight){targetWidth=size.width;targetHeight=size.height;gl.bindTexture(gl.TEXTURE_2D,texture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,targetWidth,targetHeight,0,gl.RGBA,gl.UNSIGNED_BYTE,null)}
     gl.bindFramebuffer(gl.FRAMEBUFFER,target);gl.viewport(0,0,size.width,size.height);gl.useProgram(program);gl.enable(gl.BLEND);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.disableVertexAttribArray(screenPosition);
     for(const [at,count,offset] of attributes){gl.enableVertexAttribArray(at);gl.vertexAttribPointer(at,count,gl.FLOAT,false,32,offset)}
+    if(colorsDirty)recolor();
     if(geometryDirty)rebuildPoints();
     if(uploadDirty){gl.bufferData(gl.ARRAY_BUFFER,points.subarray(0,order.length*8),gl.DYNAMIC_DRAW);uploadDirty=false}
     gl.uniformMatrix3fv(uniforms.uRotation,false,rotation);gl.uniform1f(uniforms.uFocal,focal);gl.uniform1f(uniforms.uDistance,fitDistance(width,height)/zoom);gl.uniform1f(uniforms.uAspect,width/height);gl.uniform1f(uniforms.uHeight,size.height);gl.uniform2f(uniforms.uPan,panX,panY);gl.uniform1f(uniforms.uPointScale,pointScale);gl.uniform1f(uniforms.uOpacity,opacity);gl.uniform1f(uniforms.uReveal,1/cloud.count+(1-1/cloud.count)*reveal**6);
@@ -157,7 +164,7 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
     {
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,width,height);gl.disable(gl.BLEND);gl.useProgram(screenProgram);gl.bindBuffer(gl.ARRAY_BUFFER,screenBuffer);for(const [at] of attributes)gl.disableVertexAttribArray(at);gl.enableVertexAttribArray(screenPosition);gl.vertexAttribPointer(screenPosition,2,gl.FLOAT,false,0,0);
       const mode=PRIMITIVE_MODES[primitiveLevel],ink=resolveColorScheme(paletteId).colors,palette=new Float32Array(48);for(let i=0;i<ink.length;i++)for(let c=0;c<3;c++)palette[i*3+c]=ink[i][c]/255;
-      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);gl.uniform1i(screenUniforms.image,0);gl.uniform2f(screenUniforms.size,size.width,size.height);gl.uniform3fv(screenUniforms['palette[0]'],palette);gl.uniform1i(screenUniforms.count,ink.length);gl.uniform1i(screenUniforms.level,primitiveLevel);gl.uniform1f(screenUniforms.dither,mode.dither/255);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);gl.uniform1i(screenUniforms.image,0);gl.uniform2f(screenUniforms.size,size.width,size.height);gl.uniform3fv(screenUniforms['palette[0]'],palette);gl.uniform1i(screenUniforms.count,ink.length);gl.uniform1i(screenUniforms.level,adjustments.dither==='profile'?primitiveLevel:1);gl.uniform1f(screenUniforms.dither,adjustments.dither==='profile'?mode.dither/255*adjustments.strength:0);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
     }
     return reveal<1;
   }
@@ -170,7 +177,7 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
   const lost=event=>{event.preventDefault();canvas.dispatchEvent(new Event('pointercancel',{bubbles:true}));needsGPU=true;revealAt=null;cancelAnimationFrame(frame);frame=0;redraw()};
   const listeners=[['pointerdown',down],['pointermove',move],['pointerup',up],['pointercancel',up],['lostpointercapture',up],['wheel',wheel],['webglcontextlost',lost]];
   function dispose(){if(disposed)return;disposed=true;cancelAnimationFrame(frame);observer?.disconnect();signal.removeEventListener('abort',dispose);releaseGPU()}
-  const api={dispose,onError:null,onPixelSize:null,cancelGestures(){gestures?.cancel();const captured=[...pointers.keys()];pointers.clear();for(const id of captured)if(canvas?.hasPointerCapture?.(id))canvas.releasePointerCapture(id)},setPixelSize(value){const next=Number.isFinite(value)?Math.max(1,Math.min(8,value)):pixelSize;if(!disposed&&next!==pixelSize){pixelSize=next;redraw()}},refresh(){if(disposed)return false;if(needsGPU&&!recover())return false;redraw();return true},resetView(){geometryDirty||=yaw!==initialYaw||pitch!==initialPitch;yaw=initialYaw;pitch=initialPitch;panX=panY=0;zoom=1;api.refresh()},snapshot(native=false){
+  const api={dispose,onError:null,onPixelSize:null,onRotation:null,get rotation(){return roll},setRotation(degrees){if(!disposed&&Number.isFinite(degrees)&&degrees!==roll){roll=degrees;geometryDirty=true;redraw();api.onRotation?.(roll)}},cancelGestures(){gestures?.cancel();const captured=[...pointers.keys()];pointers.clear();for(const id of captured)if(canvas?.hasPointerCapture?.(id))canvas.releasePointerCapture(id)},setPixelSize(value){const next=Number.isFinite(value)?Math.max(1,Math.min(8,value)):pixelSize;if(!disposed&&next!==pixelSize){pixelSize=next;redraw()}},refresh(){if(disposed)return false;if(needsGPU&&!recover())return false;redraw();return true},resetView(){geometryDirty||=yaw!==initialYaw||pitch!==initialPitch||roll!==0;yaw=initialYaw;pitch=initialPitch;api.setRotation(0);panX=panY=0;zoom=1;api.refresh()},snapshot(native=false){
     if(disposed)throw new Error('Scena er lukka.');
     if(needsGPU&&!recover())throw new Error('3D-visinga er avbroten. Prøv igjen.');
     reveal=1;revealAt=null;cancelAnimationFrame(frame);frame=0;draw(performance.now(),true);
@@ -178,7 +185,7 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
     const paper=document.createElement('canvas');paper.width=native?canvas.width:384;paper.height=native?canvas.height:Math.max(1,Math.min(1024,Math.round(384*canvas.height/canvas.width)));
     const context=paper.getContext('2d');if(!context)throw new Error('Kunne ikkje lese scena.');
     context.imageSmoothingEnabled=false;context.drawImage(canvas,0,0,paper.width,paper.height);return context.getImageData(0,0,paper.width,paper.height);
-  },setPrimitiveLevel(level){const next=normalizePrimitiveLevel(level);if(!disposed&&next!==primitiveLevel){primitiveLevel=next;redraw()}},setPalette(id){const next=resolveColorScheme(id).id;if(!disposed&&next!==paletteId){paletteId=next;recolor();redraw()}}};
+  },setPrimitiveLevel(level){const next=normalizePrimitiveLevel(level);if(!disposed&&next!==primitiveLevel){primitiveLevel=next;redraw()}},setPalette(id){const next=resolveColorScheme(id).id;if(!disposed&&next!==paletteId){paletteId=next;colorsDirty=true;redraw()}},setAdjustments(value){const next=normalizeAdjustments(value);if(!disposed&&Object.keys(next).some(key=>next[key]!==adjustments[key])){adjustments=next;colorsDirty=true;redraw()}}};
   mount();observer=globalThis.ResizeObserver?new ResizeObserver(redraw):null;observer?.observe(host);signal.addEventListener('abort',dispose,{once:true});redraw();if(signal.aborted)dispose();return api;
 }
 

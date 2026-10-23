@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { COLOR_SCHEMES } from '../../vendor/color-schemes.mjs';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
@@ -1021,4 +1024,31 @@ test('historical profiles change photo and Gaussian output independently without
   assert.equal(app.stored.get('entropi-screen-depth-v2'),'ibmcga');
   app.changeStudio('image',0);
   assert.equal(app.photoViews[0].palette,'bluecrt');
+});
+
+
+test('generated firmware scripts include shared image adjustments without module name collisions',async()=>{
+  const builder=fileURLToPath(new URL('../build-ui.py',import.meta.url));
+  await promisify(execFile)('python',[builder]);
+  const bundled=await readFile(new URL('../preview/index.html',import.meta.url),'utf8');
+  assert.doesNotMatch(bundled,/__ENTROPI_[A-Z_]+__/);
+  const bundledScripts=[...bundled.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match=>match[1]);
+  assert.equal(bundledScripts.length,5);
+  // Compile as a single global scope, just as sequential classic scripts share declarations.
+  assert.doesNotThrow(()=>new vm.Script(bundledScripts.join('\n'),{filename:'bundled-camera-ui.js'}));
+  const context=vm.createContext({Uint8ClampedArray,Uint8Array,Float32Array,Uint32Array,Map,Math});
+  for(const [index,script]of bundledScripts.slice(0,-1).entries())vm.runInContext(script,context,{filename:'camera-library-'+index+'.js'});
+  const result=vm.runInContext(`(()=>{
+    const width=16,height=16,input=new Uint8ClampedArray(width*height*4),results=[];
+    for(let y=0;y<height;y++)for(let x=0;x<width;x++){const at=(y*width+x)*4;input[at]=(x*17+y*11)%256;input[at+1]=(x*7+y*23)%256;input[at+2]=(x*29+y*5)%256;input[at+3]=255}
+    for(const scheme of COLOR_SCHEMES)for(const type of DITHER_TYPES){
+      const settings=normalizeAdjustments({black:12,white:230,gamma:1.3,contrast:1.2,dither:type.id,strength:.7});
+      const output=processPhoto(input,width,height,scheme.style,2,settings.contrast,scheme.id,settings);
+      if(output.length!==input.length||output.some((value,index)=>index%4===3&&value!==255))throw new Error('Invalid '+scheme.id+' '+type.id);
+      results.push(scheme.id+':'+type.id);
+    }
+    const finder={};Viewfinder.prototype.setAdjustments.call(finder,{gamma:1.8,black:20});Viewfinder.prototype.setTone.call(finder,{grain:3,contrast:1.4});
+    return {count:results.length,gamma:finder.adjustments.gamma,black:finder.adjustments.black,contrast:finder.adjustments.contrast,grain:finder.grain,scene:typeof createDepthScene,view:typeof createPhotoView};
+  })()`,context);
+  assert.equal(result.count,45);assert.equal(result.gamma,1.8);assert.equal(result.black,20);assert.equal(result.contrast,1.4);assert.equal(result.grain,3);assert.equal(result.scene,'function');assert.equal(result.view,'function');
 });

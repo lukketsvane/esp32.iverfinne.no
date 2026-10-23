@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
+const adjustmentCode=(await readFile(new URL('../vendor/image-adjustments.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
 const colors=(await readFile(new URL('../vendor/color-schemes.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
 const retro=(await readFile(new URL('../vendor/retro-modes.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/gm,'').replace(/^export /gm,'');
 const source=(await readFile(new URL('../vendor/viewfinder.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/gm,'').replace('export class','class'),processor=(await readFile(new URL('../vendor/photo-view.mjs',import.meta.url),'utf8')).split('export function createPhotoView')[0].replace(/^import .*\r?\n/gm,'').replace('export function','function');
@@ -12,8 +13,8 @@ function finder(solid=null){
   const sample={createImageData:output.createImageData,putImageData:output.putImageData,drawImage:(...args)=>draws.push(args),getImageData:(x,y,w,h)=>{const data=new Uint8ClampedArray(w*h*4);for(let i=0;i<data.length;i+=4){data[i]=solid??(i*7)%256;data[i+1]=solid??(i*13+80)%256;data[i+2]=solid??(i*23+40)%256;data[i+3]=255}return {data}}};
   const document={hidden:false,createElement:()=>({getContext:()=>sample})},canvas={parentElement:parent,ownerDocument:document,style:{},getContext:()=>output};
   const context=vm.createContext({document,HTMLVideoElement:class{},Float32Array,Uint8ClampedArray,Math,Number,requestAnimationFrame:callback=>{frames.set(++next,callback);return next},cancelAnimationFrame:id=>frames.delete(id)});
-  vm.runInContext(colors+'\n'+retro+'\n'+processor+'\n'+source+'\nglobalThis.finder=new Viewfinder(globalThis.canvas);',Object.assign(context,{canvas}));
-  return {view:context.finder,canvas,parent,draws,painted,document,frames,frame(time){const [id,callback]=frames.entries().next().value;frames.delete(id);callback(time)}};
+  vm.runInContext(adjustmentCode+'\n'+colors+'\n'+retro+'\n'+processor+'\n'+source+'\nglobalThis.finder=new Viewfinder(globalThis.canvas);',Object.assign(context,{canvas}));
+  return {view:context.finder,process:context.processPhoto,canvas,parent,draws,painted,document,frames,frame(time){const [id,callback]=frames.entries().next().value;frames.delete(id);callback(time)}};
 }
 
 test('landscape and portrait sources fill the fixed reference finder with a centered crop',()=>{
@@ -84,4 +85,28 @@ test('capture preserves source color for depth while preview remains binary and 
   const preview=app.painted.at(-1),buffer=app.view.output,frame=app.view.capture(),color=app.painted.at(-1);assert.equal(frame.width,160);assert.equal(frame.height,240);assert.equal(app.view.output,buffer);assert.equal(app.canvas.width,160);
   let colored=false;for(let i=0;i<color.length;i+=4){assert.ok(preview[i]===0||preview[i]===255);assert.equal(preview[i],preview[i+1]);assert.equal(preview[i],preview[i+2]);colored||=color[i]!==color[i+1]||color[i]!==color[i+2];assert.equal(color[i+3],255)}assert.equal(colored,true);
   assert.throws(()=>app.view.capture({width:0,height:240}),/ikkje klart/);app.view.dispose();assert.throws(()=>app.view.capture({width:160,height:240}),/ikkje klart/);
+});
+
+test('live preview uses the shared levels and explicit dither pipeline for every profile',()=>{
+  const app=finder();app.canvas.getBoundingClientRect=()=>({width:24,height:36});app.view.source={width:160,height:240};
+  for(const id of ['macintosh','ibm5151','ibmcga','gameboy','bluecrt','amber','appleii','c64','zx'])for(const dither of ['threshold','bayer','floyd','atkinson']){
+    const settings={black:25,white:230,gamma:1.6,contrast:1.3,dither,strength:.7};
+    app.view.setPalette(id);app.view.setAdjustments(settings);app.view.setTone({grain:2});app.view.draw(1000);
+    const expected=app.process(app.view.pixels,24,36,0,2,1.3,id,settings);
+    for(let i=0;i<app.view.projection.warp.length;i++)if(app.view.projection.warp[i]<0){expected[i*4]=expected[i*4+1]=expected[i*4+2]=0}
+    assert.deepEqual([...app.painted.at(-1)],[...expected],id+' / '+dither);
+  }
+  app.view.setTone({contrast:2});assert.equal(app.view.adjustments.contrast,2);app.view.dispose();
+});
+
+test('rotating the preview compensates CSS pixel size without changing its raster or optical source',()=>{
+  const app=finder();app.parent.getBoundingClientRect=()=>({width:24,height:36});app.canvas.getBoundingClientRect=()=>({width:400,height:500});app.view.source={width:160,height:240};app.view.setTone({grain:2});app.view.setPalette('ibmcga');
+  for(const angle of [0,45,90]){
+    app.view.setRotation(angle);app.view.draw(1000);assert.equal(app.canvas.width,24);assert.equal(app.canvas.height,36);
+    const radians=angle*Math.PI/180,c=Math.abs(Math.cos(radians)),s=Math.abs(Math.sin(radians)),fit=Math.min(24/(24*c+36*s),36/(24*s+36*c));
+    const expected=app.process(app.view.pixels,24,36,0,2/fit,1,'ibmcga');
+    for(let i=0;i<app.view.projection.warp.length;i++)if(app.view.projection.warp[i]<0){expected[i*4]=expected[i*4+1]=expected[i*4+2]=0}
+    assert.deepEqual([...app.painted.at(-1)],[...expected]);
+  }
+  app.view.dispose();
 });

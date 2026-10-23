@@ -6,6 +6,7 @@ import { COLOR_SCHEMES } from '../vendor/color-schemes.mjs';
 
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 const application=(await readFile(new URL('../app.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
+const adjustmentSource=(await readFile(new URL('../vendor/image-adjustments.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
 const photoModule=await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8'),photoSource=photoModule.slice(photoModule.indexOf('export function photoSnapshot')).replace(/^export /gm,'');
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
@@ -16,7 +17,8 @@ function harness(options={}){
   const storage=options.storage??new Map(),storageWrites=[];
   const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)},nativeSnapshot={width:640,height:960,data:new Uint8ClampedArray(640*960*4)};let printDisposed=false;
   const studioControls={image:options.image??0,primitive:0,photo:0,dispose(){}},finders=[];
-  const photoGestureState={scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1},liveGestureState={...photoGestureState};let photoGestureBinding,liveGestureBinding;
+  const panel={open:false,values:{},context:'camera',disposed:false};let panelBinding;
+  const photoGestureState={rotation:0,scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1},liveGestureState={...photoGestureState};let photoGestureBinding,liveGestureBinding;
   const opener={postMessage:(data,origin)=>messages.push({data,origin})};
   class Element{
     constructor(id='',tagName='DIV'){
@@ -27,6 +29,7 @@ function harness(options={}){
     setAttribute(name,value){this.attributes.set(name,String(value))}
     getAttribute(name){return this.attributes.get(name)??null}
     removeAttribute(name){this.attributes.delete(name);if(name==='src')this.src=''}
+    getBoundingClientRect(){return {width:120,height:180}}
     closest(selector){return selector.split(',').some(tag=>tag.trim().toUpperCase()===this.tagName)?this:null}
     replaceChildren(...children){this.children=children}
     appendChild(child){this.children.push(child);return child}
@@ -45,7 +48,7 @@ function harness(options={}){
   Object.assign(elements.get('video'),{videoWidth:640,videoHeight:480,play:async()=>{if(options.play)await options.play(elements.get('video').srcObject)},pause(){}});
   const document={hidden:options.hidden??false,referrer:options.referrer??'http://192.168.4.1/',getElementById:id=>elements.get(id),addEventListener(name,callback){if(!events.has(name))events.set(name,[]);events.get(name).push(callback)},createElement(tag){
     const element=new Element('',tag.toUpperCase());
-    if(tag==='canvas'){element.getContext=()=>({drawImage(){},getImageData:(x,y,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})});element.toBlob=(callback,type)=>options.toBlob?options.toBlob(callback,type):callback(new Blob(['camera-jpeg'],{type}))}
+    if(tag==='canvas'){element.getContext=()=>({drawImage(){},fillRect(){},translate(){},scale(){},rotate(){},getImageData:(x,y,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})});element.toBlob=(callback,type)=>options.toBlob?options.toBlob(callback,type):callback(new Blob(['camera-jpeg'],{type}))}
     return element;
   }};
   const media={getTracks:()=>[{stop(){stopped++}}]};
@@ -57,19 +60,20 @@ function harness(options={}){
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
     COLOR_SCHEMES,
     localStorage:{getItem:key=>{if(options.storageError)throw new Error('unavailable');return storage.get(key)??null},setItem(key,value){if(options.storageError)throw new Error('unavailable');storage.set(key,value);storageWrites.push([key,value])}},
-    Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]}clear(){}dispose(){}},
+    Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setAdjustments(value){this.adjustments={...value};this.tone.contrast=value.contrast}setRotation(value){this.rotation=value}setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]}clear(){}dispose(){}},
+    attachAdjustmentControls:(root,binding)=>{panelBinding=binding;Object.assign(panel.values,binding.initial);return {update(values){Object.assign(panel.values,values)},setContext(kind){panel.context=kind},get open(){return panel.open},close(){panel.open=false;binding.onOpenChange(false)},dispose(){panel.disposed=true}}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
     readColorScheme:()=> 'macintosh',saveColorScheme(){},attachColorSchemeControls:()=>({refresh(){},dispose(){}}),
-    attachPhotoGestures:(image,binding)=>{const state=binding.toneOnly?liveGestureState:photoGestureState;if(binding.toneOnly)liveGestureBinding=binding;else photoGestureBinding=binding;return {state,cancel(){gestureCancels[binding.toneOnly?'live':'photo']++},reset(){Object.assign(state,{scale:1,x:0,y:0});binding.onChange(state)},refresh(){binding.onChange(state)},dispose(){}}},
-    createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setPalette(id){this.palette=id},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
+    attachPhotoGestures:(image,binding)=>{const state=binding.toneOnly?liveGestureState:photoGestureState;if(binding.toneOnly)liveGestureBinding=binding;else photoGestureBinding=binding;return {state,cancel(){gestureCancels[binding.toneOnly?'live':'photo']++},reset(){Object.assign(state,{scale:1,x:0,y:0,rotation:0});binding.onChange(state)},refresh(){binding.onChange(state)},dispose(){}}},
+    createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setPalette(id){this.palette=id},setAdjustments(value){this.adjustments={...value};this.tone.contrast=value.contrast},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone},adjustments:{...this.adjustments}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
     PX10Printer:class{},cloudPrintJob:()=>new Uint8Array(),
     createPrintClient:()=>({print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return Promise.resolve(true)},dispose(){printDisposed=true}}),
-    createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});const result={dispose(){},setPrimitiveLevel(){},setPalette(){},setPixelSize(value){this.pixelSize=value},snapshot:native=>native?nativeSnapshot:snapshot,...options.scene?await options.scene(host,blob,progress,signal,quality):{}};scenes.push(result);return result},
+    createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});const result={dispose(){},setPrimitiveLevel(){},setPalette(){},setPixelSize(value){this.pixelSize=value},setAdjustments(value){this.adjustments={...value}},rotation:0,setRotation(value){if(this.rotation!==value){this.rotation=value;this.onRotation?.(value)}},snapshot:native=>native?nativeSnapshot:snapshot,...options.scene?await options.scene(host,blob,progress,signal,quality):{}};scenes.push(result);return result},
     performance:{now:()=>now},Date:class extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}},
     setTimeout:(callback,delay=0)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)
   });
-  vm.runInContext(photoSource+'\n'+application,context,{filename:'app.mjs'});
+  vm.runInContext(adjustmentSource+'\n'+photoSource+'\n'+application,context,{filename:'app.mjs'});
   async function tick(duration){now+=duration;for(const [id,timer]of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}await flush()}
   async function emit(name,details={}){for(const callback of events.get(name)??[])callback({type:name,...details});await flush()}
   function changeStudio(kind,level){studioControls[kind]=level;for(const binding of studioBindings)binding.onChange(kind,level)}
@@ -77,7 +81,7 @@ function harness(options={}){
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
   function sizeGesture(kind='live'){(kind==='live'?liveGestureBinding:photoGestureBinding).onGesture?.()}
   function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
-  return {get:id=>elements.get(id),opener,sceneCalls,scenes,storage,storageWrites,gestureCancels,sizeGesture,studioControls,changeStudio,gestureStudio,gesturePhoto,gestureLive,photoGestureState,liveGestureState,finders,photoViews,messages,urls,revoked,saves,encodedSnapshots,printCalls,snapshot,nativeSnapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
+  return {panel,adjust(patch){panelBinding.onChange(patch)},resetAdjustments(){panelBinding.onReset()},openPanel(open=true){panel.open=open;panelBinding.onOpenChange(open)},get:id=>elements.get(id),opener,sceneCalls,scenes,storage,storageWrites,gestureCancels,sizeGesture,studioControls,changeStudio,gestureStudio,gesturePhoto,gestureLive,photoGestureState,liveGestureState,finders,photoViews,messages,urls,revoked,saves,encodedSnapshots,printCalls,snapshot,nativeSnapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
 }
 
 async function photoFromDevice(app,blob=new Blob(['camera-jpeg'],{type:'image/jpeg'})){
@@ -448,4 +452,59 @@ test('backgrounding cancels live and photo pointers while retaining their shared
     if(!persisted){assert.equal(app.gesturePhoto({grain:8}),false);assert.equal(app.gestureLive({grain:8}),false);await app.visibility(false)}else await app.emit('pageshow',{persisted:true});
     assert.equal(app.photoViews[0].tone.grain,3.25);assert.equal(app.gesturePhoto({grain:4}),true);assert.equal(app.liveGestureState.grain,4);
   }
+});
+
+test('saved levels and dither initialize every renderer and remain global across all profiles',async()=>{
+  const settings={black:24,white:220,gamma:1.4,contrast:1.3,dither:'atkinson',strength:.65},storage=new Map([['entropi-image-adjustments-v1',JSON.stringify(settings)]]),app=harness({storage});
+  assert.deepEqual(app.finders[0].adjustments,settings);assert.deepEqual(app.photoViews[0].adjustments,settings);assert.equal(app.photoGestureState.contrast,1.3);assert.equal(app.panel.values.gamma,1.4);assert.equal(app.storageWrites.length,0);
+  await photoFromDevice(app);app.changeStudio('image',1);await app.tick(0);
+  assert.deepEqual(app.scenes[0].adjustments,settings);
+  for(let level=0;level<COLOR_SCHEMES.length;level++){app.changeStudio('primitive',level);app.changeStudio('image',0);app.changeStudio('photo',level);app.changeStudio('image',1)}
+  assert.deepEqual(app.scenes[0].adjustments,settings);assert.deepEqual(app.photoViews[0].adjustments,settings);assert.equal(app.sceneCalls.length,1);assert.equal(app.storageWrites.length,0);
+});
+
+test('panel edits update the current render and save/print while retaining one source and one depth calculation',async()=>{
+  const app=harness(),blob=await photoFromDevice(app);app.changeStudio('image',1);await app.tick(0);app.openPanel();
+  for(const patch of [{black:32},{white:210},{gamma:1.6},{contrast:2},{dither:'floyd'},{strength:.4},{pixelSize:3.1}])app.adjust(patch);
+  const expected={black:32,white:210,gamma:1.6,contrast:2,dither:'floyd',strength:.4};
+  for(const target of [app.finders[0],app.photoViews[0],app.scenes[0]])assert.deepEqual(target.adjustments,expected);
+  assert.equal(app.scenes[0].pixelSize,3.1);assert.equal(app.liveGestureState.contrast,2);assert.equal(app.photoGestureState.contrast,2);assert.equal(app.sceneCalls.length,1);assert.equal(app.urls.get(app.get('photo').src),blob);
+  app.openPanel(false);app.changeStudio('image',0);await app.get('save').emit('click');await app.get('print').emit('click');
+  for(const output of [app.encodedSnapshots[0],app.printCalls[0].image]){assert.deepEqual(output.adjustments,expected);assert.equal(output.tone.grain,3.1)}
+  const reloaded=harness({storage:app.storage});assert.deepEqual(reloaded.finders[0].adjustments,expected);assert.equal(reloaded.panel.values.pixelSize,3.1);
+});
+
+test('live twist carries into the captured photo and both exports, with separate camera orientation',async()=>{
+  const app=harness();await app.get('capture-plane').emit('click');app.gestureLive({rotation:90,grain:2});
+  assert.equal(app.finders[0].rotation,90);assert.match(app.get('viewfinder').style.transform,/rotate\(90deg\) scale\(/);assert.equal(app.get('capture-plane').style.transform,undefined);
+  await app.tick(401);await app.get('capture-plane').emit('click');assert.equal(app.photoGestureState.rotation,90);assert.equal(app.panel.values.rotation,90);assert.equal(app.get('recenter').hidden,false);
+  await app.get('save').emit('click');await app.get('print').emit('click');assert.equal(app.encodedSnapshots[0].width,12);assert.equal(app.encodedSnapshots[0].height,16);assert.deepEqual(app.photoViews[0].snapshots.map(call=>call.pose.rotation),[90,90]);
+  app.adjust({rotation:25});await app.get('reset').emit('click');assert.equal(app.panel.values.rotation,90);assert.equal(app.liveGestureState.rotation,90);
+  await app.get('last-photo').emit('click');assert.equal(app.photoGestureState.rotation,25);assert.equal(app.panel.values.rotation,25);
+  await app.get('recenter').emit('click');assert.equal(app.photoGestureState.rotation,0);assert.equal(app.get('recenter').hidden,true);assert.equal(app.photoGestureState.grain,2);
+});
+
+test('photo and depth rotations stay in sync without rebuilding the scene or affecting camera orientation',async()=>{
+  const app=harness();await photoFromDevice(app);app.gesturePhoto({rotation:35});app.changeStudio('image',1);await app.tick(0);
+  const scene=app.scenes[0];assert.equal(scene.rotation,35);assert.equal(app.panel.context,'depth');
+  app.adjust({rotation:-70});assert.equal(scene.rotation,-70);assert.equal(app.photoGestureState.rotation,-70);
+  scene.setRotation(120);assert.equal(app.photoGestureState.rotation,120);assert.equal(app.panel.values.rotation,120);
+  app.changeStudio('image',0);assert.equal(app.panel.context,'photo');assert.equal(app.photoGestureState.rotation,120);assert.equal(app.liveGestureState.rotation,0);assert.equal(app.sceneCalls.length,1);
+});
+
+test('opening controls cancels background holds, gestures and camera shortcuts; Escape only closes controls',async()=>{
+  const app=harness();await app.get('capture-plane').emit('click');app.openPanel();await app.tick(600);
+  assert.equal(app.gestureLive({grain:8}),false);await app.get('capture-plane').emit('click');await app.emit('keydown',{code:'Space',preventDefault(){}});assert.equal(app.finders[0].captures.length,0);
+  app.openPanel(false);await app.tick(401);await app.get('capture-plane').emit('click');await app.get('studio').emit('pointerdown');await app.tick(600);app.openPanel();await app.get('studio').emit('pointerup');
+  assert.equal(app.printCalls.length,0);assert.equal(app.gesturePhoto({grain:8}),false);assert.equal(app.get('scene').style.pointerEvents,'none');
+  await tap(app);await app.tick(100);await tap(app);assert.equal(app.get('studio').className,'studio done');
+  await app.emit('keydown',{key:'Escape',preventDefault(){}});assert.equal(app.panel.open,false);assert.equal(app.get('studio').className,'studio done');assert.equal(app.get('scene').style.pointerEvents,'');
+});
+
+test('reset adjustments restores rendering defaults without deleting the photo or cached scene',async()=>{
+  const app=harness(),blob=await photoFromDevice(app);app.changeStudio('image',1);await app.tick(0);
+  app.adjust({black:50,white:150,gamma:2,contrast:2.5,dither:'bayer',strength:.1});app.adjust({pixelSize:7});app.adjust({rotation:80});app.resetAdjustments();
+  const defaults={black:0,white:255,gamma:1,contrast:1,dither:'profile',strength:1};
+  assert.deepEqual(app.scenes[0].adjustments,defaults);assert.equal(app.scenes[0].rotation,0);assert.equal(app.scenes[0].pixelSize,1);assert.equal(app.photoGestureState.rotation,0);assert.equal(app.urls.get(app.get('photo').src),blob);assert.equal(app.sceneCalls.length,1);assert.equal(app.get('studio').className,'studio done');
+  await app.emit('pagehide',{persisted:false});assert.equal(app.panel.disposed,true);
 });
