@@ -31,7 +31,7 @@ export function readColorScheme(kind){
     const id=globalThis.localStorage?.getItem(storageKey(kind));
     if(id&&COLOR_SCHEMES.some(scheme=>scheme.id===id))return id;
   }catch{ /* Safari private mode or blocked storage. */ }
-  return 'signal';
+  return 'original';
 }
 export function saveColorScheme(kind,id){
   try {globalThis.localStorage?.setItem(storageKey(kind),resolveColorScheme(id).id)}catch{}
