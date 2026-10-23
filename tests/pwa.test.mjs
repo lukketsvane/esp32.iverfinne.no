@@ -22,11 +22,14 @@ function serviceWorker(source,network=async()=>new Response('online'),options={}
 test('the app manifest starts the native camera and every entry has the same opaque app icons',async()=>{
   const manifest=JSON.parse(await read('manifest.webmanifest'));
   assert.equal(manifest.start_url,'/');assert.equal(manifest.scope,'/');assert.equal(manifest.display,'standalone');assert.equal(manifest.background_color,'#000000');
+  assert.equal(manifest.id,'/');assert.equal(manifest.name,'Entropi');assert.equal(manifest.short_name,'Entropi');assert.equal(manifest.theme_color,'#000000');
   for(const icon of manifest.icons){const png=await readFile(new URL(icon.src.slice(1),root)),size=Number(icon.sizes.split('x')[0]);assert.equal(png.readUInt32BE(16),size);assert.equal(png.readUInt32BE(20),size);assert.equal(png[25],2);assert.equal(icon.purpose,'any maskable')}
   const apple=await readFile(new URL('apple-touch-icon.png',root));assert.equal(apple.readUInt32BE(16),180);
   const ico=await readFile(new URL('favicon.ico',root));assert.equal(ico.readUInt16LE(2),1);assert.equal(ico.readUInt16LE(4),3);
+  assert.deepEqual(Array.from({length:3},(_,i)=>[ico[6+i*16],ico[7+i*16]]),[[16,16],[32,32],[48,48]]);
   assert.doesNotMatch(await read('favicon.svg'),/<text|<image/);
   for(const page of ['index.html','prepare/index.html','prepare/print.html']){const html=await read(page);assert.match(html,/rel="manifest" href="\/manifest.webmanifest"/);assert.match(html,/rel="apple-touch-icon" href="\/apple-touch-icon.png"/);assert.match(html,/apple-mobile-web-app-capable" content="yes"/);assert.match(html,/viewport-fit=cover/);assert.match(html,/type="module" src="\/pwa.mjs"/)}
+  for(const page of ['index.html','prepare/index.html']){const html=await read(page);assert.match(html,/<link rel="icon" href="\/favicon\.ico" sizes="16x16 32x32 48x48">/);assert.match(html,/<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml" sizes="any">/);assert.match(html,/apple-mobile-web-app-title" content="Entropi"/);assert.match(html,/apple-mobile-web-app-status-bar-style" content="black-translucent"/)}
 });
 
 test('the offline shell contains its complete small module graph without models, WASM or camera data',async()=>{
@@ -88,7 +91,7 @@ test('the more specific preparation worker keeps branding and registration avail
 
 test('the canonical start route reuses existing sources with its own offline cache family',async()=>{
   const app=serviceWorker(prepare,undefined,{scriptPath:'/start/sw.js'});app.stores.set('entropi-prepare-v5',new Map());app.stores.set('entropi-app-v4',new Map());app.stores.set('entropi-start-old',new Map());await app.lifecycle('install');await app.lifecycle('activate');
-  assert.equal(app.name,'entropi-start-v7');assert.deepEqual(app.deleted,['entropi-start-old']);assert.ok(app.stores.has('entropi-prepare-v5'));assert.ok(app.stores.has('entropi-app-v4'));
+  assert.equal(app.name,'entropi-start-v8');assert.deepEqual(app.deleted,['entropi-start-old']);assert.ok(app.stores.has('entropi-prepare-v5'));assert.ok(app.stores.has('entropi-app-v4'));
   for(const path of['/start/','/start/index.html','/start/?camera'])assert.equal(await(await app.request(path)).text(),'cached:/prepare/');
   const config=JSON.parse(await read('vercel.json'));for(const path of['/start','/start/','/start/index.html','/start/sw.js'])assert.equal(config.rewrites.find(route=>route.source===path)?.destination,path.endsWith('sw.js')?'/prepare/sw.js':'/prepare/index.html');
 });
@@ -106,7 +109,7 @@ test('the fresh print module graph resolves canonical sources and stays availabl
   const destinations={'/print':'/prepare/print.html','/print/':'/prepare/print.html','/print/index.html':'/prepare/print.html','/print/app.mjs':'/prepare/print.mjs','/print/printer.mjs':'/vendor/print/printer.mjs','/print/px10-protocol.mjs':'/vendor/print/px10-protocol.mjs'};
   for(const [path,destination]of Object.entries(destinations)){assert.equal(rewrites.find(route=>route.source===path)?.destination,destination);await stat(new URL(destination.slice(1),root))}
   const html=await read('prepare/print.html'),module=await read('prepare/print.mjs'),printer=await read('vendor/print/printer.mjs');assert.match(html,/src="\/print\/app\.mjs"/);assert.match(module,/from '\/print\/printer\.mjs'/);assert.match(printer,/from '\.\/px10-protocol\.mjs'/);
-  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v11'],[prepare,'/prepare/sw.js','entropi-prepare-v13'],[prepare,'/start/sw.js','entropi-start-v7']]){
+  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v12'],[prepare,'/prepare/sw.js','entropi-prepare-v14'],[prepare,'/start/sw.js','entropi-start-v8']]){
     const app=serviceWorker(source,async()=>{throw new TypeError('Offline')},{scriptPath});await app.lifecycle('install');assert.equal(app.name,name);
     for(const path of printFiles){assert.ok(app.files.includes(path));assert.equal(await(await app.request(path)).text(),'cached:'+path);const file=destinations[path].slice(1);if(path.endsWith('.mjs'))for(const match of(await read(file)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm))assert.ok(app.files.includes(new URL(match[1],origin+path).pathname),path+' -> '+match[1])}
     for(const path of ['/print','/print/index.html'])assert.equal(await(await app.request(path)).text(),'cached:/print/');

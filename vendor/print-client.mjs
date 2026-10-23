@@ -9,14 +9,14 @@ export function createPrintClient({printer,buildJob,report=()=>{}}={}){
   async function print(image,isCurrent=()=>true){
     if(disposed||busy||directImage||!isCurrent()||attempted.has(image))return false;
     if(!valid(image)){feedback('Utskriftsbiletet er ugyldig.');return false}
-    busy=true;
+    busy=true;feedback('');
     try{
       if(printer){
         const connecting=printer.device?printer.start():printer.choose();
         if(!await connecting||!printer.ready){if(!disposed)feedback(printer.lastError||(printer.supported?'Skrivaren er ikkje tilkopla.':'Bluetooth er ikkje tilgjengeleg i denne nettlesaren.'));return false}
         if(disposed||!isCurrent())return false;
         const job=buildJob(image);if(disposed||!isCurrent())return false;
-        directImage=image;const accepted=printer.enqueue('entropi-'+fresh(),job);if(accepted){attempted.add(image);feedback('Sender til skrivaren …')}else directImage=null;return accepted;
+        directImage=image;const accepted=printer.enqueue('entropi-'+fresh(),job);if(accepted)attempted.add(image);else directImage=null;return accepted;
       }
       try{completed?.close()}catch{}completed=null;
       const origin='https://esp32.iverfinne.no',session=fresh(),popup=window.open(origin+'/print/#'+session,'entropi-print-'+session);
@@ -38,7 +38,7 @@ export function createPrintClient({printer,buildJob,report=()=>{}}={}){
             popup.postMessage({type:'entropi-print-image',session,width:image.width,height:image.height,photo:image.photo===true,data:bytes.buffer},origin,[bytes.buffer]);
           }else if(data.type==='entropi-print-started'&&sent)attempted.add(image);
           else if(data.type==='entropi-print-progress'&&sent&&Number.isFinite(data.progress)&&data.progress>=0&&data.progress<=1)arm();
-          else if(data.type==='entropi-print-result'&&sent&&typeof data.ok==='boolean')finish(data.ok,data.ok?'Sendt til skrivaren.':data.message||'Utskrifta vart avbroten.');
+          else if(data.type==='entropi-print-result'&&sent&&typeof data.ok==='boolean')finish(data.ok,data.ok?'':data.message||'Utskrifta vart avbroten.');
         };
         arm();
         const poll=setInterval(()=>{if(disposed||!isCurrent()||popup.closed)finish(false)},250);

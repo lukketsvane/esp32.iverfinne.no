@@ -6,20 +6,20 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Entropi">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
 <link rel="manifest" href="/manifest.webmanifest">
 <script type="module" src="/pwa.mjs"></script>
 <title>Entropi</title>
-<style>:root{color-scheme:dark;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#000;color:#aaa}body{margin:0;min-height:100dvh;display:grid;place-content:center;text-align:center;padding:30px;box-sizing:border-box}main{width:min(100%,300px);display:grid;gap:22px}p{margin:0;line-height:1.6}#status:empty{display:none}progress{width:148px;height:1px;border:0;background:#ffffff18;justify-self:center;accent-color:#aaa}progress::-webkit-progress-bar{background:#ffffff18}progress::-webkit-progress-value{background:#aaa}section{display:grid;gap:22px}.network{padding:18px;border:1px solid #ffffff18;display:grid;gap:7px}.network img{width:200px;max-width:100%;height:auto;justify-self:center}.network strong{font-size:22px;font-weight:500;letter-spacing:.08em;color:#ddd}.network span,details{font-size:12px;line-height:1.6;color:#888}button{font:inherit;color:#ddd;background:transparent;border:1px solid #ffffff30;padding:14px 20px;cursor:pointer}button:disabled{opacity:.4;cursor:default}#back{position:fixed;top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));width:44px;height:44px;display:grid;place-items:center;color:#aaa;text-decoration:none}#back svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.3}button:focus-visible,summary:focus-visible{outline:1px solid #aaa;outline-offset:4px}summary{cursor:pointer}details p{margin-top:12px}[hidden]{display:none!important}</style>
+<style>:root{color-scheme:dark;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#000;color:#aaa}body{margin:0;min-height:100dvh;display:grid;place-content:center;text-align:center;padding:30px;box-sizing:border-box}main{width:min(100%,300px);display:grid;gap:22px}p{margin:0;line-height:1.6}#status:empty{display:none}progress{width:148px;height:1px;border:0;background:#ffffff18;justify-self:center;accent-color:#aaa}progress::-webkit-progress-bar{background:#ffffff18}progress::-webkit-progress-value{background:#aaa}section{display:grid;gap:22px}.network{padding:18px;border:1px solid #ffffff18;display:grid;gap:7px}.network img{width:200px;max-width:100%;height:auto;justify-self:center}.network strong{font-size:22px;font-weight:500;letter-spacing:.08em;color:#ddd}details{font-size:12px;line-height:1.6;color:#888}button{font:inherit;color:#ddd;background:transparent;border:0;outline:0;box-shadow:none;padding:14px 20px;cursor:pointer}button:disabled{opacity:.4;cursor:default}#back{position:fixed;top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));width:44px;height:44px;display:grid;place-items:center;color:#aaa;text-decoration:none}#back svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.3}button:focus-visible,summary:focus-visible{outline:0;color:#fff;text-decoration:underline;text-underline-offset:4px}summary{cursor:pointer}details p{margin-top:12px}[hidden]{display:none!important}</style>
 <main>
 <a id="back" href="/" aria-label="Tilbake"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></a>
 <p id="status" role="status" aria-live="polite"></p>
 <progress id="progress" max="100" aria-label="Klargjering"></progress>
 <button id="retry" hidden>Klargjer 3D</button>
 <section id="ready" hidden>
-<div id="network" class="network" hidden><strong>ENTROPI</strong><span>Utan passord · utan internett</span><img src="/prepare/entropi-wifi.png" width="200" height="200" alt="ENTROPI Wi-Fi"><p id="connection-hint">Hald inne koden og vel «Kople til nettverk».</p><details><summary>Treng du hjelp?</summary><p>Vel ENTROPI under Innstillingar → Wi-Fi. Kom tilbake hit. Om kameraet ikkje opnar seg, skriv http://192.168.4.1 i adresselinja.</p></details></div>
+<div id="network" class="network" hidden><strong>ENTROPI</strong><img src="/prepare/entropi-wifi.png" width="200" height="200" alt="ENTROPI Wi-Fi"><details><summary>Hjelp</summary><p id="connection-hint">Hald inne koden og vel «Kople til nettverk», eller vel ENTROPI under Innstillingar → Wi-Fi. Kom tilbake hit. Om kameraet ikkje opnar seg, skriv http://192.168.4.1 i adresselinja.</p></details></div>
 <button id="open-camera">Opne kameraet ↗</button>
 </section>
 </main>

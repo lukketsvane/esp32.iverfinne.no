@@ -694,7 +694,7 @@ test('the explicit print button submits once and its timed feedback survives sce
   const pending=deferred(),app=await connectedCamera({splats:true,scene:async()=>({dispose(){}}),print:()=>pending.promise});
   await app.get('capture-plane').emit('click');await app.tick(0);
   const first=app.get('print-photo').emit('click');await flush();await app.get('print-photo').emit('click');
-  assert.equal(app.printCalls.length,1);assert.equal(app.get('print-photo').disabled,true);assert.equal(app.get('print-status').hidden,false);
+  assert.equal(app.printCalls.length,1);assert.equal(app.get('print-photo').disabled,true);assert.equal(app.get('print-status').hidden,true);assert.equal(app.get('print-status').textContent,'');
   app.reportPrint('Tillat opning av skrivarsida.');app.changeStudio('image',0);app.changeStudio('image',1);
   assert.equal(app.get('print-status').textContent,'Tillat opning av skrivarsida.');assert.equal(app.get('print-status').hidden,false);
   pending.resolve(false);await first;assert.equal(app.get('print-photo').disabled,false);
@@ -709,6 +709,10 @@ test('the visible onboarding close button cancels preparation without a late tak
   assert.equal(app.get('scene-status').hidden,true);
   app.changeStudio('image',0);pending.resolve();await app.tick(0);
   assert.equal(app.get('onboarding').open,false);assert.equal(app.get('photo').hidden,false);assert.equal(app.sceneCalls.length,0);
+});
+
+test('phone transfer shows only progress and preserves an actionable setup error',async()=>{
+  const pending=deferred(),app=await connectedCamera({modelsReady:false,prepare:()=>pending.promise});await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title" class="sr">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
 });
 
 test('a suspended capture cannot reopen review or clear a newer capture while finishing late',async()=>{

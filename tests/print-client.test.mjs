@@ -24,7 +24,7 @@ function directPrinter(choose=async()=>true){
 test('a direct print invokes the native chooser in the same gesture and queues one immutable job',async()=>{
   const device=directPrinter(),app=harness({printer:device.printer}),snapshot=image();
   const printing=app.client.print(snapshot);assert.equal(device.choices,1);assert.equal(await printing,true);
-  assert.equal(device.jobs.length,1);assert.match(device.jobs[0].id,/^entropi-[a-f0-9]{32}$/);
+  assert.equal(device.jobs.length,1);assert.match(device.jobs[0].id,/^entropi-[a-f0-9]{32}$/);assert.deepEqual(app.reports,['']);
   assert.equal(await app.client.print(snapshot),false);assert.equal(device.jobs.length,1);app.client.dispose();assert.equal(device.disposed,true);
 });
 
@@ -37,7 +37,7 @@ test('cancelled pairing can be retried, while stale and disposed results cannot 
 
 test('a connection failure retains the short retry guidance without queuing an image',async()=>{
   const device=directPrinter(async()=>false);device.printer.lastError='Prøv igjen.';
-  const app=harness({printer:device.printer});assert.equal(await app.client.print(image()),false);assert.equal(device.jobs.length,0);assert.deepEqual(app.reports,[device.printer.lastError]);app.client.dispose();
+  const app=harness({printer:device.printer});assert.equal(await app.client.print(image()),false);assert.equal(device.jobs.length,0);assert.deepEqual(app.reports,['',device.printer.lastError]);app.client.dispose();
 });
 
 test('a failed direct job allows one explicit fresh attempt while active or successful jobs cannot replay',async()=>{
@@ -54,7 +54,7 @@ test('HTTP camera opens a session-bound HTTPS printer synchronously and authenti
   await app.emit(ready);await app.emit(ready);assert.equal(app.messages.length,1);assert.equal(app.messages[0].origin,'https://esp32.iverfinne.no');
   assert.equal(app.messages[0].data.data.byteLength,384*4);assert.equal(snapshot.data.byteLength,384*4);
   await app.emit({type:'entropi-print-started',session:app.session});await app.emit({type:'entropi-print-result',session:app.session,ok:true});assert.equal(await printing,true);assert.equal(app.closed,false);
-  assert.equal(await app.client.print(snapshot),false);
+  assert.equal(await app.client.print(snapshot),false);assert.deepEqual(app.reports,['']);
   app.client.dispose();assert.equal(app.closed,true);
 });
 
@@ -79,8 +79,8 @@ test('only authenticated progress extends a live helper deadline without sending
 });
 
 test('native quota wording is never exposed by direct or helper feedback',async()=>{
-  const device=directPrinter(async()=>false);device.printer.lastError='Rate limit exceeded — too many BLE requests';const direct=harness({printer:device.printer});assert.equal(await direct.client.print(image()),false);assert.deepEqual(direct.reports,['Prøv igjen.']);direct.client.dispose();
-  const app=harness(),printing=app.client.print(image()),session=app.session;await app.emit({type:'entropi-print-ready',session});await app.emit({type:'entropi-print-result',session,ok:false,message:'Too many BLE requests'});assert.equal(await printing,false);assert.deepEqual(app.reports,['Prøv igjen.']);app.client.dispose();
+  const device=directPrinter(async()=>false);device.printer.lastError='Rate limit exceeded — too many BLE requests';const direct=harness({printer:device.printer});assert.equal(await direct.client.print(image()),false);assert.deepEqual(direct.reports,['','Prøv igjen.']);direct.client.dispose();
+  const app=harness(),printing=app.client.print(image()),session=app.session;await app.emit({type:'entropi-print-ready',session});await app.emit({type:'entropi-print-result',session,ok:false,message:'Too many BLE requests'});assert.equal(await printing,false);assert.deepEqual(app.reports,['','Prøv igjen.']);app.client.dispose();
 });
 
 test('concurrent gestures, stale results, closed popups and disposal never send another image',async()=>{
@@ -92,7 +92,7 @@ test('concurrent gestures, stale results, closed popups and disposal never send 
 
 test('invalid snapshots and blocked popups fail without Bluetooth or image delivery',async()=>{
   const app=harness();assert.equal(await app.client.print({width:383,height:1,data:new Uint8Array(1532)}),false);assert.equal(app.opened.length,0);
-  const blocked=harness({blocked:true});assert.equal(await blocked.client.print(image()),false);assert.equal(blocked.messages.length,0);assert.match(blocked.reports[0],/Tillat opning/);
+  const blocked=harness({blocked:true});assert.equal(await blocked.client.print(image()),false);assert.equal(blocked.messages.length,0);assert.match(blocked.reports.at(-1),/Tillat opning/);
 });
 
 test('navigating away cancels an unfinished helper while the client remains usable after restoration',async()=>{

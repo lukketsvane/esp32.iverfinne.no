@@ -147,6 +147,10 @@ test('model failure keeps the displayed photo available as a monochrome PNG',asy
   assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].name,'entropi.png');assert.equal(app.encodedSnapshots[0].photo,true);assert.equal(app.urls.get(app.get('photo').src),blob);
 });
 
+test('normal processing uses only progress while actionable model errors remain visible',async()=>{
+  const pending=deferred(),app=harness({image:1,scene:()=>pending.promise});await photoFromDevice(app);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);app.sceneCalls[0].progress({phase:'loading-model',percent:35});assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').firstElementChild.style.width,'35%');pending.reject(new Error('Internett manglar. Klargjer telefonen først.'));await app.tick(0);assert.equal(app.get('studio').className,'studio error');assert.match(app.get('status').textContent,/Internett manglar/);const css=await readFile(new URL('../style.css',import.meta.url),'utf8');assert.match(css,/\.studio\.error #status\{/);assert.doesNotMatch(css,/\.studio\.(?:working|opening) #status/);
+});
+
 test('returning to the camera keeps pending splats without letting a late result reopen review',async()=>{
   const pending=deferred();let disposed=false;
   const app=harness({image:1,scene:()=>pending.promise});await photoFromDevice(app);
