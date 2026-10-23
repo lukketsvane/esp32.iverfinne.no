@@ -55,8 +55,8 @@ test('automatic preparation keeps QR and camera usable without a skip action or 
   loading.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('ready').hidden,false);await app.cameraReady();await app.get('open-camera').click();assert.equal(app.opened.length,1);assert.equal(app.focused,1);
 });
 
-test('routine camera and transfer states stay silent while connection instructions remain available on demand',async()=>{
-  const app=harness();await flush();assert.equal(app.get('status').textContent,'');await app.connect();assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);await app.emit({type:'entropi-models-request',session:'silent'});assert.equal(app.get('status').textContent,'');await app.complete('silent');assert.equal(app.get('status').textContent,'');await app.cameraReady();assert.equal(app.get('status').textContent,'');assert.equal(app.get('open-camera').attributes.get('aria-label'),'Tilbake til kameraet');assert.match(html,/Hald inne QR-koden og vel «Kople til nettverk»/);assert.match(html,/<code>http:\/\/192\.168\.4\.1<\/code>/);assert.match(html,/Advarsel om usikker forbindelse/);assert.doesNotMatch(html,/id="http-help" hidden|<strong>ENTROPI|\.network\{[^}]*border:|Utan passord · utan internett|button\{[^}]*border:1px|button:focus-visible[^}]*outline:1px/);
+test('the next camera action is labelled and essential joining instructions are visible',async()=>{
+  const app=harness();await flush();assert.equal(app.get('status').textContent,'');await app.connect();assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,true);assert.equal(app.get('camera-action').textContent,'Opnar kameraet …');await app.emit({type:'entropi-models-request',session:'silent'});assert.equal(app.get('status').textContent,'');await app.complete('silent');assert.equal(app.get('status').textContent,'');await app.cameraReady();assert.equal(app.get('status').textContent,'');assert.equal(app.get('open-camera').attributes.get('aria-label'),'Tilbake til kameraet');assert.equal(app.get('camera-action').textContent,'Tilbake til kameraet');assert.match(html,/<div id="network"[^]*Hald inne QR-koden\.<br>Vel «Kople til nettverk»\.<\/p><\/div>/);assert.match(html,/<code>http:\/\/192\.168\.4\.1<\/code>/);assert.doesNotMatch(html,/Advarsel om usikker forbindelse/);
 });
 
 test('QR is immediate and hides when a camera connects before models finish',async()=>{
@@ -115,7 +115,7 @@ test('successful retained transfers keep their source open and legacy helpers cl
 test('failed cache verification shows retry and cannot advertise a prepared phone',async()=>{
   const app=harness({read:(key,count)=>{if(key==='runtime'&&count===1)throw new Error('Telefonlageret er utilgjengeleg.')}});await flush();
   assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('ready').hidden,false);assert.equal(app.get('retry').hidden,false);
-  assert.match(app.get('status').textContent,/Telefonlageret/);assert.doesNotMatch(app.get('status').textContent,/Klar\./);
+  assert.match(app.get('model-status').textContent,/Telefonlageret/);assert.doesNotMatch(app.get('model-status').textContent,/Klar\./);
   await app.get('retry').click();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('retry').hidden,true);
   await app.get('open-camera').click();assert.equal(app.opened.length,1);
 });
@@ -128,12 +128,12 @@ test('an unacknowledged transfer fails visibly and leaves the retained source av
   await app.get('open-camera').click();assert.equal(app.opened.length,2);assert.equal(app.opened[0].target,app.opened[1].target);assert.equal(app.downloads.length,2);
 });
 
-test('a wrong Wi-Fi timeout retries the same per-page window without preparing models again',async()=>{
+test('an unanswered camera retries the same window without diagnosing Wi-Fi or preparing models again',async()=>{
   const app=harness();await flush();await app.get('open-camera').click();
   assert.equal(app.get('open-camera').disabled,true);assert.equal(app.get('status').textContent,'');
   await app.get('open-camera').click();assert.equal(app.opened.length,1);
   await app.expire(10000);assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('open-camera').disabled,false);
-  assert.equal(app.get('status').textContent,'Finn ikkje kameraet. Vel ENTROPI under Wi-Fi og prøv igjen.');assert.equal(app.get('open-camera').attributes.get('aria-label'),'Prøv igjen');
+  assert.equal(app.get('status').textContent,'Kameraet svara ikkje.');assert.equal(app.get('open-camera').attributes.get('aria-label'),'Prøv igjen');
   await app.get('open-camera').click();assert.equal(app.opened[0].target,app.opened[1].target);assert.deepEqual(app.downloads,['asset','runtime']);assert.deepEqual(app.reads,{asset:1,runtime:1});
   const other=harness();await flush();await other.get('open-camera').click();assert.notEqual(app.opened[0].target,other.opened[0].target);
 });
@@ -141,7 +141,7 @@ test('a wrong Wi-Fi timeout retries the same per-page window without preparing m
 test('only a known camera ready message enables a focus return that preserves its photo',async()=>{
   const app=harness();await flush();await app.get('open-camera').click();
   await app.cameraReady({source:{}});await app.cameraReady({origin:'https://untrusted.test'});await app.emit({type:'entropi-camera-ready'});
-  await app.expire(10000);assert.match(app.get('status').textContent,/Finn ikkje kameraet/);
+  await app.expire(10000);assert.match(app.get('status').textContent,/Kameraet svara ikkje/);
   const port=await app.cameraReady();assert.equal(app.get('status').textContent,'');assert.equal(app.get('open-camera').attributes.get('aria-label'),'Tilbake til kameraet');
   assert.equal(app.get('connection-hint').hidden,true);app.peer.photo='original-jpeg';
   await app.emit({type:'entropi-camera-left'},{source:{}});await app.emit({type:'entropi-camera-left'},{origin:'https://untrusted.test'});await app.emit({type:'entropi-camera-left'});
@@ -150,7 +150,7 @@ test('only a known camera ready message enables a focus return that preserves it
 
 test('a protocol hello and model completion cannot claim the camera is ready',async()=>{
   const app=harness();await flush();await app.connect();await app.expire(10000);
-  assert.match(app.get('status').textContent,/Finn ikkje kameraet/);const cameraError=app.get('status').textContent;
+  assert.match(app.get('status').textContent,/Kameraet svara ikkje/);const cameraError=app.get('status').textContent;
   await app.emit({type:'entropi-models-request',session:'current'});await app.complete('current');
   assert.equal(app.get('status').textContent,cameraError);assert.equal(app.get('open-camera').disabled,false);assert.equal(app.get('connection-help').open,true);
   await app.cameraReady();await app.expire(10000);assert.equal(app.get('status').textContent,'');
@@ -209,7 +209,7 @@ test('camera entry skips downloads and can connect for photos without claiming m
 test('optional model failure preserves an already connected photo and leaves retry available',async()=>{
   const app=harness({camera:true,read:()=>{throw Object.assign(new Error('Model missing'),{code:'PHONE_SETUP_REQUIRED'})},load:()=>{throw new Error('Internett manglar.')}});await flush();
   await app.get('open-camera').click();const port=await app.cameraReady();app.peer.photo='original-jpeg';await app.get('retry').click();
-  assert.match(app.get('status').textContent,/Internett manglar/);assert.equal(app.get('retry').hidden,false);assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(port.closed,false);
+  assert.equal(app.get('status').textContent,'');assert.equal(app.get('connection-title').textContent,'Kameraet er klart');assert.equal(app.get('model-label').textContent,'3D · ikkje klart');assert.match(app.get('model-status').textContent,/Internett manglar/);assert.equal(app.get('retry').hidden,false);assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(port.closed,false);
   await app.get('open-camera').click();assert.equal(app.focused,1);assert.equal(app.opened.length,1);assert.equal(app.peer.photo,'original-jpeg');
 });
 
@@ -236,8 +236,8 @@ test('unavailable or stalled model setup cannot disable the initial QR and camer
 
 test('model success or failure never erases a camera launch error or its manual HTTP help',async()=>{
   for(const failed of[false,true]){
-    const loading=deferred(),app=harness({load:async key=>{if(key==='asset'){await loading.promise;if(failed)throw new Error('Modellnedlastinga feila.')}}});await flush();await app.connect();await app.expire(10000);const error=app.get('status').textContent;assert.match(error,/Finn ikkje kameraet/);assert.equal(app.get('connection-help').open,true);assert.equal(app.get('open-camera').disabled,false);
-    loading.resolve();await flush();assert.equal(app.get('status').textContent,error);assert.equal(app.document.documentElement.dataset.ready,String(!failed));assert.equal(app.get('network').hidden,false);assert.equal(app.get('open-camera').disabled,false);const port=await app.cameraReady();app.peer.photo='retained';assert.equal(app.get('status').textContent,failed?'Modellnedlastinga feila.':'');await app.get('open-camera').click();assert.equal(app.focused,1);assert.equal(app.peer.photo,'retained');assert.equal(port.closed,false);
+    const loading=deferred(),app=harness({load:async key=>{if(key==='asset'){await loading.promise;if(failed)throw new Error('Modellnedlastinga feila.')}}});await flush();await app.connect();await app.expire(10000);const error=app.get('status').textContent;assert.match(error,/Kameraet svara ikkje/);assert.equal(app.get('connection-help').open,true);assert.equal(app.get('open-camera').disabled,false);
+    loading.resolve();await flush();assert.equal(app.get('status').textContent,error);assert.equal(app.document.documentElement.dataset.ready,String(!failed));assert.equal(app.get('network').hidden,false);assert.equal(app.get('open-camera').disabled,false);const port=await app.cameraReady();app.peer.photo='retained';assert.equal(app.get('status').textContent,'');assert.equal(app.get('model-status').textContent,failed?'Modellnedlastinga feila.':'');await app.get('open-camera').click();assert.equal(app.focused,1);assert.equal(app.peer.photo,'retained');assert.equal(port.closed,false);
   }
 });
 
@@ -268,17 +268,17 @@ test('offline camera entry reuses only its installed root or own worker and stil
     const app=harness({start:true,camera:true,onLine:false,controller});await flush();assert.equal(app.registrations.length,0);assert.deepEqual(app.downloads,[]);assert.deepEqual(app.reads,{asset:1,runtime:1});assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('open-camera').disabled,false);
   }
   const missing=harness({start:true,camera:true,onLine:false,controller:secure+'/sw.js',read:()=>{throw Object.assign(new Error('Missing'),{code:'PHONE_SETUP_REQUIRED'})}});await flush();assert.equal(missing.registrations.length,0);assert.equal(missing.document.documentElement.dataset.ready,'false');assert.equal(missing.get('open-camera').disabled,false);assert.deepEqual(missing.downloads,[]);
-  for(const options of [{controller:secure+'/unknown/sw.js'},{noController:true}]){const app=harness({start:true,camera:true,onLine:false,...options});await flush();assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.registrations.length,0);assert.deepEqual(app.reads,{asset:0,runtime:0});assert.match(app.get('status').textContent,/nettlesaren med internett/)}
+  for(const options of [{controller:secure+'/unknown/sw.js'},{noController:true}]){const app=harness({start:true,camera:true,onLine:false,...options});await flush();assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.registrations.length,0);assert.deepEqual(app.reads,{asset:0,runtime:0});assert.match(app.get('model-status').textContent,/nettlesaren med internett/)}
 });
 
 test('a failed registration can reuse a known installed shell when online detection is inaccurate',async()=>{
   for(const controller of [secure+'/sw.js',secure+'/start/sw.js']){const app=harness({start:true,camera:true,onLine:true,controller,registrationError:new Error('Cannot fetch worker')});await flush();assert.equal(app.registrations.length,1);assert.equal(app.document.documentElement.dataset.ready,'true');assert.deepEqual(app.reads,{asset:1,runtime:1});assert.deepEqual(app.downloads,[]);assert.equal(app.get('status').textContent,'')}
-  for(const options of [{controller:secure+'/unknown/sw.js'},{noController:true}]){const app=harness({start:true,camera:true,onLine:true,registrationError:new Error('Cannot fetch worker'),...options});await flush();assert.equal(app.registrations.length,1);assert.equal(app.document.documentElement.dataset.ready,'false');assert.deepEqual(app.reads,{asset:0,runtime:0});assert.match(app.get('status').textContent,/Cannot fetch worker/)}
+  for(const options of [{controller:secure+'/unknown/sw.js'},{noController:true}]){const app=harness({start:true,camera:true,onLine:true,registrationError:new Error('Cannot fetch worker'),...options});await flush();assert.equal(app.registrations.length,1);assert.equal(app.document.documentElement.dataset.ready,'false');assert.deepEqual(app.reads,{asset:0,runtime:0});assert.match(app.get('model-status').textContent,/Cannot fetch worker/)}
 });
 
 test('stalled downloads fail with a retry while preserving camera opening',async()=>{
   const app=harness({load:(_, {signal})=>new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason)))});await flush();await app.expire(30000);
-  assert.match(app.get('status').textContent,/Nedlastinga stoppa/);assert.equal(app.get('retry').hidden,false);assert.equal(app.get('open-camera').disabled,false);assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('network').hidden,false);
+  assert.match(app.get('model-status').textContent,/Nedlastinga stoppa/);assert.equal(app.get('retry').hidden,false);assert.equal(app.get('open-camera').disabled,false);assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('network').hidden,false);
 });
 
 test('BFCache resumes interrupted automatic preparation while camera entry remains cache only',async()=>{

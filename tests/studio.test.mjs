@@ -50,6 +50,14 @@ test('native mouse and keyboard button activation selects once without the touch
   assert.equal(app.rail('image',1).children[0].getAttribute('aria-pressed'),'true');
 });
 
+test('returning to photo mode updates both rails while preserving photo and splat style',()=>{
+  const app=harness();app.click('primitive',0);app.click('image',1);app.click('primitive',1);
+  app.controls.setImage(0);app.controls.setImage(0);
+  assert.equal(app.controls.image,0);assert.equal(app.controls.photo,3);assert.equal(app.controls.primitive,2);
+  assert.deepEqual(app.changes,[['photo',3],['image',1],['primitive',2],['image',0]]);
+  for(let i=0;i<2;i++){assert.deepEqual(app.rail('image',i).children.map(button=>button.getAttribute('aria-pressed')),['true','false']);assert.equal(app.rail('primitive',i).getAttribute('aria-label'),'Svartkvitt-stil');assert.equal(app.rail('primitive',i).children[0].getAttribute('aria-pressed'),'true')}
+});
+
 test('photo and splat styles keep independent selections and mode-specific labels on both roots',()=>{
   const app=harness();app.click('primitive',2);assert.equal(app.controls.photo,1);assert.equal(app.controls.primitive,0);
   app.click('image',1);app.click('primitive',1);assert.equal(app.controls.primitive,2);assert.equal(app.controls.photo,1);

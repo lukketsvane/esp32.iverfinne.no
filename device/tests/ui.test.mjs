@@ -37,7 +37,7 @@ function harness(options = {}) {
   const opened = [];
   const messages = [];
   const studioBindings = [];
-  const studioControls = { image: 0, primitive: 0, photo:1, dispose() {} },finders=[];
+  const studioControls = { image: 0, primitive: 0, photo:1, setImage:level=>changeStudio('image',level), dispose() {} },finders=[];
   const photoGestureState={scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1},liveGestureState={...photoGestureState},photoRefreshes=[];let photoGestureBinding,liveGestureBinding,photoResets=0;
   const photoGestureController={state:photoGestureState,reset(){photoResets++;Object.assign(photoGestureState,{scale:1,x:0,y:0});photoGestureBinding.onChange(photoGestureState)},refresh(){photoRefreshes.push({working:elements.get('photo-dialog').classList.contains('working'),error:elements.get('photo-dialog').classList.contains('error')});photoGestureBinding.onChange(photoGestureState)},dispose(){}};
   const childWindow = { postMessage: (data, origin, ports) => messages.push({ data, origin, ports }) };
@@ -342,6 +342,9 @@ test('the connection helper remains usable when optional browser storage is deni
   const app = await connectedCamera({ storageDenied: true });
   await app.get('connection').emit('click');
   assert.equal(app.get('onboarding').open, true);
+  assert.equal(app.get('onboarding-title').textContent,'Kameraet er klart');
+  assert.equal(app.get('onboarding-next').textContent,'Tilbake til kameraet');
+  assert.equal(app.get('onboarding-copy').hidden,true);
   await app.get('onboarding-next').emit('click');
   assert.equal(app.get('onboarding').open, false);
   assert.equal(app.preparations.length,0);
@@ -353,8 +356,10 @@ test('the connection helper remains usable when optional browser storage is deni
 test('the connection helper exposes the open ENTROPI network without password fields or copying', async () => {
   const app=harness({search:'?setup',frames:false});await app.tick(150);
   assert.equal(app.get('onboarding').open,true);
-  assert.match(html,/Klargjer telefonen med internett før du koplar til ENTROPI/);
-  assert.match(html,/Nettet er ope/);
+  assert.equal(app.get('onboarding-title').textContent,'Finn kameraet');
+  assert.equal(app.get('onboarding-copy').textContent,'Slå på kameraet og vel ENTROPI under Wi-Fi.');
+  assert.equal(app.get('onboarding-next').textContent,'Prøv igjen');
+  assert.match(html,/ENTROPI er eit ope nett utan internett/);
   assert.equal(app.get('password'),undefined);
   assert.equal(app.get('copy-password'),undefined);
   assert.doesNotMatch(html,/entropi2026|copy-password|navigator\.clipboard|\bid=["']password["']/i);
@@ -498,7 +503,7 @@ test('missing models ask for setup only for splats and leave the JPEG available'
   assert.match(app.get('photo').src,/^blob:/);assert.equal(app.sceneCalls.length,0);
   assert.equal(app.get('retry-scene').getAttribute('aria-label'),'Klargjer telefonen');assert.equal(app.opened.length,0);
   let prevented=false;await app.get('onboarding').emit('cancel',{preventDefault(){prevented=true}});app.get('onboarding').close();
-  assert.equal(prevented,true);assert.equal(app.get('onboarding').open,false);app.changeStudio('image',0);await app.get('close-photo').emit('click');
+  assert.equal(prevented,true);assert.equal(app.get('onboarding').open,false);assert.equal(app.studioControls.image,0);assert.equal(app.get('photo').hidden,false);assert.equal(app.get('save-photo').hidden,false);assert.equal(app.get('print-photo').hidden,false);await app.get('close-photo').emit('click');
   assert.equal(app.get('capture-plane').disabled,false);
 });
 
@@ -516,6 +521,8 @@ test('explicit model preparation builds splats from the same JPEG',async()=>{
   assert.equal(app.preparations.length,1);assert.equal(app.sceneCalls.length,1);
   assert.equal(app.sceneCalls[0].blob,app.objectUrls.get(url));assert.equal(app.get('photo').src,url);
   assert.equal(app.get('scene').hidden,false);assert.equal(app.requests.filter(r=>r.url.startsWith('/capture')).length,1);
+  const viewer=app.viewers[0];await app.get('connection').emit('click');await app.get('close-onboarding').emit('click');
+  assert.equal(app.studioControls.image,1);assert.equal(app.get('scene').hidden,false);assert.equal(app.get('photo').hidden,true);assert.equal(app.sceneCalls.length,1);assert.equal(app.viewers[0],viewer);assert.equal(app.get('photo').src,url);
 });
 
 test('preparation finishing in photo mode does not run or open splats',async()=>{
@@ -530,7 +537,7 @@ test('cancelling model transfer leaves photo mode usable and ignores a late comp
   const pending=deferred(),app=await connectedCamera({modelsReady:false,prepare:()=>pending.promise,scene:async()=>({dispose(){}})});
   await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
   await app.get('onboarding-next').emit('click');await app.get('onboarding').emit('cancel');app.get('onboarding').close();
-  assert.equal(app.preparations[0].signal.aborted,true);app.changeStudio('image',0);pending.resolve();await app.tick(0);
+  assert.equal(app.preparations[0].signal.aborted,true);assert.equal(app.studioControls.image,0);pending.resolve();await app.tick(0);
   assert.equal(app.sceneCalls.length,0);assert.equal(app.get('onboarding').open,false);
   await app.get('close-photo').emit('click');assert.equal(app.get('capture-plane').disabled,false);
 });
@@ -773,16 +780,20 @@ test('the explicit print button submits once and its timed feedback survives sce
 
 test('the visible onboarding close button cancels preparation without a late takeover',async()=>{
   const pending=deferred(),app=await connectedCamera({modelsReady:false,prepare:()=>pending.promise});
-  await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
+  await app.get('capture-plane').emit('click');const url=app.get('photo').src;app.changeStudio('image',1);await app.tick(0);
   await app.get('onboarding-next').emit('click');await app.get('close-onboarding').emit('click');
   assert.equal(app.preparations[0].signal.aborted,true);assert.equal(app.get('onboarding').open,false);
-  assert.equal(app.get('scene-status').hidden,true);
-  app.changeStudio('image',0);pending.resolve();await app.tick(0);
+  assert.equal(app.get('scene-status').hidden,true);assert.equal(app.studioControls.image,0);assert.equal(app.get('photo').hidden,false);assert.equal(app.get('photo').src,url);assert.equal(app.photoViews[0].shown,true);
+  assert.equal(app.get('save-photo').hidden,false);assert.equal(app.get('print-photo').hidden,false);assert.equal(app.get('print-photo').disabled,false);
+  await app.get('save-photo').emit('click');await app.get('print-photo').emit('click');assert.equal(app.saves.length,1);assert.equal(app.printCalls.length,1);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  pending.resolve();await app.tick(0);
   assert.equal(app.get('onboarding').open,false);assert.equal(app.get('photo').hidden,false);assert.equal(app.sceneCalls.length,0);
 });
 
-test('phone transfer shows only progress and preserves an actionable setup error',async()=>{
-  const pending=deferred(),app=await connectedCamera({modelsReady:false,prepare:()=>pending.promise});await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title" class="sr">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
+test('phone setup identifies its actions and preserves progress and actionable errors',async()=>{
+  const pending=deferred(),app=await connectedCamera({modelsReady:false,prepare:()=>pending.promise});await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
+  assert.equal(app.get('onboarding-title').textContent,'Klargjer 3D');assert.match(app.get('onboarding-copy').textContent,/internett éin gong/);assert.equal(app.get('onboarding-copy').hidden,false);assert.equal(app.get('onboarding-next').textContent,'Fullfør etter klargjering');assert.equal(app.get('close-onboarding').getAttribute('aria-label'),'Tilbake til biletet');assert.equal(app.get('onboarding-help').open,false);
+  await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-title').textContent,'Fullfører 3D');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
 });
 
 test('a suspended capture cannot reopen review or clear a newer capture while finishing late',async()=>{

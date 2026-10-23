@@ -8,17 +8,19 @@ let peer=null,peerOrigin=null,manifest,ready=false,prepared=false,downloading=fa
 if(transfer)try{const origin=new URL(document.referrer).origin;if(window.opener&&allowed.has(origin)){peer=window.opener;peerOrigin=origin}}catch{}
 const send=data=>{if(peer&&peerOrigin)peer.postMessage(data,peerOrigin)};
 function show(phase){
-  status.textContent=cameraError||modelError;bar.hidden=transfer?phase!=='working'&&phase!=='launching'&&!downloading:!downloading&&!launchTimer&&session===null;next.hidden=transfer;
-  retry.hidden=transfer?phase!=='error':prepared||downloading||!modelMissing;retry.disabled=downloading||session!==null;retry.setAttribute('aria-label',modelError?'Prøv 3D igjen':'Klargjer 3D');
+  status.textContent=transfer?modelError:cameraError;bar.hidden=!downloading&&session===null;next.hidden=transfer;
+  retry.hidden=transfer?phase!=='error':prepared||downloading||!modelMissing;retry.disabled=downloading||session!==null;retry.textContent=modelError?'Prøv 3D igjen':'Klargjer 3D';retry.setAttribute('aria-label',retry.textContent);
+  document.getElementById('model-status').textContent=transfer?'':modelError;document.getElementById('model-label').textContent=modelError?'3D · ikkje klart':prepared?'3D er klart':downloading||session!==null?'3D · klargjer …':'3D · valfritt';document.getElementById('model-summary').hidden=transfer;if(transfer)document.getElementById('model-options').open=true;
+  document.getElementById('connection-title').textContent=transfer?'Klargjer 3D':cameraConnected?'Kameraet er klart':'Kople til kameraet';
   const network=document.getElementById('network');network.hidden=transfer||cameraConnected;document.getElementById('connection-hint').hidden=cameraConnected;if(launchFailed)document.getElementById('connection-help').open=true;
-  openCamera.disabled=transfer||closed||!!launchTimer||session!==null&&!cameraConnected;openCamera.setAttribute('aria-disabled',String(openCamera.disabled));openCamera.setAttribute('aria-label',cameraConnected?'Tilbake til kameraet':launchFailed?'Prøv igjen':'Opne kameraet');document.documentElement.dataset.ready=String(prepared);
+  openCamera.disabled=transfer||closed||!!launchTimer||session!==null&&!cameraConnected;openCamera.setAttribute('aria-disabled',String(openCamera.disabled));const action=cameraConnected?'Tilbake til kameraet':launchTimer?'Opnar kameraet …':launchFailed?'Prøv igjen':'Opne kameraet';openCamera.setAttribute('aria-label',action);document.getElementById('camera-action').textContent=action;document.documentElement.dataset.ready=String(prepared);
   applyUpdate();
 }
 function applyUpdate(){if(pendingUpdate&&!transfer&&!closed&&!downloading&&session===null&&(!peer||peer.closed)&&!document.hidden){pendingUpdate=false;location.reload()}}
 function cancelDelivery(){delivery++;session=null;const waiting=pending;pending=null;waiting?.reject(new DOMException('Avbrote.','AbortError'))}
 function stopLaunch(){clearTimeout(launchTimer);launchTimer=0}
 function closeCameraPort(){if(cameraPort){cameraPort.onmessage=null;cameraPort.close();cameraPort=null}}
-function waitForCamera(){stopLaunch();cameraConnected=false;launchFailed=false;cameraError='';bar.removeAttribute('value');launchTimer=setTimeout(()=>{stopLaunch();if(closed)return;launchFailed=true;cameraError='Finn ikkje kameraet. Vel ENTROPI under Wi-Fi og prøv igjen.';show('ready')},10000);show('launching')}
+function waitForCamera(){stopLaunch();cameraConnected=false;launchFailed=false;cameraError='';launchTimer=setTimeout(()=>{stopLaunch();if(closed)return;launchFailed=true;cameraError='Kameraet svara ikkje.';show('ready')},10000);show('launching')}
 function fail(error,keepPrepared=false){modelError=error.message||'3D kunne ikkje klargjerast.';modelMissing=true;if(!keepPrepared){prepared=false;ready=false}show('error');send({type:'entropi-models-error',session,code:error.code||'PHONE_SETUP_FAILED',message:modelError})}
 
 async function controlled(){
