@@ -8,10 +8,10 @@ export function attachStudioControls(roots,onChange,enabled=()=>true,onGesture=(
   let owner=null,ignoreClickUntil=0,feedbackTimer=0;
   for(const root of roots){
     for(const kind of ['image','primitive']){
-      const rail=document.createElement('div'),options=[],levels=kind==='image'?[0,1]:[0,1,2,3,4];
+      const rail=document.createElement('div'),options=[],levels=kind==='image'?[0,1]:Array.from({length:9},(_,i)=>i);
       rail.className='studio-rail '+kind+'-rail';rail.setAttribute('role','group');rail.setAttribute('aria-label',kind==='image'?'Bilettype':'Historisk skjermprofil');
       for(const level of levels){
-        const button=document.createElement('button'),tick=document.createElement('i');button.type='button';button.className='studio-option';button.setAttribute('aria-label',kind==='primitive'?labels.profile[level]:labels.image[level]);tick.setAttribute('aria-hidden','true');button.appendChild(tick);rail.appendChild(button);options.push({button,tick,level});
+        const button=document.createElement('button'),tick=document.createElement('i');button.type='button';button.className='studio-option';if(kind==='primitive')button.style.top=((level+.5)/9*100)+'%';button.setAttribute('aria-label',kind==='primitive'?'Profil '+(level+1):labels.image[level]);tick.setAttribute('aria-hidden','true');button.appendChild(tick);rail.appendChild(button);options.push({button,tick,level});
         button.addEventListener('click',()=>{if(!enabled())return;onGesture();change(kind,level);if(kind==='image')feedback();else feedbackProfile(level)});
         button.addEventListener('focus',()=>{if(kind==='image')feedback(level);else feedbackProfile(level)});
       }
@@ -20,13 +20,13 @@ export function attachStudioControls(roots,onChange,enabled=()=>true,onGesture=(
     const hint=document.createElement('span');hint.className='studio-mode-feedback';hint.setAttribute('aria-hidden','true');root.appendChild(hint);feedbacks.push(hint);
   }
   function feedback(level=controls.image){clearTimeout(feedbackTimer);for(const hint of feedbacks){hint.classList.remove('profile-label');hint.innerHTML=icons[level];hint.classList.add('shown')}feedbackTimer=setTimeout(()=>{for(const hint of feedbacks)hint.classList.remove('shown')},800)}
-  function feedbackProfile(level){clearTimeout(feedbackTimer);for(const hint of feedbacks){hint.textContent=labels.profile[level];hint.classList.add('profile-label');hint.classList.add('shown')}feedbackTimer=setTimeout(()=>{for(const hint of feedbacks)hint.classList.remove('shown')},1300)}
-  function update(){for(const {kind,rail,options} of rails){const selected=kind==='primitive'&&controls.image===0?'photo':kind;rail.classList.toggle('active',owner?.kind===kind);rail.setAttribute('aria-label',kind==='primitive'?'Historisk skjermprofil':'Bilettype');for(const {button,tick,level} of options){button.setAttribute('aria-label',kind==='primitive'?labels.profile[level]:labels.image[level]);button.setAttribute('aria-pressed',String(level===controls[selected]));tick.classList.toggle('chosen',level===controls[selected])}}}
-  function change(kind,level){if(kind==='primitive'&&controls.image===0)kind='photo';const next=Math.max(0,Math.min(kind==='image'?1:4,Math.round(level)));if(!Number.isFinite(next)||controls[kind]===next)return;controls[kind]=next;if(kind==='image'&&next===0&&owner?.kind==='primitive')owner=null;update();onChange(kind,next)}
+  function feedbackProfile(level){}
+  function update(){for(const {kind,rail,options} of rails){const selected=kind==='primitive'&&controls.image===0?'photo':kind;rail.classList.toggle('active',owner?.kind===kind);rail.setAttribute('aria-label',kind==='primitive'?'Historisk skjermprofil':'Bilettype');for(const {button,tick,level} of options){button.setAttribute('aria-label',kind==='primitive'?'Profil '+(level+1):labels.image[level]);button.setAttribute('aria-pressed',String(level===controls[selected]));tick.classList.toggle('chosen',level===controls[selected])}}}
+  function change(kind,level){if(kind==='primitive'&&controls.image===0)kind='photo';const next=Math.max(0,Math.min(kind==='image'?1:8,Math.round(level)));if(!Number.isFinite(next)||controls[kind]===next)return;controls[kind]=next;if(kind==='image'&&next===0&&owner?.kind==='primitive')owner=null;update();onChange(kind,next)}
   const consume=event=>{event.preventDefault();event.stopImmediatePropagation()};
   const auxiliary=event=>event.target.closest('.access-control,.studio-option');
   const band=()=>Math.max(24,window.innerWidth*.07);
-  const select=event=>{const length=owner.kind==='image'?2:5,level=Math.min(length-1,Math.max(0,Math.floor(event.clientY/Math.max(1,window.innerHeight)*length)));change(owner.kind,level);if(owner.kind==='image')feedback();else feedbackProfile(level)};
+  const select=event=>{const length=owner.kind==='image'?2:9,level=Math.min(length-1,Math.max(0,Math.floor(event.clientY/Math.max(1,window.innerHeight)*length)));change(owner.kind,level);if(owner.kind==='image')feedback();else feedbackProfile(level)};
   function down(event){
     if(event.pointerType!=='touch')return;
     if(touches.size){touches.add(event.pointerId);consume(event);return}

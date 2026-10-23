@@ -28,6 +28,8 @@ function paintFinderFrame(source,context,pixels,width,height,projection,time,mon
   }
 }
 
+function maskFinderFrame(data,projection){for(let i=0;i<projection.warp.length;i++)if(projection.warp[i]<0){const at=i*4;data[at]=0;data[at+1]=0;data[at+2]=0;data[at+3]=255}}
+
 export class Viewfinder {
   constructor(canvas){
     this.canvas=canvas;this.active=true;this.disposed=false;this.source=null;this.style=0;this.palette='original';this.grain=1;this.contrast=1;
@@ -46,7 +48,7 @@ export class Viewfinder {
     this.fit();
     try{
       paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,true);this.time=time;
-      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast,this.palette));this.context.putImageData(this.output,0,0);
+      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast,this.palette));maskFinderFrame(this.output.data,this.projection);this.context.putImageData(this.output,0,0);
     }catch{}
   }
   fit(){
@@ -63,7 +65,7 @@ export class Viewfinder {
     canvas.height=Math.max(3,Math.floor(Math.min(2048,size.height,size.width*1.5)/3)*3);canvas.width=canvas.height*2/3;
     const pixels=context.createImageData(canvas.width,canvas.height);
     paintFinderFrame(source,context,pixels.data,canvas.width,canvas.height,finderProjection(canvas.width,canvas.height),this.time??0);
-    context.putImageData(pixels,0,0);return canvas;
+    maskFinderFrame(pixels.data,finderProjection(canvas.width,canvas.height));context.putImageData(pixels,0,0);return canvas;
   }
   clear(){this.source=null;if(this.context){this.context.fillStyle='#000';this.context.fillRect(0,0,this.canvas.width,this.canvas.height)}}
   dispose(){if(this.disposed)return;this.disposed=true;cancelAnimationFrame(this.animation);this.source=null;this.sampleCanvas.width=this.sampleCanvas.height=1;this.output=this.pixels=this.projection=null}
