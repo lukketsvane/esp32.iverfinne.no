@@ -24,7 +24,7 @@ export class PX10Printer extends EventTarget {
 
   constructor({ bluetooth = () => globalThis.navigator?.bluetooth,
     storage = () => globalThis.localStorage, chunkSize = 20, delay = 0,
-    connectionTimeout = 25000, writeTimeout = 10000, pauseTimeout = 45000,
+    connectionTimeout = 25000, writeTimeout = 40000, pauseTimeout = 45000,
     retryDelay = 1000, maxJobAge = 90000 } = {}) {
     super();
     this.bluetooth = bluetooth;

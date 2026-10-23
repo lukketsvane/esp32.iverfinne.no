@@ -8,7 +8,7 @@ const html=await readFile(new URL('../prepare/print.html',import.meta.url),'utf8
 const session='1234567890abcdef1234567890abcdef',origin='http://192.168.4.1';
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 function harness(options={}){
-  const events=new Map(),messages=[],jobs=[],classes=new Set();let choices=0,disposed=false,printer,focused=0;
+  const events=new EventTarget(),messages=[],jobs=[],classes=new Set();let choices=0,disposed=false,printer,focused=0;
   const opener={postMessage:(data,target)=>messages.push({data,target}),focus(){focused++}};
   const elements=new Map(['print','status'].map(id=>[id,{disabled:true,textContent:'',listeners:new Map(),setAttribute(){},addEventListener(name,callback){this.listeners.set(name,callback)},click(){return this.listeners.get('click')?.()}}]));
   class Printer extends EventTarget{
@@ -19,10 +19,11 @@ function harness(options={}){
     dispose(){disposed=true}
   }
   const document={referrer:options.referrer??origin+'/',getElementById:id=>elements.get(id),body:{classList:{add:name=>classes.add(name),remove:name=>classes.delete(name)}}};
-  vm.runInNewContext(source,{document,window:{opener:options.noOpener?null:opener,addEventListener:(name,callback)=>events.set(name,callback)},location:{hash:'#'+(options.session??session)},URL,ArrayBuffer,Uint8ClampedArray,PX10Printer:Printer,cloudPrintJob:image=>new Uint8Array([image.height,1,2])});
-  async function emit(data,details={}){events.get('message')?.({data,source:opener,origin,...details});await flush()}
+  vm.runInNewContext(source,{document,window:{opener:options.noOpener?null:opener,addEventListener:(...args)=>events.addEventListener(...args)},location:{hash:'#'+(options.session??session)},URL,ArrayBuffer,Uint8ClampedArray,PX10Printer:Printer,cloudPrintJob:image=>new Uint8Array([image.height,1,2])});
+  async function lifecycle(type,details={}){events.dispatchEvent(Object.assign(new Event(type),details));await flush()}
+  async function emit(data,details={}){await lifecycle('message',{data,source:opener,origin,...details})}
   const image=()=>({type:'entropi-print-image',session,width:384,height:1,data:new Uint8Array(384*4).buffer});
-  return {elements,messages,jobs,classes,printer,opener,emit,image,hide:async()=>{events.get('pagehide')?.();await flush()},get focused(){return focused},get choices(){return choices},get disposed(){return disposed}};
+  return {elements,messages,jobs,classes,printer,opener,emit,image,lifecycle,hide:details=>lifecycle('pagehide',details),get focused(){return focused},get choices(){return choices},get disposed(){return disposed}};
 }
 
 test('the printer helper accepts one bounded image only from its exact opener, origin and session',async()=>{
@@ -51,6 +52,19 @@ test('cancelled pairing permits a deliberate retry while disposal prevents late 
   let release;const app=harness({choose:()=>new Promise(resolve=>{release=resolve})});await app.emit(app.image());
   const cancelled=app.elements.get('print').click();release(false);await cancelled;assert.equal(app.jobs.length,0);assert.equal(app.elements.get('print').disabled,false);
   const late=app.elements.get('print').click();await app.hide();release(true);await late;assert.equal(app.disposed,true);assert.equal(app.jobs.length,0);
+});
+
+test('BFCache keeps a pending chooser and returns to the same single queued job',async()=>{
+  let release;const app=harness({choose:()=>new Promise(resolve=>{release=resolve})});await app.emit(app.image());const choosing=app.elements.get('print').click();assert.equal(app.choices,1);await app.hide({persisted:true});assert.equal(app.disposed,false);await app.lifecycle('pageshow',{persisted:true});release(true);await choosing;assert.equal(app.jobs.length,1);assert.equal(app.messages.filter(message=>message.data.type==='entropi-print-ready').length,1);await app.elements.get('print').click();assert.equal(app.choices,1);assert.equal(app.jobs.length,1);
+});
+
+test('an in-flight BFCache return neither restarts printing nor loses its single completion',async()=>{
+  const app=harness();await app.emit(app.image());await app.elements.get('print').click();const job=app.jobs[0];await app.hide({persisted:true});await app.lifecycle('pageshow',{persisted:true});await app.elements.get('print').click();assert.equal(app.disposed,false);assert.equal(app.jobs.length,1);assert.equal(app.jobs[0],job);assert.equal(app.choices,1);assert.equal(app.messages.filter(message=>message.data.type==='entropi-print-started').length,1);app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'sent'}}));assert.equal(app.messages.filter(message=>message.data.type==='entropi-print-result').length,1);await app.hide({persisted:true});await app.lifecycle('pageshow',{persisted:true});await app.elements.get('print').click();assert.equal(app.focused,1);assert.equal(app.jobs.length,1);assert.equal(app.messages.filter(message=>message.data.type==='entropi-print-ready').length,1);
+  const messages=app.messages.length,text=app.elements.get('status').textContent;await app.hide({persisted:false});assert.equal(app.disposed,true);app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'failed',message:'Late native failure'}}));app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'sent'}}));await app.emit(app.image());await app.elements.get('print').click();assert.equal(app.messages.length,messages);assert.equal(app.elements.get('status').textContent,text);assert.equal(app.jobs.length,1);assert.equal(app.focused,1);
+});
+
+test('real unload after BFCache still disposes and blocks a late native pairing response',async()=>{
+  let release;const app=harness({choose:()=>new Promise(resolve=>{release=resolve})});await app.emit(app.image());const choosing=app.elements.get('print').click();await app.hide({persisted:true});await app.lifecycle('pageshow',{persisted:true});await app.hide({persisted:false});release(true);await choosing;assert.equal(app.disposed,true);assert.equal(app.jobs.length,0);assert.equal(app.choices,1);assert.equal(app.messages.some(message=>message.data.type==='entropi-print-started'),false);
 });
 
 test('a connection quota failure shows the short guidance and permits a later explicit tap',async()=>{

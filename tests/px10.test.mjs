@@ -278,6 +278,43 @@ test('quota cooldown survives helper replacement and storage failure still block
   assert.equal(denied.lastError, 'Vent eitt minutt før nytt forsøk.'); assert.equal(requests, 2); assert.equal(fake.choices(), 0);
 });
 
+test('a pending write survives twenty seconds in the background without duplicate requests', async t => {
+  let release;
+  const requests = [], fake = fakeBLE({ write: async (bytes, index) => {
+    requests.push(bytes.slice());
+    if (index === 0) await new Promise(resolve => { release = resolve; });
+  } });
+  const printer = printerFor(fake); t.after(() => printer.dispose()); await printer.choose();
+  const states = []; printer.addEventListener('status', event => states.push(event.detail.state));
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  const bytes = Uint8Array.from({ length: 60 }, (_, i) => i), sending = printer.send('background', bytes);
+  assert.equal(printer.busy, true); assert.equal(requests.length, 1);
+  t.mock.timers.tick(20000); await Promise.resolve();
+  assert.equal(await printer.start(), true); assert.equal(printer.busy, true);
+  assert.equal(requests.length, 1); assert.equal(fake.writes.length, 0); assert.equal(states.includes('failed'), false);
+  release(); await sending;
+  assert.equal(printer.busy, false); assert.deepEqual(joinBytes(requests), bytes); assert.deepEqual(joinBytes(fake.writes), bytes);
+  assert.deepEqual(requests.map(chunk => chunk.length), [20, 20, 20]);
+  assert.equal(fake.connections(), 1); assert.equal(fake.choices(), 1); assert.equal(states.filter(state => state === 'sent').length, 1);
+});
+
+test('the default forty-second write timeout cannot succeed late or replay the job', async t => {
+  let release, requests = 0;
+  const fake = fakeBLE({ write: () => { requests++; return new Promise(resolve => { release = resolve; }); } });
+  const printer = printerFor(fake); t.after(() => printer.dispose()); await printer.choose();
+  const states = []; printer.addEventListener('status', event => states.push(event.detail.state));
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  const sending = printer.send('default-timeout', new Uint8Array(60)), failed = assert.rejects(sending, /svarte ikkje/);
+  t.mock.timers.tick(39999); await Promise.resolve();
+  assert.equal(printer.busy, true); assert.equal(requests, 1); assert.equal(states.includes('failed'), false);
+  t.mock.timers.tick(1); await failed;
+  assert.equal(printer.busy, false); assert.equal(printer.ready, false); assert.equal(states.filter(state => state === 'failed').length, 1);
+  release(); await printer.start();
+  assert.equal(printer.ready, true); assert.equal(fake.writes.length, 1); assert.equal(requests, 1); assert.equal(states.includes('sent'), false);
+  await assert.rejects(printer.send('default-timeout', new Uint8Array(60)), /alt forsøkt/);
+  assert.equal(requests, 1); assert.equal(fake.connections(), 2); assert.equal(fake.choices(), 1);
+});
+
 test('an unresolved write is retired, and late completion cannot report a successful print', async t => {
   let release;
   const fake = fakeBLE({ write: () => new Promise(resolve => { release = resolve; }) });

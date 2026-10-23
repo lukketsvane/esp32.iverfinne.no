@@ -13,7 +13,7 @@ function harness({printer,buildJob=()=>new Uint8Array([1,2,3]),blocked=false}={}
   const context=vm.createContext({WeakSet,Uint8Array,Uint8ClampedArray,crypto:webcrypto,window:{open:(url,name)=>{opened.push({url,name});popup.closed=false;return blocked?null:popup},addEventListener:(name,listener)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(listener)},removeEventListener:(name,listener)=>listeners.get(name)?.delete(listener)},setTimeout:(callback,delay)=>{timeouts.set(delay,callback);return delay},clearTimeout:id=>timeouts.delete(id),setInterval:(callback,delay)=>{polls.set(delay,callback);return delay},clearInterval:id=>polls.delete(id)});
   vm.runInContext(source,context);const client=context.createPrintClient({printer,buildJob,report:message=>reports.push(message)});
   async function emit(data,details={}){for(const listener of [...listeners.get('message')??[]])listener({data,source:popup,origin:'https://esp32.iverfinne.no',...details});await flush()}
-  return {client,popup,opened,messages,reports,emit,expire:async delay=>{timeouts.get(delay)?.();await flush()},hide:async()=>{for(const listener of [...listeners.get('pagehide')??[]])listener();await flush()},poll:async()=>{for(const callback of [...polls.values()])callback();await flush()},get session(){return opened.at(-1)?.url.split('#')[1]},get closed(){return closed}};
+  return {client,popup,opened,messages,reports,emit,expire:async delay=>{timeouts.get(delay)?.();await flush()},hide:async(persisted=false)=>{for(const listener of [...listeners.get('pagehide')??[]])listener({persisted});await flush()},poll:async()=>{for(const callback of [...polls.values()])callback();await flush()},get session(){return opened.at(-1)?.url.split('#')[1]},get closed(){return closed}};
 }
 function directPrinter(choose=async()=>true){
   const jobs=[];let choices=0,disposed=false;
@@ -79,4 +79,14 @@ test('invalid snapshots and blocked popups fail without Bluetooth or image deliv
 test('navigating away cancels an unfinished helper while the client remains usable after restoration',async()=>{
   const app=harness(),printing=app.client.print(image());await app.hide();assert.equal(await printing,false);assert.equal(app.closed,true);assert.equal(app.messages.length,0);
   const next=app.client.print(image());assert.equal(app.opened.length,2);app.client.dispose();assert.equal(await next,false);
+});
+
+test('a cached page departure preserves the exact helper session before and during sending',async()=>{
+  const app=harness(),snapshot=image(),printing=app.client.print(snapshot),session=app.session;
+  await app.hide(true);assert.equal(app.closed,false);await app.emit({type:'entropi-print-ready',session});await app.emit({type:'entropi-print-started',session});await app.hide(true);await app.poll();assert.equal(app.closed,false);
+  await app.emit({type:'entropi-print-result',session,ok:true});assert.equal(await printing,true);assert.equal(app.opened.length,1);assert.equal(app.messages.length,1);assert.equal(await app.client.print(snapshot),false);app.client.dispose();
+});
+
+test('a real departure after a cached departure still closes an unfinished helper',async()=>{
+  const app=harness(),printing=app.client.print(image());await app.hide(true);assert.equal(app.closed,false);await app.hide(false);assert.equal(await printing,false);assert.equal(app.closed,true);app.client.dispose();
 });

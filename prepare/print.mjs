@@ -9,6 +9,7 @@ const send=data=>{if(!closed&&origin)opener.postMessage({...data,session},origin
 const fail=message=>{document.body.classList.remove('working');document.body.classList.add('error');status.textContent=message;button.setAttribute('aria-busy','false');button.disabled=started||!image};
 const printer=new PX10Printer();
 printer.addEventListener('status',event=>{
+  if(closed)return;
   const data=event.detail;
   if(data.state==='sent'&&started){complete=true;document.body.classList.remove('working');status.textContent='';button.disabled=false;button.setAttribute('aria-busy','false');button.setAttribute('aria-label','Tilbake til kameraet');button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 5-7 7 7 7M3 12h18"/></svg>';send({type:'entropi-print-result',ok:true})}
   else if(data.state==='failed'&&started){fail(data.message||'Skrivaren svara ikkje.');send({type:'entropi-print-result',ok:false,message:status.textContent})}
@@ -33,5 +34,5 @@ button.addEventListener('click',async()=>{
   }catch(error){if(!closed){fail(error.message||'Kunne ikkje skrive ut.');send({type:'entropi-print-result',ok:false,message:status.textContent})}}
   finally{busy=false;if(!started&&!closed){document.body.classList.remove('working');button.setAttribute('aria-busy','false');button.disabled=false}}
 });
-window.addEventListener('pagehide',()=>{closed=true;printer.dispose()},{once:true});
+window.addEventListener('pagehide',event=>{if(event.persisted||closed)return;closed=true;printer.dispose()});
 if(origin){void printer.start().catch(()=>{});send({type:'entropi-print-ready'})}else{button.disabled=true;fail('Opne skrivaren frå kameraet.')}

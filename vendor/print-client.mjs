@@ -2,7 +2,7 @@ export function createPrintClient({printer,buildJob,report=()=>{}}={}){
   const attempted=new WeakSet();let disposed=false,busy=false,pending=null,completed=null;
   const valid=image=>image&&image.width===384&&Number.isInteger(image.height)&&image.height>0&&image.height<=1024&&(image.data instanceof Uint8Array||image.data instanceof Uint8ClampedArray)&&image.data.length===image.width*image.height*4;
   const fresh=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),value=>value.toString(16).padStart(2,'0')).join('');
-  const pagehide=()=>pending?.();window.addEventListener('pagehide',pagehide);
+  const pagehide=event=>{if(!event.persisted)pending?.()};window.addEventListener('pagehide',pagehide);
   printer?.addEventListener('status',event=>{if(!disposed&&event.detail.state==='failed')report(event.detail.message||'Skrivaren svara ikkje.')});
   try{void printer?.start().catch(()=>{})}catch{}
   async function print(image,isCurrent=()=>true){
