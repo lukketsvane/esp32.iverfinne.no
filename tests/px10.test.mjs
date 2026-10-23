@@ -148,19 +148,50 @@ test('partial failure never resends that result after reconnecting', async t => 
   assert.equal(fake.writes.length, 1);
 });
 
-test('default writes remain ordered and at least 50 milliseconds apart', async t => {
-  const times = [], fake = fakeBLE({ write: async () => { times.push(Date.now()); } });
+test('default writes stay ordered without an artificial delay or overlapping native requests', async t => {
+  const times = [];let active=0,maxActive=0;
+  const fake = fakeBLE({ write: async () => { times.push(Date.now());maxActive=Math.max(maxActive,++active);await Promise.resolve();active--; } });
   const printer = new PX10Printer({ bluetooth: () => fake.bluetooth, storage: () => fake.storage });
   t.after(() => printer.dispose()); await printer.choose();
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
-  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
-  const bytes = Uint8Array.from({ length: 60 }, (_, i) => i), sending = printer.send('paced', bytes);
-  await flush(); assert.deepEqual(times, [10000]);
-  t.mock.timers.tick(49); await flush(); assert.equal(times.length, 1);
-  t.mock.timers.tick(1); await flush(); assert.deepEqual(times, [10000, 10050]);
-  t.mock.timers.tick(50); await sending;
-  assert.deepEqual(times, [10000, 10050, 10100]);
+  const bytes = Uint8Array.from({ length: 60 }, (_, i) => i);await printer.send('unpaced', bytes);
+  assert.deepEqual(times, [10000, 10000, 10000]);assert.equal(maxActive,1);
   assert.deepEqual(joinBytes(fake.writes), bytes); assert.ok(fake.writes.every(chunk => chunk.length === 20));
+});
+
+test('reported native write limits and MTU use larger ordered chunks without truncating the job',async t=>{
+  for(const metadata of [{getWriteLimits:async()=>({withoutResponse:182}),getMtu:async()=>{throw new Error('Limit takes priority')}},{getMtu:async()=>185},{getWriteLimits:async()=>({mtu:185})}]){
+    const fake=fakeBLE();Object.assign(fake.device.gatt,metadata);const printer=printerFor(fake);t.after(()=>printer.dispose());assert.equal(await printer.choose(),true);const bytes=Uint8Array.from({length:400},(_,i)=>i);await printer.send('large',bytes);assert.deepEqual(fake.writes.map(chunk=>chunk.length),[182,182,36]);assert.deepEqual(joinBytes(fake.writes),bytes);
+  }
+});
+
+test('missing, invalid and unsupported limit metadata retain the conservative twenty-byte fallback',async t=>{
+  const cases=[{},...[-1,0,NaN,Infinity,20.5,'182',null].map(withoutResponse=>({getWriteLimits:async()=>({withoutResponse})})),...[-1,0,3,185.5,'185',null].map(mtu=>({getMtu:async()=>mtu})),{getWriteLimits:async()=>{throw new DOMException('Not implemented','NotSupportedError')}}];
+  for(const metadata of cases){const fake=fakeBLE();Object.assign(fake.device.gatt,metadata);const printer=printerFor(fake);t.after(()=>printer.dispose());assert.equal(await printer.choose(),true);await printer.send('safe',new Uint8Array(45));assert.deepEqual(fake.writes.map(chunk=>chunk.length),[20,20,5])}
+});
+
+test('native write sizes are capped at 512 bytes and custom fallback sizes remain available',async t=>{
+  for(const [metadata,options,lengths]of [[{getWriteLimits:async()=>({withoutResponse:8192})},{},[512,512,76]],[{getMtu:async()=>8195},{},[512,512,76]],[{},{chunkSize:17},[17,17,6]]]){
+    const fake=fakeBLE();Object.assign(fake.device.gatt,metadata);const printer=printerFor(fake,options);t.after(()=>printer.dispose());await printer.choose();const bytes=Uint8Array.from({length:options.chunkSize?40:1100},(_,i)=>i);await printer.send('bounded',bytes);assert.deepEqual(fake.writes.map(chunk=>chunk.length),lengths);assert.deepEqual(joinBytes(fake.writes),bytes);
+  }
+});
+
+test('disconnect discards a previously negotiated size before reconnecting without metadata',async t=>{
+  const fake=fakeBLE();fake.device.gatt.getWriteLimits=async()=>({withoutResponse:182});const printer=printerFor(fake);t.after(()=>printer.dispose());await printer.choose();await printer.send('first',new Uint8Array(200));assert.deepEqual(fake.writes.map(chunk=>chunk.length),[182,18]);printer.suspend();delete fake.device.gatt.getWriteLimits;fake.device.gatt.disconnect();assert.equal(await printer.start(),true);const before=fake.writes.length;await printer.send('second',new Uint8Array(45));assert.deepEqual(fake.writes.slice(before).map(chunk=>chunk.length),[20,20,5]);
+});
+
+test('metadata quota stops service discovery and writing until an explicit retry after cooldown',async t=>{
+  for(const method of ['getWriteLimits','getMtu']){
+    const fake=fakeBLE();let calls=0;fake.device.gatt[method]=async()=>{calls++;throw {code:'RATE_LIMIT_EXCEEDED'}};const printer=printerFor(fake);t.after(()=>printer.dispose());t.mock.timers.enable({apis:['Date'],now:10000});assert.equal(await printer.choose(),false);assert.equal(calls,1);assert.deepEqual(fake.services,[]);assert.deepEqual(fake.writes,[]);assert.equal(printer.lastError,'Vent eitt minutt før nytt forsøk.');assert.equal(printer.retryTimer,null);assert.equal(await printer.start(),false);assert.equal(await printer.choose(),false);assert.equal(fake.connections(),1);assert.equal(fake.choices(),1);t.mock.timers.reset();
+  }
+});
+
+test('a pending metadata request falls back after one second and cannot change an active channel later',async t=>{
+  let release,queried=false;const fake=fakeBLE();fake.device.gatt.getWriteLimits=()=>{queried=true;return new Promise(resolve=>{release=resolve})};const printer=printerFor(fake);t.after(()=>printer.dispose());t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});const choosing=printer.choose();for(let i=0;i<20;i++)await Promise.resolve();assert.equal(queried,true);assert.equal(printer.ready,false);t.mock.timers.tick(999);await Promise.resolve();assert.equal(printer.ready,false);t.mock.timers.tick(1);assert.equal(await choosing,true);release({withoutResponse:182});for(let i=0;i<10;i++)await Promise.resolve();await printer.send('fallback',new Uint8Array(45));assert.deepEqual(fake.writes.map(chunk=>chunk.length),[20,20,5]);
+});
+
+test('a fragmented pause received mid-job still stops immediate writes until the printer resumes',async t=>{
+  const fake=fakeBLE({write:async(_,index,notifier)=>{if(index===0){const pause=packet(0xae,[0x10]);pause[3]=1;notifier.notify(pause.slice(0,4));notifier.notify(pause.slice(4))}}}),printer=printerFor(fake);t.after(()=>printer.dispose());await printer.choose();t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});const bytes=Uint8Array.from({length:60},(_,i)=>i),sending=printer.send('pause-midway',bytes);for(let i=0;i<20;i++)await Promise.resolve();assert.equal(printer.paused,true);assert.equal(fake.writes.length,1);t.mock.timers.tick(20);for(let i=0;i<10;i++)await Promise.resolve();assert.equal(fake.writes.length,1);const resume=packet(0xae,[0]);resume[3]=1;fake.notifier.notify(resume);t.mock.timers.tick(20);await sending;assert.deepEqual(fake.writes.map(chunk=>chunk.length),[20,20,20]);assert.deepEqual(joinBytes(fake.writes),bytes);
 });
 
 test('discovery quota stops alternate discovery and all connection requests until explicit retry after a minute', async t => {

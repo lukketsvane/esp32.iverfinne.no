@@ -23,7 +23,7 @@ async function bounded(promise, milliseconds, message) {
 export class PX10Printer extends EventTarget {
 
   constructor({ bluetooth = () => globalThis.navigator?.bluetooth,
-    storage = () => globalThis.localStorage, chunkSize = 20, delay = 50,
+    storage = () => globalThis.localStorage, chunkSize = 20, delay = 0,
     connectionTimeout = 25000, writeTimeout = 10000, pauseTimeout = 45000,
     retryDelay = 1000, maxJobAge = 90000 } = {}) {
     super();
@@ -99,7 +99,7 @@ export class PX10Printer extends EventTarget {
   }
   clearChannel() {
     this.notifier?.removeEventListener('characteristicvaluechanged', this.onNotification);
-    this.writer = null; this.notifier = null; this.paused = false;
+    this.writer = null; this.notifier = null; this.paused = false; this.writeSize = this.chunkSize;
     this.decoder = new PacketDecoder();
   }
 
@@ -189,6 +189,17 @@ export class PX10Printer extends EventTarget {
         });
         const server = await bounded(pending, this.connectionTimeout, 'PX10 svarte ikkje.');
         if (!current()) throw new Error('Tilkoplinga vart avbroten.');
+        let limit;
+        try {
+          limit = await bounded((async () => {
+            const limits = await server.getWriteLimits?.();
+            if (Number.isInteger(limits?.withoutResponse) && limits.withoutResponse > 0) return limits.withoutResponse;
+            const mtu = limits?.mtu ?? await server.getMtu?.();
+            return Number.isInteger(mtu) && mtu > 3 ? mtu - 3 : this.chunkSize;
+          })(), 1000, 'Skrivegrensa er ukjend.');
+        } catch (error) { if (isQuota(error)) throw error; }
+        if (!current()) throw new Error('Tilkoplinga vart avbroten.');
+        this.writeSize = Math.min(512, limit || this.chunkSize);
         const channels = await bounded((async () => {
           let service, writeID = 'ae01', notifyID = 'ae02';
           try { service = await server.getPrimaryService(UUID('ae30')); }
@@ -264,7 +275,8 @@ export class PX10Printer extends EventTarget {
     const version = this.version, writer = this.writer;
     let sent = 0; this.emit('sending', { progress: 0 });
     try {
-      for (let offset = 0; offset < bytes.length; offset += this.chunkSize) {
+      const step = this.writeSize;
+      for (let offset = 0; offset < bytes.length; offset += step) {
         const pausedAt = Date.now();
         while (this.paused) {
           if (this.disposed || !this.ready || version !== this.version) throw new Error('Tilkoplinga vart broten.');
@@ -272,14 +284,14 @@ export class PX10Printer extends EventTarget {
           await sleep(20);
         }
         if (this.disposed || !this.ready || version !== this.version) throw new Error('Tilkoplinga vart broten.');
-        const chunk = bytes.slice(offset, offset + this.chunkSize);
+        const chunk = bytes.slice(offset, offset + step);
         const method = writer.writeValueWithoutResponse || writer.writeValue;
         if (typeof method !== 'function') throw new Error('Skrivekanalen manglar.');
         await bounded(method.call(writer, chunk), this.writeTimeout, 'PX10 svarte ikkje under sendinga.');
         if (this.disposed || !this.ready || version !== this.version) throw new Error('Tilkoplinga vart broten.');
         sent += chunk.length;
         this.emit('sending', { progress: sent / bytes.length });
-        if (offset + this.chunkSize < bytes.length) await sleep(this.delay);
+        if (this.delay > 0 && offset + step < bytes.length) await sleep(this.delay);
       }
       this.emit('sent', { bytes: sent, physicalPrintVerified: false });
       return { bytes: sent, physicalPrintVerified: false };
