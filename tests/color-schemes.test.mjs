@@ -45,7 +45,7 @@ test('per-mode preference is saved independently with safe storage fallback',()=
   const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),store=new Map();
   try{
     Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:key=>store.get(key)??null,setItem:(key,value)=>store.set(key,value)}});
-    assert.equal(readColorScheme('photo'),'signal');
+    assert.equal(readColorScheme('photo'),'original');
     saveColorScheme('photo','ember');
     saveColorScheme('depth','ultraviolet');
     assert.equal(readColorScheme('photo'),'ember');
@@ -53,7 +53,7 @@ test('per-mode preference is saved independently with safe storage fallback',()=
     saveColorScheme('photo','invalid');
     assert.equal(readColorScheme('photo'),'original');
     Object.defineProperty(globalThis,'localStorage',{configurable:true,get(){throw Error('blocked')}});
-    assert.equal(readColorScheme('depth'),'signal');
+    assert.equal(readColorScheme('depth'),'original');
     assert.doesNotThrow(()=>saveColorScheme('depth','signal'));
   }finally{if(previous)Object.defineProperty(globalThis,'localStorage',previous);else delete globalThis.localStorage}
 });
