@@ -38,6 +38,7 @@ function harness(options = {}) {
   const messages = [];
   const studioBindings = [];
   const studioControls = { image: 0, primitive: 0, photo:1, setImage:level=>changeStudio('image',level), dispose() {} },finders=[];
+  let colorBinding=null;
   const photoGestureState={scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1},liveGestureState={...photoGestureState},photoRefreshes=[];let photoGestureBinding,liveGestureBinding,photoResets=0;
   const photoGestureController={state:photoGestureState,reset(){photoResets++;Object.assign(photoGestureState,{scale:1,x:0,y:0});photoGestureBinding.onChange(photoGestureState)},refresh(){photoRefreshes.push({working:elements.get('photo-dialog').classList.contains('working'),error:elements.get('photo-dialog').classList.contains('error')});photoGestureBinding.onChange(photoGestureState)},dispose(){}};
   const childWindow = { postMessage: (data, origin, ports) => messages.push({ data, origin, ports }) };
@@ -183,10 +184,15 @@ function harness(options = {}) {
       getItem(key) { if (options.storageDenied) throw new Error('Storage denied'); return stored.get(key) ?? null; },
       setItem(key, value) { if (options.storageDenied) throw new Error('Storage denied'); stored.set(key, value); },
     },
-    Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};this.captures=[];finders.push(this) }capture(source){const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;this.captures.push({source,url:source.src,canvas});return canvas}setStyle(level){this.style=level}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
+    Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};this.captures=[];finders.push(this) }capture(source){const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;this.captures.push({source,url:source.src,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
+    readColorScheme:kind=>stored.get('entropi-color-'+kind+'-v1')??'signal',
+    saveColorScheme:(kind,id)=>stored.set('entropi-color-'+kind+'-v1',id),
+    attachColorSchemeControls:(hosts,getKind,getSelection,onChoose,enabled)=>{
+      colorBinding={hosts,getKind,getSelection,onChoose,enabled};return {refresh(){},dispose(){}};
+    },
     attachPhotoGestures:(image,binding)=>{if(binding.toneOnly){liveGestureBinding=binding;return {state:liveGestureState}}photoGestureBinding=binding;binding.onChange(photoGestureState);return photoGestureController},
-    createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
+    createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setPalette(id){this.palette=id},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
     phoneModelsReady: async signal => { modelChecks.push(signal); return typeof options.modelsReady==='function'?options.modelsReady(signal):options.modelsReady!==false; },
     requestPhoneModels: async (signal,onProgress,source) => { preparations.push({signal,onProgress,source}); if(options.prepare)await options.prepare(signal,onProgress,source); },
     createDevicePrinter:()=>({native:true}),cloudPrintJob:image=>new Uint8Array([image.width&255]),
@@ -196,7 +202,7 @@ function harness(options = {}) {
     savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
     createDepthScene: async (host, blob, onProgress, signal, quality) => {
       sceneCalls.push({ host, blob, onProgress, signal, quality });
-      if (options.scene) {const viewer={setPrimitiveLevel(){},refresh(){return true},resetView(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,onProgress,signal,quality)};viewers.push(viewer);return viewer}
+      if (options.scene) {const viewer={setPrimitiveLevel(){},setPalette(id){this.palette=id},refresh(){return true},resetView(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,onProgress,signal,quality)};viewers.push(viewer);return viewer}
       const error=new Error('Modellen manglar på telefonen.');error.code='PHONE_SETUP_REQUIRED';throw error;
     },
     setTimeout: (callback, delay) => timeout(callback, delay),
@@ -230,7 +236,7 @@ function harness(options = {}) {
   function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
   function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
-  return { elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
+  return { elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id), choosePalette:id=>{if(!colorBinding)throw Error('Palettes not mounted');colorBinding.onChoose(colorBinding.getKind(),id)}, paletteKind:()=>colorBinding?.getKind(), selectedPalette:()=>colorBinding?.getSelection(colorBinding.getKind()) };
 }
 
 async function connectedCamera(options = {}) {
@@ -993,4 +999,28 @@ test('photo and splat styles stay independent while the same original JPEG and s
 
 test('live dithering and tone use the captured photo style without a three-finger shutter click',async()=>{
   const app=await connectedCamera(),finder=app.finders[0],view=app.photoViews[0];assert.equal(finder.style,1);assert.equal(view.style,1);app.changeStudio('photo',2);assert.equal(finder.style,2);assert.equal(app.gestureLive({grain:3,contrast:1.5}),true);assert.deepEqual(finder.tone,{grain:3,contrast:1.5});await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,0);await app.tick(401);await app.get('capture-plane').emit('click');assert.equal(view.sources.length,1);assert.equal(view.style,2);assert.deepEqual(view.tone,{grain:3,contrast:1.5});assert.equal(app.gestureLive({grain:1}),false);app.gesturePhoto({grain:5,contrast:2});assert.deepEqual(finder.tone,{grain:5,contrast:2});assert.equal(app.liveGestureState.grain,5);assert.equal(app.sceneCalls.length,0);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+});
+
+
+test('photo and Gaussian palettes are independent and recolour existing scenes without rerunning depth', async()=>{
+  const app=await connectedCamera({scene:async()=>({dispose(){}})});
+  assert.equal(app.paletteKind(),'photo');
+  assert.equal(app.finders[0].palette,'signal');
+  app.choosePalette('coral');
+  assert.equal(app.photoViews[0].palette,'coral');
+  assert.equal(app.finders[0].palette,'coral');
+  assert.equal(app.stored.get('entropi-color-photo-v1'),'coral');
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  app.changeStudio('image',1);await app.tick(0);
+  assert.equal(app.paletteKind(),'depth');
+  assert.equal(app.selectedPalette(),'signal');
+  assert.equal(app.viewers[0].palette,'signal');
+  const firstInferences=app.sceneCalls.length;
+  app.choosePalette('ember');
+  assert.equal(app.viewers[0].palette,'ember');
+  assert.equal(app.sceneCalls.length,firstInferences);
+  assert.equal(app.stored.get('entropi-color-depth-v1'),'ember');
+  app.changeStudio('image',0);
+  assert.equal(app.paletteKind(),'photo');
+  assert.equal(app.selectedPalette(),'coral');
 });
