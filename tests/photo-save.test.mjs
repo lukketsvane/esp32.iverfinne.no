@@ -60,10 +60,10 @@ test('desktop download fallback releases its temporary URL after the save',async
   const app=harness();const blob=png();await app.save(blob,'view.png');assert.equal(app.downloads.length,1);assert.equal(app.downloads[0].name,'view.png');assert.equal(app.urls.get(app.downloads[0].url),blob);assert.equal(app.body.children.length,0);assert.equal(app.revoked.length,0);app.tick();assert.deepEqual(app.revoked,[app.downloads[0].url]);
 });
 
-test('photo pixels become grayscale without Canvas filter support and retain alpha',()=>{
-  const app=harness({pixels:[200,10,60,255,0,200,50,128]}),snapshot=app.snapshot({naturalWidth:4,naturalHeight:2},undefined,true);assert.equal(snapshot.width,4);assert.equal(snapshot.height,2);assert.deepEqual([...snapshot.data.slice(0,8)],[54,54,54,255,147,147,147,128]);assert.equal(snapshot.photo,true);
+test('photo snapshots retain full RGB values and alpha without a Canvas filter',()=>{
+  const app=harness({pixels:[200,10,60,255,0,200,50,128]}),snapshot=app.snapshot({naturalWidth:4,naturalHeight:2},undefined,true);assert.equal(snapshot.width,4);assert.equal(snapshot.height,2);assert.deepEqual([...snapshot.data.slice(0,8)],[200,10,60,255,0,200,50,128]);assert.equal(snapshot.photo,true);
 });
 
 test('native photo saves contain only the visible image crop without black viewport margins',()=>{
-  const app=harness({pixels:[255,0,0,255]}),image={naturalWidth:8,naturalHeight:6},snapshot=app.snapshot(image,{scale:2,x:1,y:0,width:4,height:8},true);assert.equal(snapshot.width,4);assert.equal(snapshot.height,6);assert.deepEqual(app.canvases[0].draw.slice(1),[1,0,4,6,0,0,4,6]);assert.ok(snapshot.data.every((value,index)=>index%4===3?value===255:value===54));
+  const app=harness({pixels:[255,0,0,255]}),image={naturalWidth:8,naturalHeight:6},snapshot=app.snapshot(image,{scale:2,x:1,y:0,width:4,height:8},true);assert.equal(snapshot.width,4);assert.equal(snapshot.height,6);assert.deepEqual(app.canvases[0].draw.slice(1),[1,0,4,6,0,0,4,6]);assert.ok(snapshot.data.every((value,index)=>value===(index%4===0||index%4===3?255:0)));
 });

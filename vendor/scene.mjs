@@ -1,6 +1,8 @@
 import { inferenceSize, imageToPointCloud, pointStride, gaussianSplats } from '../pointcloud/math.mjs';
 import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, primitiveDimensions, qualityPointBudget } from '../pointcloud/primitive.mjs';
 import { attachViewerGestures, progressiveIndices } from './viewer-gestures.mjs';
+import { resolveColorScheme, gaussianInk } from './color-schemes.mjs';
+import { renderRetroPixels } from './retro-modes.mjs';
 
 let depthWorker=null,depthIdle=0,depthCancel=null;
 function releaseDepthWorker(){clearTimeout(depthIdle);depthIdle=0;depthWorker?.terminate();depthWorker=null}
@@ -31,13 +33,29 @@ function estimateDepth(pixels,onProgress,signal){
   });
 }
 
-function renderScene(host, cloud, bytes, signal) {
+function renderScene(host, cloud, bytes, signal, sourcePixels) {
   const points=new Float32Array(cloud.count*8),depths=new Float32Array(cloud.count),indices=Uint32Array.from(progressiveIndices(cloud.count)),view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),colors=new Float32Array(cloud.count*4),rotation=new Float32Array(9);
   let order=indices.slice();
   for(let i=0;i<cloud.count;i++){const color=nearestC64(bytes[i*32+24],bytes[i*32+25],bytes[i*32+26]);for(let c=0;c<3;c++)colors[i*4+c]=color[c]/255;colors[i*4+3]=bytes[i*32+27]/255}
   const pointers=new Map(),focal=1/Math.tan(24*Math.PI/180),initialYaw=-Math.atan(.16),initialPitch=Math.atan(.045/Math.hypot(.16,1)),near=.01,far=Math.max(100,cloud.radius*1000);
   const fitDistance=(width,height)=>Math.max(.3,cloud.radius/Math.sin(Math.atan(Math.min(1,width/height)/focal))*1.08);
-  let canvas=null,gpu=null,gestures=null,observer=null,yaw=initialYaw,pitch=initialPitch,zoom=1,panX=0,panY=0,pointScale=1,opacity=1,density=1,definition=.5,frame=0,disposed=false,primitiveLevel=0,targetWidth=0,targetHeight=0,geometryDirty=true,uploadDirty=true,needsGPU=false,reveal=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches?1:0,revealAt=null;
+  let canvas=null,gpu=null,gestures=null,observer=null,yaw=initialYaw,pitch=initialPitch,zoom=1,panX=0,panY=0,pointScale=1,opacity=1,density=1,definition=.5,frame=0,disposed=false,primitiveLevel=0,targetWidth=0,targetHeight=0,geometryDirty=true,uploadDirty=true,needsGPU=false,paletteId='original',reveal=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches?1:0,revealAt=null;
+  function recolor(){
+    const scheme=resolveColorScheme(paletteId),retro=scheme.mode?renderRetroPixels(sourcePixels,cloud.sourceWidth,cloud.sourceHeight,scheme.id):null;
+    let minZ=Infinity,maxZ=-Infinity;
+    for(let i=0;i<cloud.count;i++){
+      const z=cloud.positions[i*3+2];minZ=Math.min(minZ,z);maxZ=Math.max(maxZ,z);
+    }
+    const span=Math.max(1e-6,maxZ-minZ);
+    for(let i=0;i<cloud.count;i++){
+      const base=i*32+24,r=bytes[base],g=bytes[base+1],b=bytes[base+2];
+      const z=cloud.positions[i*3+2],depth=(z-minZ)/span,light=(r*.2126+g*.7152+b*.0722)/255;
+      const ink=retro?retro.subarray(cloud.pixelOffsets[i],cloud.pixelOffsets[i]+3):gaussianInk(scheme,depth,light,(i*17%31)/31-.5);
+      for(let c=0;c<3;c++)colors[i*4+c]=ink[c]/255;
+      colors[i*4+3]=bytes[base+3]/255;
+    }
+    geometryDirty=true;
+  }
   function createGPU(next){
     const gl=next.getContext('webgl',{alpha:false,antialias:false});
     if(!gl)throw new Error('3D-vising er ikkje tilgjengeleg på telefonen.');
@@ -120,7 +138,7 @@ function renderScene(host, cloud, bytes, signal) {
     if(gl.isContextLost()){needsGPU=true;redraw();return}
     if(!host.clientWidth||!host.clientHeight){revealAt=null;if(!force)return false}
     if(reveal<1){if(revealAt!==null)reveal=Math.min(1,reveal+Math.max(0,now-revealAt)/4000);revealAt=now}
-    const ratio=Math.min(globalThis.devicePixelRatio||1,1.5),width=Math.max(1,Math.round(host.clientWidth*ratio)||canvas.width),height=Math.max(1,Math.round(host.clientHeight*ratio)||canvas.height);
+    const ratio=Math.min(globalThis.devicePixelRatio||1,2),width=Math.max(1,Math.round(host.clientWidth*ratio)||canvas.width),height=Math.max(1,Math.round(host.clientHeight*ratio)||canvas.height);
     if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height}
     const size=primitiveDimensions(primitiveLevel,width,height);
     if(primitiveLevel&&(size.width!==targetWidth||size.height!==targetHeight)){targetWidth=size.width;targetHeight=size.height;gl.bindTexture(gl.TEXTURE_2D,texture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,targetWidth,targetHeight,0,gl.RGBA,gl.UNSIGNED_BYTE,null)}
@@ -132,8 +150,8 @@ function renderScene(host, cloud, bytes, signal) {
     gl.clear(gl.COLOR_BUFFER_BIT);gl.drawArrays(gl.POINTS,0,order.length);
     if(primitiveLevel){
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,width,height);gl.disable(gl.BLEND);gl.useProgram(screenProgram);gl.bindBuffer(gl.ARRAY_BUFFER,screenBuffer);for(const [at] of attributes)gl.disableVertexAttribArray(at);gl.enableVertexAttribArray(screenPosition);gl.vertexAttribPointer(screenPosition,2,gl.FLOAT,false,0,0);
-      const mode=PRIMITIVE_MODES[primitiveLevel],palette=new Float32Array(48);for(let i=0;i<mode.palette.length;i++)for(let c=0;c<3;c++)palette[i*3+c]=mode.palette[i][c]/255;
-      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);gl.uniform1i(screenUniforms.image,0);gl.uniform2f(screenUniforms.size,size.width,size.height);gl.uniform3fv(screenUniforms['palette[0]'],palette);gl.uniform1i(screenUniforms.count,mode.palette.length);gl.uniform1i(screenUniforms.level,primitiveLevel);gl.uniform1f(screenUniforms.dither,mode.dither/255);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+      const mode=PRIMITIVE_MODES[primitiveLevel],ink=resolveColorScheme(paletteId).colors,palette=new Float32Array(48);for(let i=0;i<ink.length;i++)for(let c=0;c<3;c++)palette[i*3+c]=ink[i][c]/255;
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);gl.uniform1i(screenUniforms.image,0);gl.uniform2f(screenUniforms.size,size.width,size.height);gl.uniform3fv(screenUniforms['palette[0]'],palette);gl.uniform1i(screenUniforms.count,ink.length);gl.uniform1i(screenUniforms.level,primitiveLevel);gl.uniform1f(screenUniforms.dither,mode.dither/255);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
     }
     return reveal<1;
   }
@@ -154,22 +172,26 @@ function renderScene(host, cloud, bytes, signal) {
     const paper=document.createElement('canvas');paper.width=native?canvas.width:384;paper.height=native?canvas.height:Math.max(1,Math.min(1024,Math.round(384*canvas.height/canvas.width)));
     const context=paper.getContext('2d');if(!context)throw new Error('Kunne ikkje lese scena.');
     context.drawImage(canvas,0,0,paper.width,paper.height);return context.getImageData(0,0,paper.width,paper.height);
-  },setPrimitiveLevel(level){const next=normalizePrimitiveLevel(level);if(!disposed&&next!==primitiveLevel){primitiveLevel=next;redraw()}}};
+  },setPrimitiveLevel(level){const next=normalizePrimitiveLevel(level);if(!disposed&&next!==primitiveLevel){primitiveLevel=next;redraw()}},setPalette(id){const next=resolveColorScheme(id).id;if(!disposed&&next!==paletteId){paletteId=next;recolor();redraw()}}};
   mount();observer=globalThis.ResizeObserver?new ResizeObserver(redraw):null;observer?.observe(host);signal.addEventListener('abort',dispose,{once:true});redraw();if(signal.aborted)dispose();return api;
 }
 
 export async function createDepthScene(host, blob, onProgress = () => {}, signal = new AbortController().signal, quality = 2) {
   signal.throwIfAborted();
-  const image=new Image(),url=URL.createObjectURL(blob);let pixels;
+  const image=new Image(),url=URL.createObjectURL(blob);let inference,detail;
   onProgress({phase:'reading'});
   try {
     image.src=url;await image.decode();signal.throwIfAborted();
     const size=inferenceSize(image.naturalWidth,image.naturalHeight),canvas=document.createElement('canvas');canvas.width=size.width;canvas.height=size.height;
-    const context=canvas.getContext('2d');if(!context)throw new Error('Telefonen kunne ikkje lese biletet.');
-    context.drawImage(image,0,0,size.width,size.height);pixels=context.getImageData(0,0,size.width,size.height);canvas.width=canvas.height=1;
+    const context=canvas.getContext('2d',{willReadFrequently:true});if(!context)throw new Error('Telefonen kunne ikkje lese biletet.');
+    context.drawImage(image,0,0,size.width,size.height);inference=context.getImageData(0,0,size.width,size.height);
+    const scale=Math.min(1,840/Math.max(image.naturalWidth,image.naturalHeight));
+    const width=Math.max(1,Math.round(image.naturalWidth*scale)),height=Math.max(1,Math.round(image.naturalHeight*scale));
+    canvas.width=width;canvas.height=height;context.drawImage(image,0,0,width,height);
+    detail=context.getImageData(0,0,width,height);canvas.width=canvas.height=1;
   } finally {URL.revokeObjectURL(url)}
-  const prediction=await estimateDepth(pixels,onProgress,signal);signal.throwIfAborted();onProgress({phase:'rendering'});
-  const cloud=imageToPointCloud({rgba:pixels.data,width:pixels.width,height:pixels.height,depth:prediction.depth,depthWidth:prediction.width,depthHeight:prediction.height,stride:pointStride(pixels.width,pixels.height,qualityPointBudget(quality))});
-  const bytes=gaussianSplats(cloud),viewer=renderScene(host,cloud,bytes,signal);signal.throwIfAborted();
+  const prediction=await estimateDepth(inference,onProgress,signal);signal.throwIfAborted();onProgress({phase:'rendering'});
+  const cloud=imageToPointCloud({rgba:detail.data,width:detail.width,height:detail.height,depth:prediction.depth,depthWidth:prediction.width,depthHeight:prediction.height,stride:pointStride(detail.width,detail.height,qualityPointBudget(quality))});
+  const bytes=gaussianSplats(cloud),viewer=renderScene(host,cloud,bytes,signal,detail.data);signal.throwIfAborted();
   return viewer;
 }

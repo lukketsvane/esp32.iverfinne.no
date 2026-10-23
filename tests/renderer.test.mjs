@@ -5,6 +5,8 @@ import vm from 'node:vm';
 import { gaussianSplats } from '../pointcloud/math.mjs';
 import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, primitiveDimensions } from '../pointcloud/primitive.mjs';
 import { attachViewerGestures, progressiveIndices } from '../vendor/viewer-gestures.mjs';
+import {resolveColorScheme,gaussianInk} from '../vendor/color-schemes.mjs';
+import {renderRetroPixels} from '../vendor/retro-modes.mjs';
 
 const source=await readFile(new URL('../vendor/scene.mjs',import.meta.url),'utf8'),renderer=source.slice(source.indexOf('function renderScene('),source.indexOf('\nexport async function createDepthScene'));
 function harness(options={}){
@@ -29,11 +31,13 @@ function harness(options={}){
     const gl=new Proxy(target,{get(object,key){if(key in object)return object[key];if(/^[A-Z_0-9]+$/.test(key)){if(!values.has(key))values.set(key,constant++);return values.get(key)}if(key.startsWith('create'))return ()=>({});if(key==='checkFramebufferStatus')return ()=>gl.FRAMEBUFFER_COMPLETE;return ()=>{}}});return gl;
   }
   class Indices extends Uint32Array{sort(compare){sorts++;return super.sort(compare)}}
-  const context=vm.createContext({document:{createElement:()=>new Canvas()},Event,Float32Array,Uint32Array:Indices,DataView,Map,Math,performance:{now:()=>now},matchMedia:()=>({matches:options.reduced===true}),nearestC64,PRIMITIVE_MODES,PRIMITIVE_BAYER,normalizePrimitiveLevel,primitiveDimensions,attachViewerGestures,progressiveIndices,
+  const context=vm.createContext({document:{createElement:()=>new Canvas()},Event,Float32Array,Uint32Array:Indices,DataView,Map,Math,performance:{now:()=>now},matchMedia:()=>({matches:options.reduced===true}),nearestC64,resolveColorScheme,gaussianInk,renderRetroPixels,PRIMITIVE_MODES,PRIMITIVE_BAYER,normalizePrimitiveLevel,primitiveDimensions,attachViewerGestures,progressiveIndices,
     requestAnimationFrame:callback=>{const id=++frameId;frames.set(id,callback);return id},cancelAnimationFrame:id=>frames.delete(id),ResizeObserver:class{observe(){}disconnect(){}}
   });vm.runInContext(renderer,context);
   const count=256,positions=new Float32Array(count*3),colors=new Uint8Array(count*3).fill(150);for(let i=0;i<count;i++){positions[i*3]=(i%16-8)/16;positions[i*3+1]=(Math.floor(i/16)-8)/16;positions[i*3+2]=Math.sin(i)*.1}
-  const cloud={count,positions,colors,center:[0,0,-1],stride:2,focalEstimate:16,radius:1},controller=new AbortController(),viewer=context.renderScene(host,cloud,gaussianSplats(cloud),controller.signal);
+  const sourcePixels=new Uint8ClampedArray(count*4),pixelOffsets=new Uint32Array(count);
+  for(let i=0;i<count;i++){const at=i*4;pixelOffsets[i]=at;sourcePixels[at]=(i*17)%256;sourcePixels[at+1]=(i*31)%256;sourcePixels[at+2]=(i*7)%256;sourcePixels[at+3]=255}
+  const cloud={count,positions,colors,pixelOffsets,sourceWidth:16,sourceHeight:16,center:[0,0,-1],stride:2,focalEstimate:16,radius:1},controller=new AbortController(),viewer=context.renderScene(host,cloud,gaussianSplats(cloud),controller.signal,sourcePixels);
   const flush=(elapsed=16)=>{now+=elapsed;for(const [id,callback]of [...frames]){frames.delete(id);callback(now)}};flush();
   return {host,viewer,controller,flush,contexts,get canvas(){return host.children[0]},get gl(){return contexts.at(-1)},get sorts(){return sorts},get uploads(){return uploads},get pendingFrames(){return frames.size},set fail(value){fail=value}};
 }
@@ -87,4 +91,19 @@ test('context recovery preserves reveal progress and snapshots permanently finis
 
 test('disposal cancels an unfinished reveal and prevents further rendering',()=>{
   const app=harness(),draws=app.gl.draws.length;assert.equal(app.pendingFrames,1);app.controller.abort();assert.equal(app.pendingFrames,0);app.flush(2000);assert.equal(app.gl.draws.length,draws);assert.equal(app.canvas,undefined);
+});
+
+
+test('switching historic color systems recolors the cached higher-detail Gaussian points without a second inference',()=>{
+  const app=harness(),start=app.uploads;
+  for(const id of ['c64','zx','appleii']){
+    app.viewer.setPalette(id);
+    app.flush();
+    assert.ok(app.uploads>start,id);
+    assert.equal(app.gl.draws.at(-1).mode,app.gl.POINTS);
+  }
+  const raster=app.viewer.snapshot(true);
+  assert.equal(raster.width,300);
+  assert.equal(raster.height,600);
+  app.viewer.dispose();
 });

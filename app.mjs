@@ -4,6 +4,7 @@ import { attachStudioControls } from './vendor/studio.mjs';
 import { snapshotBlob, savePhoto } from './vendor/photo.mjs';
 import { attachPhotoGestures } from './vendor/photo-gestures.mjs';
 import { createPhotoView } from './vendor/photo-view.mjs';
+import { COLOR_SCHEMES, readColorScheme, saveColorScheme } from './vendor/color-schemes.mjs';
 import { PX10Printer } from './vendor/print/printer.mjs';
 import { cloudPrintJob } from './vendor/print/cloud-raster.mjs';
 import { createPrintClient } from './vendor/print-client.mjs';
@@ -12,8 +13,21 @@ const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder
 const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,generation=0,captureGeneration=0,cameraGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
 const photoView=createPhotoView(photo);
-const studioControls=attachStudioControls([$('studio')],(kind,level)=>{if(kind==='primitive')scene?.setPrimitiveLevel(level);else if(kind==='photo'){photoView.setStyle(level);finder.setStyle(level)}else if(kind==='image'&&mode!=='camera'){if(capturing)state('working');else if(photoReady){if(level===0||scene){state('done');if(level===1)scene?.refresh?.()}else void makeScene()}}},()=>true,()=>{pointer=null;lastTap=0});
-photoView.setStyle(studioControls.photo);finder.setStyle(studioControls.photo);
+const paletteSelection={photo:readColorScheme('photo'),depth:readColorScheme('depth')};
+const profileIndex=kind=>Math.max(0,COLOR_SCHEMES.findIndex(scheme=>scheme.id===paletteSelection[kind]));
+const studioControls=attachStudioControls([$('studio')],(kind,level)=>{
+  if(kind==='primitive'){
+    const scheme=COLOR_SCHEMES[level];paletteSelection.depth=scheme.id;saveColorScheme('depth',scheme.id);
+    scene?.setPalette(scheme.id);scene?.setPrimitiveLevel(scheme.primitive);
+  }else if(kind==='photo'){
+    const scheme=COLOR_SCHEMES[level];paletteSelection.photo=scheme.id;saveColorScheme('photo',scheme.id);
+    photoView.setPalette(scheme.id);finder.setPalette(scheme.id);photoView.setStyle(scheme.style);finder.setStyle(scheme.style);
+  }else if(kind==='image'&&mode!=='camera'){
+    if(capturing)state('working');else if(photoReady){if(level===0||scene){state('done');if(level===1)scene?.refresh?.()}else void makeScene()}
+  }
+},()=>true,()=>{pointer=null;lastTap=0},{photo:profileIndex('photo'),primitive:profileIndex('depth')});
+photoView.setStyle(COLOR_SCHEMES[studioControls.photo].style);finder.setStyle(COLOR_SCHEMES[studioControls.photo].style);
+photoView.setPalette(paletteSelection.photo);finder.setPalette(paletteSelection.photo);
 const photoGestures=attachPhotoGestures(photo,{enabled:()=>mode==='done'&&studioControls.image===0,onChange:pose=>{photoView.setTone(pose);finder.setTone(pose);Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter()}});
 const liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>mode==='camera'&&studioControls.image===0,onChange:pose=>{captureAfter=performance.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
 function updateRecenter(){$('recenter').hidden=mode!=='done'||(studioControls.image===0?photoGestures.state.scale<=1:!scene)}
@@ -59,7 +73,7 @@ async function makeScene(){
   try{
     const result=await createDepthScene($('scene'),blob,update=>{if(current===generation)progress(update)},processing.signal);
     if(current!==generation||blob!==photoBlob){result.dispose();return}
-    scene=result;scene.onError=error=>{if(scene===result&&studioControls.image===1&&mode!=='camera'&&!capturing)state('error',error.message,true)};scene.setPrimitiveLevel(studioControls.primitive);if(mode!=='camera'&&!capturing)state('done');
+    scene=result;scene.onError=error=>{if(scene===result&&studioControls.image===1&&mode!=='camera'&&!capturing)state('error',error.message,true)};scene.setPrimitiveLevel(COLOR_SCHEMES[studioControls.primitive].primitive);scene.setPalette(paletteSelection.depth);if(mode!=='camera'&&!capturing)state('done');
   }catch(error){if(!processing.signal.aborted&&current===generation&&studioControls.image===1&&mode!=='camera'&&!capturing)state('error',error.message||'Kunne ikkje lage splats.',true)}
   finally{if(task===processing)task=null}
 }

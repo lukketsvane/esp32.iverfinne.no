@@ -66,8 +66,20 @@ const streamUrl=new URL('/stream',location.href);streamUrl.port='81';
 let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',parentReady=false,parentPort=null,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,sceneError='',captureAfter=0,captureTask=null,captureFailed=false,printBusy=false,printTimer=0;
 let reviewDown=null,reviewTap=null,photoGestures=null,photoPose={scale:1,x:0,y:0,grain:1,contrast:1};
 const photoView=createPhotoView($('photo'));
-const studioControls=attachStudioControls([studio,photoDialog],(kind,level)=>{reviewDown=reviewTap=null;if(kind==='primitive')sceneViewer?.setPrimitiveLevel(level);else if(kind==='photo'){photoView.setStyle(level);finder.setStyle(level)}else if(kind==='image'){refreshReview();controls();if(photoDialog.open&&level===1)void makeScene()}},()=>!onboarding.open,()=>{reviewDown=reviewTap=null});
-photoView.setStyle(studioControls.photo);finder.setStyle(studioControls.photo);
+const paletteSelection={photo:readColorScheme('photo'),depth:readColorScheme('depth')};
+const profileIndex=kind=>Math.max(0,COLOR_SCHEMES.findIndex(scheme=>scheme.id===paletteSelection[kind]));
+const studioControls=attachStudioControls([studio,photoDialog],(kind,level)=>{
+  reviewDown=reviewTap=null;
+  if(kind==='primitive'){
+    const scheme=COLOR_SCHEMES[level];paletteSelection.depth=scheme.id;saveColorScheme('depth',scheme.id);
+    sceneViewer?.setPalette(scheme.id);sceneViewer?.setPrimitiveLevel(scheme.primitive);
+  }else if(kind==='photo'){
+    const scheme=COLOR_SCHEMES[level];paletteSelection.photo=scheme.id;saveColorScheme('photo',scheme.id);
+    photoView.setPalette(scheme.id);finder.setPalette(scheme.id);photoView.setStyle(scheme.style);finder.setStyle(scheme.style);
+  }else if(kind==='image'){refreshReview();controls();if(photoDialog.open&&level===1)void makeScene()}
+},()=>!onboarding.open,()=>{reviewDown=reviewTap=null},{photo:profileIndex('photo'),primitive:profileIndex('depth')});
+photoView.setStyle(COLOR_SCHEMES[studioControls.photo].style);finder.setStyle(COLOR_SCHEMES[studioControls.photo].style);
+photoView.setPalette(paletteSelection.photo);finder.setPalette(paletteSelection.photo);
 let liveGestures=null;
 photoGestures=attachPhotoGestures($('photo'),{enabled:()=>photoDialog.open&&studioControls.image===0&&!onboarding.open,onChange:pose=>{if(pose.scale!==photoPose.scale||pose.x!==photoPose.x||pose.y!==photoPose.y||pose.grain!==photoPose.grain||pose.contrast!==photoPose.contrast){reviewDown=reviewTap=null;photoPose={scale:pose.scale,x:pose.x,y:pose.y,grain:pose.grain,contrast:pose.contrast}}photoView.setTone(pose);finder.setTone(pose);if(liveGestures)Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter()}});
 liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>!photoDialog.open&&studioControls.image===0&&!onboarding.open&&!busy,onChange:pose=>{captureAfter=Date.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
@@ -240,7 +252,7 @@ async function makeScene(){
     task.signal.throwIfAborted();
     const result=await createDepthScene($('scene'),photoBlob,report,task.signal,2);
     if(generation!==sceneGeneration){result.dispose();return}
-    sceneViewer=result;sceneViewer.onError=error=>{if(sceneViewer===result){sceneError=error.message||'3D-visinga vart avbroten. Prøv igjen.';refreshReview()}};sceneViewer.setPrimitiveLevel(studioControls.primitive);
+    sceneViewer=result;sceneViewer.onError=error=>{if(sceneViewer===result){sceneError=error.message||'3D-visinga vart avbroten. Prøv igjen.';refreshReview()}};sceneViewer.setPrimitiveLevel(COLOR_SCHEMES[studioControls.primitive].primitive);sceneViewer.setPalette(paletteSelection.depth);
   }catch(error){
     if(task.signal.aborted||generation!==sceneGeneration)return;
     needsSetup=error.code==='PHONE_SETUP_REQUIRED';

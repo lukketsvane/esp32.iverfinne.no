@@ -28,15 +28,18 @@ function paintFinderFrame(source,context,pixels,width,height,projection,time,mon
   }
 }
 
+function maskFinderFrame(data,projection){for(let i=0;i<projection.warp.length;i++)if(projection.warp[i]<0){const at=i*4;data[at]=0;data[at+1]=0;data[at+2]=0;data[at+3]=255}}
+
 export class Viewfinder {
   constructor(canvas){
-    this.canvas=canvas;this.active=true;this.disposed=false;this.source=null;this.style=0;this.grain=1;this.contrast=1;
+    this.canvas=canvas;this.active=true;this.disposed=false;this.source=null;this.style=0;this.palette='original';this.grain=1;this.contrast=1;
     this.context=canvas.getContext('2d');this.sampleCanvas=canvas.ownerDocument.createElement('canvas');this.sampleContext=this.sampleCanvas.getContext('2d',{willReadFrequently:true});
     this.fit();let previous=-Infinity;
     const frame=time=>{if(this.disposed)return;this.animation=requestAnimationFrame(frame);if(!this.active||document.hidden||time-previous<50)return;previous=time;this.draw(time)};
     this.animation=requestAnimationFrame(frame);
   }
   setStyle(level){this.style=Number.isFinite(level)?Math.max(0,Math.min(3,Math.round(level))):0}
+  setPalette(id){this.palette=id}
   setTone({grain=this.grain,contrast=this.contrast}={}){if(Number.isFinite(grain))this.grain=Math.max(1,Math.min(8,Math.round(grain)));if(Number.isFinite(contrast))this.contrast=Math.max(.5,Math.min(3,contrast))}
   draw(time=0){
     const source=this.source;if(!source||!this.context||!this.sampleContext)return;
@@ -44,8 +47,8 @@ export class Viewfinder {
     const width=video?source.videoWidth:source.naturalWidth||source.width,height=video?source.videoHeight:source.naturalHeight||source.height;if(!width||!height)return;
     this.fit();
     try{
-      paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,true);this.time=time;
-      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast));this.context.putImageData(this.output,0,0);
+      paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,false);this.time=time;
+      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast,this.palette));maskFinderFrame(this.output.data,this.projection);this.context.putImageData(this.output,0,0);
     }catch{}
   }
   fit(){
@@ -62,7 +65,7 @@ export class Viewfinder {
     canvas.height=Math.max(3,Math.floor(Math.min(2048,size.height,size.width*1.5)/3)*3);canvas.width=canvas.height*2/3;
     const pixels=context.createImageData(canvas.width,canvas.height);
     paintFinderFrame(source,context,pixels.data,canvas.width,canvas.height,finderProjection(canvas.width,canvas.height),this.time??0);
-    context.putImageData(pixels,0,0);return canvas;
+    maskFinderFrame(pixels.data,finderProjection(canvas.width,canvas.height));context.putImageData(pixels,0,0);return canvas;
   }
   clear(){this.source=null;if(this.context){this.context.fillStyle='#000';this.context.fillRect(0,0,this.canvas.width,this.canvas.height)}}
   dispose(){if(this.disposed)return;this.disposed=true;cancelAnimationFrame(this.animation);this.source=null;this.sampleCanvas.width=this.sampleCanvas.height=1;this.output=this.pixels=this.projection=null}

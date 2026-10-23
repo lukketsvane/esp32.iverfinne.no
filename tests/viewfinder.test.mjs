@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
+const colors=(await readFile(new URL('../vendor/color-schemes.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
+const retro=(await readFile(new URL('../vendor/retro-modes.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/gm,'').replace(/^export /gm,'');
 const source=(await readFile(new URL('../vendor/viewfinder.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/gm,'').replace('export class','class'),processor=(await readFile(new URL('../vendor/photo-view.mjs',import.meta.url),'utf8')).split('export function createPhotoView')[0].replace(/^import .*\r?\n/gm,'').replace('export function','function');
 function finder(solid=null){
   const draws=[],painted=[],parent={style:{}},frames=new Map();let next=0;
@@ -10,7 +12,7 @@ function finder(solid=null){
   const sample={createImageData:output.createImageData,putImageData:output.putImageData,drawImage:(...args)=>draws.push(args),getImageData:(x,y,w,h)=>{const data=new Uint8ClampedArray(w*h*4);for(let i=0;i<data.length;i+=4){data[i]=solid??(i*7)%256;data[i+1]=solid??(i*13+80)%256;data[i+2]=solid??(i*23+40)%256;data[i+3]=255}return {data}}};
   const document={hidden:false,createElement:()=>({getContext:()=>sample})},canvas={parentElement:parent,ownerDocument:document,style:{},getContext:()=>output};
   const context=vm.createContext({document,HTMLVideoElement:class{},Float32Array,Uint8ClampedArray,Math,Number,requestAnimationFrame:callback=>{frames.set(++next,callback);return next},cancelAnimationFrame:id=>frames.delete(id)});
-  vm.runInContext(processor+'\n'+source+'\nglobalThis.finder=new Viewfinder(globalThis.canvas);',Object.assign(context,{canvas}));
+  vm.runInContext(colors+'\n'+retro+'\n'+processor+'\n'+source+'\nglobalThis.finder=new Viewfinder(globalThis.canvas);',Object.assign(context,{canvas}));
   return {view:context.finder,canvas,parent,draws,painted,document,frames,frame(time){const [id,callback]=frames.entries().next().value;frames.delete(id);callback(time)}};
 }
 
@@ -77,9 +79,9 @@ test('captured frames retain the finder crop and optical geometry at native reso
   const limited=app.view.capture({width:6000,height:4000});assert.equal(limited.width/limited.height,2/3);assert.ok(limited.height<=2048);app.view.dispose();
 });
 
-test('capture preserves color for depth while the preview thresholds its luminance and leaves live buffers intact',()=>{
+test('capture preserves source color for depth while preview remains binary and buffers stay intact',()=>{
   const app=finder();app.view.source={width:160,height:240};app.canvas.getBoundingClientRect=()=>({width:160});app.view.draw(1000);
   const preview=app.painted.at(-1),buffer=app.view.output,frame=app.view.capture(),color=app.painted.at(-1);assert.equal(frame.width,160);assert.equal(frame.height,240);assert.equal(app.view.output,buffer);assert.equal(app.canvas.width,160);
-  let colored=false;for(let i=0;i<color.length;i+=4){const value=Math.round(color[i]*.2126+color[i+1]*.7152+color[i+2]*.0722);assert.equal(preview[i],value>=128?255:0);colored||=color[i]!==color[i+1]||color[i]!==color[i+2];assert.equal(color[i+3],255)}assert.equal(colored,true);
+  let colored=false;for(let i=0;i<color.length;i+=4){assert.ok(preview[i]===0||preview[i]===255);assert.equal(preview[i],preview[i+1]);assert.equal(preview[i],preview[i+2]);colored||=color[i]!==color[i+1]||color[i]!==color[i+2];assert.equal(color[i+3],255)}assert.equal(colored,true);
   assert.throws(()=>app.view.capture({width:0,height:240}),/ikkje klart/);app.view.dispose();assert.throws(()=>app.view.capture({width:160,height:240}),/ikkje klart/);
 });

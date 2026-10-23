@@ -1,4 +1,4 @@
-import test from 'node:test';
+﻿import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
@@ -9,7 +9,7 @@ function harness(options={}){
   let now=1000,gestures=0,nextTimer=0;
   const events=new Map(),changes=[],timers=new Map();
   class Element{
-    constructor(tag='DIV'){this.tagName=tag.toUpperCase();this.className='';this.children=[];this.attributes=new Map();this.listeners=new Map();this.classes=new Set();this.classList={add:name=>this.classes.add(name),remove:name=>this.classes.delete(name),toggle:(name,active)=>{if(active??!this.classes.has(name))this.classes.add(name);else this.classes.delete(name)},contains:name=>this.classes.has(name)}}
+    constructor(tag='DIV'){this.tagName=tag.toUpperCase();this.className='';this.style={};this.children=[];this.attributes=new Map();this.listeners=new Map();this.classes=new Set();this.classList={add:name=>this.classes.add(name),remove:name=>this.classes.delete(name),toggle:(name,active)=>{if(active??!this.classes.has(name))this.classes.add(name);else this.classes.delete(name)},contains:name=>this.classes.has(name)}}
     setAttribute(name,value){this.attributes.set(name,String(value))}
     getAttribute(name){return this.attributes.get(name)??null}
     appendChild(child){child.parent=this;this.children.push(child);return child}
@@ -33,83 +33,113 @@ function harness(options={}){
   return {roots,controls,changes,document,window,emit,rail,click,advance,Element,get timers(){return timers.size},get gestures(){return gestures}};
 }
 
-test('photo starts with two image buttons and four accessible photo styles',()=>{
-  const app=harness();assert.equal(app.controls.image,0);assert.equal(app.controls.primitive,0);assert.equal(app.controls.photo,1);assert.equal('quality'in app.controls,false);
+test('two image modes and nine historical display profiles share the existing edge marks',()=>{
+  const app=harness();
+  assert.equal(app.controls.image,0);
+  assert.equal(app.controls.photo,0);
+  assert.equal(app.controls.primitive,0);
   for(let i=0;i<2;i++){
-    const image=app.rail('image',i),primitive=app.rail('primitive',i);assert.equal(image.children.length,2);assert.equal(primitive.children.length,4);
-    assert.equal(image.getAttribute('aria-label'),'Bilettype');assert.deepEqual(image.children.map(button=>button.getAttribute('aria-label')),['Svart-kvittfoto','Splats']);assert.deepEqual(image.children.map(button=>button.getAttribute('aria-pressed')),['true','false']);
-    assert.equal(image.children[0].children[0].tagName,'I');assert.notEqual(primitive.hidden,true);assert.ok(primitive.children.every(button=>!button.disabled));assert.equal(app.roots[i].children.some(element=>element.tagName==='INPUT'),false);
-    assert.equal(primitive.getAttribute('aria-label'),'Svartkvitt-stil');assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-label')),['Atkinson','Floyd–Steinberg','Bayer','Svart-kvitt']);assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-pressed')),['false','false','true','false']);
+    const image=app.rail('image',i),profiles=app.rail('primitive',i);
+    assert.equal(image.children.length,2);
+    assert.equal(profiles.children.length,9);
+    assert.equal(profiles.getAttribute('aria-label'),'Historisk skjermprofil');
+    assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-label')),Array.from({length:9},(_,index)=>'Profil '+(index+1)));
+    assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-pressed')),['true',...Array(8).fill('false')]);
+    assert.equal(app.roots[i].children.some(element=>element.tagName==='INPUT'),false);
   }
 });
 
-test('native mouse and keyboard button activation selects once without the touch capture handler',()=>{
-  const app=harness(),button=app.rail('image').children[1],target=button.children[0];
-  assert.equal(app.emit('pointerdown',{clientX:386,clientY:633,target}).prevented,false);assert.equal(app.emit('pointerup',{target}).prevented,false);app.click('image',1);assert.equal(app.controls.image,1);assert.deepEqual(app.changes,[['image',1]]);
-  app.click('image',0,{detail:0});assert.equal(app.controls.image,0);assert.deepEqual(app.changes,[['image',1],['image',0]]);assert.equal(app.gestures,2);
-  assert.equal(app.rail('image',1).children[0].getAttribute('aria-pressed'),'true');
+test('native buttons select historical profiles for photo and depth independently',()=>{
+  const app=harness();
+  app.click('primitive',2);
+  assert.equal(app.controls.photo,2);
+  assert.deepEqual(app.changes,[['photo',2]]);
+  app.click('image',1);
+  app.click('primitive',1);
+  assert.equal(app.controls.primitive,1);
+  app.click('image',0);
+  assert.equal(app.controls.photo,2);
+  assert.deepEqual(app.changes,[['photo',2],['image',1],['primitive',1],['image',0]]);
+  assert.deepEqual(app.rail('primitive').children.map(button=>button.getAttribute('aria-pressed')),['false','false','true',...Array(6).fill('false')]);
 });
 
-test('returning to photo mode updates both rails while preserving photo and splat style',()=>{
-  const app=harness();app.click('primitive',0);app.click('image',1);app.click('primitive',1);
-  app.controls.setImage(0);app.controls.setImage(0);
-  assert.equal(app.controls.image,0);assert.equal(app.controls.photo,3);assert.equal(app.controls.primitive,2);
-  assert.deepEqual(app.changes,[['photo',3],['image',1],['primitive',2],['image',0]]);
-  for(let i=0;i<2;i++){assert.deepEqual(app.rail('image',i).children.map(button=>button.getAttribute('aria-pressed')),['true','false']);assert.equal(app.rail('primitive',i).getAttribute('aria-label'),'Svartkvitt-stil');assert.equal(app.rail('primitive',i).children[0].getAttribute('aria-pressed'),'true')}
+test('the left edge scrubs profiles in top-to-bottom order without changing the image type',()=>{
+  const app=harness();
+  const down=app.emit('pointerdown',{clientX:4,clientY:100});
+  assert.equal(down.prevented,true);
+  for(const clientY of [300,500,800])app.emit('pointermove',{clientX:4,clientY});
+  app.emit('pointerup',{clientX:4});
+  assert.deepEqual(app.changes,[['photo',1],['photo',3],['photo',5],['photo',8]]);
+  assert.equal(app.controls.primitive,0);
+  assert.equal(app.controls.image,0);
 });
 
-test('photo and splat styles keep independent selections and mode-specific labels on both roots',()=>{
-  const app=harness();app.click('primitive',2);assert.equal(app.controls.photo,1);assert.equal(app.controls.primitive,0);
-  app.click('image',1);app.click('primitive',1);assert.equal(app.controls.primitive,2);assert.equal(app.controls.photo,1);
-  for(let i=0;i<2;i++){const rail=app.rail('primitive',i);assert.equal(rail.getAttribute('aria-label'),'Pikselstil');assert.deepEqual(rail.children.map(button=>button.getAttribute('aria-label')),['Grøn fosfor','CGA: fire fargar','EGA: seksten fargar','C64-fargar']);assert.equal(rail.children[1].getAttribute('aria-pressed'),'true')}
-  app.click('image',0);for(let i=0;i<2;i++){const rail=app.rail('primitive',i);assert.equal(rail.getAttribute('aria-label'),'Svartkvitt-stil');assert.equal(rail.children[2].getAttribute('aria-pressed'),'true');assert.ok(rail.children.every(button=>!button.disabled))}
-  app.click('primitive',0);app.click('image',1);assert.equal(app.controls.photo,3);assert.equal(app.controls.primitive,2);assert.equal(app.rail('primitive').children[1].getAttribute('aria-pressed'),'true');
-  assert.deepEqual(app.changes,[['image',1],['primitive',2],['image',0],['photo',3],['image',1]]);
+test('the right edge changes image type and preserves independently selected profiles',()=>{
+  const app=harness();
+  app.emit('pointerdown',{clientX:386,clientY:500});
+  assert.equal(app.controls.image,1);
+  app.emit('pointerup',{clientX:386});
+  app.click('primitive',3);
+  app.click('image',0);
+  assert.equal(app.controls.photo,0);
+  assert.equal(app.controls.primitive,3);
 });
 
-test('left-edge photo scrubbing selects every black-and-white style without changing the splat style',()=>{
-  const app=harness();assert.equal(app.emit('pointerdown',{clientX:4,clientY:100}).prevented,true);
-  for(const clientY of [300,500,800])app.emit('pointermove',{clientX:4,clientY});app.emit('pointerup',{clientX:4});
-  assert.deepEqual(app.changes,[['photo',3],['photo',2],['photo',1],['photo',0]]);assert.equal(app.controls.primitive,0);
+test('profile selections have no visible labels or colored circles',()=>{
+  const app=harness();
+  for(const i of [1,4,6,7,8])app.click('primitive',i);
+  const hints=app.roots.map(root=>root.children.find(element=>element.tagName==='SPAN'));
+  assert.ok(hints.every(hint=>!hint.classList.contains('shown')));
+  assert.ok(hints.every(hint=>!hint.textContent));
+  assert.equal(app.document.head.children.length,1);
+  assert.equal(app.timers,0);
+  app.click('image',1);
+  assert.ok(hints.every(hint=>hint.innerHTML.includes('<svg')));
 });
 
-test('edge dragging retains two image zones and four independent style levels',()=>{
-  const app=harness();app.emit('pointerdown',{clientX:386,clientY:500});assert.equal(app.controls.image,1);app.emit('pointermove',{clientX:386,clientY:421});assert.equal(app.controls.image,0);app.emit('pointermove',{clientX:386,clientY:422});assert.equal(app.controls.image,1);app.emit('pointerup',{clientX:386});
-  app.emit('pointerdown',{clientX:4,clientY:100});assert.equal(app.controls.primitive,3);app.emit('pointermove',{clientX:4,clientY:800});assert.equal(app.controls.primitive,0);app.emit('pointerup',{clientX:4});
-  assert.deepEqual(app.changes,[['image',1],['image',0],['image',1],['primitive',3],['primitive',0]]);
+test('profile controls support keyboard focus without changing the selected value',()=>{
+  const app=harness(),button=app.rail('primitive').children[3];
+  button.listeners.get('focus')();
+  assert.equal(app.controls.photo,0);
+  const hint=app.roots[0].children.find(element=>element.tagName==='SPAN');
+  assert.ok(!hint.textContent);
+  app.click('primitive',3,{detail:0});
+  assert.equal(app.controls.photo,3);
 });
 
-test('an unchanged choice clears a pending scene tap and its icon feedback expires',()=>{
-  const app=harness();app.click('image',0);assert.equal(app.gestures,1);assert.equal(app.changes.length,0);
-  const hints=app.roots.map(root=>root.children.find(element=>element.tagName==='SPAN'));assert.ok(hints.every(hint=>hint.classList.contains('shown')));assert.match(hints[0].innerHTML,/<svg/);assert.doesNotMatch(hints[0].innerHTML,/Svart|Splats/);
-  app.advance(801);assert.ok(hints.every(hint=>!hint.classList.contains('shown')));app.rail('image').children[1].listeners.get('focus')();assert.equal(app.controls.image,0);assert.ok(hints[0].classList.contains('shown'));
+test('edge ownership consumes extra fingers and ghost clicks without blocking normal controls',()=>{
+  const app=harness();let external=0;
+  app.window.addEventListener('pointerdown',()=>external++);
+  app.emit('pointerdown',{clientX:386,clientY:500});
+  assert.equal(app.emit('pointerdown',{pointerId:2,isPrimary:false}).stopped,true);
+  app.emit('pointerup',{clientX:386});
+  assert.equal(app.emit('pointermove',{pointerId:2,isPrimary:false}).stopped,true);
+  app.emit('pointerup',{pointerId:2,isPrimary:false});
+  assert.equal(external,0);
+  assert.equal(app.emit('click',{clientX:386}).prevented,true);
+  app.click('image',0,{clientX:386});
+  app.advance(500);
+  assert.equal(app.emit('click',{clientX:386}).prevented,false);
 });
 
-test('an edge scrub consumes extra fingers and ghost clicks without blocking explicit buttons',()=>{
-  const app=harness();let viewerEvents=0;app.window.addEventListener('pointerdown',()=>viewerEvents++);app.emit('pointerdown',{clientX:386,clientY:500});assert.equal(app.emit('pointerdown',{pointerId:2,isPrimary:false,clientX:200}).stopped,true);
-  app.emit('pointerup',{clientX:386});assert.equal(app.emit('pointermove',{pointerId:2,isPrimary:false}).stopped,true);app.emit('pointerup',{pointerId:2,isPrimary:false});assert.equal(viewerEvents,0);
-  assert.equal(app.emit('click',{clientX:386}).prevented,true);app.click('image',0,{clientX:386});assert.equal(app.controls.image,0);assert.equal(app.emit('click',{clientX:195}).prevented,false);app.advance(500);assert.equal(app.emit('click',{clientX:386}).prevented,false);assert.equal(app.emit('pointerdown').prevented,false);
+test('mouse, central touch, disabled context, and a photo-save dialog are not intercepted',()=>{
+  const app=harness(),control={closest:selector=>selector.includes('.access-control')?{}:null};
+  for(const details of [{pointerType:'mouse',clientX:4},{clientX:195},{clientX:386,target:control}])assert.equal(app.emit('pointerdown',details).prevented,false);
+  const blocked=harness({enabled:()=>false});
+  blocked.click('primitive',3);
+  assert.equal(blocked.controls.photo,0);
+  const dialog=new app.Element('DIALOG'),image=new app.Element('IMG');
+  dialog.setAttribute('data-photo-save','');dialog.appendChild(image);
+  assert.equal(app.emit('pointerdown',{clientX:4,target:image}).prevented,false);
 });
 
-test('a native rail button keeps its click while consuming a second finger until release',()=>{
-  const app=harness(),target=app.rail('image').children[1];assert.equal(app.emit('pointerdown',{target,clientX:386}).prevented,false);
-  assert.equal(app.emit('pointerdown',{pointerId:2,isPrimary:false}).stopped,true);assert.equal(app.emit('pointermove',{pointerId:2,isPrimary:false}).stopped,true);
-  assert.equal(app.emit('pointerup',{target}).prevented,false);app.click('image',1);assert.deepEqual(app.changes,[['image',1]]);
-  assert.equal(app.emit('pointermove',{pointerId:2,isPrimary:false}).stopped,true);app.emit('pointerup',{pointerId:2,isPrimary:false});assert.equal(app.emit('pointerdown').prevented,false);
-});
-
-test('mouse movement, central touches, auxiliary controls and disabled contexts remain native',()=>{
-  const app=harness(),button={closest:selector=>selector.includes('.access-control')?{}:null};for(const details of [{pointerType:'mouse',clientX:4},{clientX:195},{clientX:386,target:button}])assert.equal(app.emit('pointerdown',details).prevented,false);
-  const disabled=harness({enabled:()=>false});assert.equal(disabled.emit('pointerdown',{clientX:386}).prevented,false);disabled.click('image',1);assert.equal(disabled.controls.image,0);assert.equal(disabled.gestures,0);
-});
-
-test('the native save image dialog keeps edge touches and context menus out of studio ownership',()=>{
-  const app=harness(),dialog=new app.Element('DIALOG'),image=new app.Element('IMG');dialog.setAttribute('data-photo-save','');dialog.appendChild(image);
-  for(const clientX of [4,386]){const event=app.emit('pointerdown',{clientX,target:image});assert.equal(event.prevented,false);assert.equal(event.stopped,false);assert.equal(app.emit('pointermove',{clientX,target:image}).prevented,false);assert.equal(app.emit('pointerup',{clientX,target:image}).prevented,false)}
-  assert.equal(app.changes.length,0);assert.equal(app.gestures,0);
-});
-
-test('cancel and disposal release gesture ownership, feedback timers and every mounted control',()=>{
-  const app=harness();app.emit('pointerdown',{clientX:386,clientY:500});app.emit('pointercancel',{clientX:386});assert.equal(app.emit('pointerdown').prevented,false);assert.equal(app.timers,1);
-  app.controls.dispose();assert.equal(app.timers,0);assert.equal(app.document.head.children.length,0);assert.ok(app.roots.every(root=>root.children.length===0));assert.equal(app.emit('pointerdown',{clientX:386}).prevented,false);
+test('disposal clears the silent rails and event ownership',()=>{
+  const app=harness();
+  app.click('primitive',2);
+  assert.equal(app.timers,0);
+  app.controls.dispose();
+  assert.equal(app.timers,0);
+  assert.equal(app.document.head.children.length,0);
+  assert.ok(app.roots.every(root=>root.children.length===0));
+  assert.equal(app.emit('pointerdown',{clientX:4}).prevented,false);
 });

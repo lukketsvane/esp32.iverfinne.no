@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
-const photo=(await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8')).replace(/^export /gm,''),view=(await readFile(new URL('../vendor/photo-view.mjs',import.meta.url),'utf8')).replace(/^import .*\n/,'').replace(/^export /gm,'');
+const colors=(await readFile(new URL('../vendor/color-schemes.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
+const retro=(await readFile(new URL('../vendor/retro-modes.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/gm,'').replace(/^export /gm,'');
+const photo=(await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8')).replace(/^export /gm,''),view=(await readFile(new URL('../vendor/photo-view.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/gm,'').replace(/^export /gm,'');
 function harness(width=16,height=12,pixels){
   const frames=new Map(),canvases=[];let serial=0,draws=0,writes=0;
   const document={createElement(){
@@ -25,7 +27,7 @@ function harness(width=16,height=12,pixels){
   }};
   const image={ownerDocument:document,naturalWidth:width,naturalHeight:height,src:'blob:original-jpeg',style:{opacity:'',transform:'translate(0px, 0px) scale(1)'},pixels:pixels||new Uint8ClampedArray(width*height*4).fill(255),after(canvas){this.next=canvas}};
   const context=vm.createContext({document,Uint8ClampedArray,Float32Array,Math,Number,Boolean,Error,requestAnimationFrame(callback){frames.set(++serial,callback);return serial},cancelAnimationFrame(id){frames.delete(id)}});
-  vm.runInContext(photo+'\n'+view,context);
+  vm.runInContext(colors+'\n'+retro+'\n'+photo+'\n'+view,context);
   return {image,view:context.createPhotoView(image),process:context.processPhoto,canvas:()=>image.next,canvases,flush(){for(const [id,callback]of [...frames]){frames.delete(id);callback()}},get pending(){return frames.size},get draws(){return draws},get writes(){return writes}};
 }
 function gray(width,height,value=(x,y)=>(x*19+y*31)%256){const data=new Uint8ClampedArray(width*height*4);for(let y=0;y<height;y++)for(let x=0;x<width;x++){const i=(y*width+x)*4;data[i]=data[i+1]=data[i+2]=typeof value==='function'?value(x,y):value;data[i+3]=255}return data}
@@ -92,4 +94,34 @@ test('a separately decoded source replaces stale DOM pixels and limits the longe
 test('invalid input, clamped controls and disposal cannot leave stale rendering work or opacity',()=>{
   const app=harness(4,4,gray(4,4));assert.throws(()=>app.view.snapshot(),/ikkje klart/);app.view.setSource();app.view.show(true);app.view.setStyle(9);app.view.setTone({grain:99,contrast:99});app.flush();binary(app.canvas().pixels);app.view.setStyle(2);assert.equal(app.pending,1);app.view.dispose();app.view.dispose();assert.equal(app.pending,0);assert.equal(app.canvas().removed,true);assert.equal(app.image.style.opacity,'');const writes=app.writes;app.view.setSource();app.view.show(true);app.view.setTone({grain:1});app.flush();assert.equal(app.writes,writes);assert.throws(()=>app.view.snapshot(),/ikkje klart/);
   const empty=harness(0,0);assert.throws(()=>empty.view.setSource(),/ikkje klart/);
+});
+
+
+test('historical palettes save exactly the RGB pixels shown by the photo canvas',()=>{
+  const width=320,height=200,source=new Uint8ClampedArray(width*height*4);
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+    const at=(y*width+x)*4;
+    source[at]=(x*7+y*11)%256;
+    source[at+1]=(x*13+y*3)%256;
+    source[at+2]=(x*5+y*17)%256;
+    source[at+3]=255;
+  }
+  const app=harness(width,height,source);
+  app.view.setSource();
+  for(const id of ['appleii','c64','zx']){
+    app.view.setPalette(id);
+    const exported=app.view.snapshot(undefined,true),visible=app.canvas().pixels;
+    assert.equal(exported.width,width);
+    assert.equal(exported.height,height);
+    assert.equal(Buffer.from(exported.data).equals(Buffer.from(visible)),true);
+    const palette=vm.runInNewContext(colors+';COLOR_SCHEMES.find(s=>s.id==="'+id+'").colors');
+    const allowed=new Set(palette.map(rgb=>rgb.join(',')));
+    const chromatic=new Set();
+    for(let i=0;i<visible.length;i+=4){
+      const rgb=[...visible.subarray(i,i+3)],key=rgb.join(',');
+      assert.ok(allowed.has(key),id+': '+key);
+      if(rgb[0]!==rgb[1]||rgb[1]!==rgb[2])chromatic.add(key);
+    }
+    assert.ok(chromatic.size>=2,id);
+  }
 });
