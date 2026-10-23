@@ -32,29 +32,36 @@ function gray(width,height,value=(x,y)=>(x*19+y*31)%256){const data=new Uint8Cla
 const monochrome=data=>{for(let i=0;i<data.length;i+=4){assert.equal(data[i],data[i+1]);assert.equal(data[i],data[i+2])}};
 const binary=data=>{monochrome(data);for(let i=0;i<data.length;i+=4)assert.ok(data[i]===0||data[i]===255)};
 
-test('decoded color becomes cached grayscale while the original JPEG and gesture target remain intact',()=>{
+test('decoded color becomes black and white while the original JPEG and gesture target remain intact',()=>{
   const app=harness(2,1,new Uint8ClampedArray([255,0,0,255,0,255,0,128]));app.view.show(true);assert.equal(app.image.style.opacity,'');app.view.setSource();app.view.show(true);
-  assert.deepEqual([...app.canvas().pixels],[54,54,54,255,182,182,182,128]);assert.equal(app.image.src,'blob:original-jpeg');assert.equal(app.image.style.opacity,'0');assert.equal(app.canvas().hidden,false);assert.match(app.canvas().style.cssText,/pointer-events:none/);assert.match(app.canvas().style.cssText,/object-fit:contain/);assert.equal(app.canvas().attributes.get('aria-hidden'),'true');
+  assert.deepEqual([...app.canvas().pixels],[0,0,0,255,255,255,255,128]);assert.equal(app.image.src,'blob:original-jpeg');assert.equal(app.image.style.opacity,'0');assert.equal(app.canvas().hidden,false);assert.match(app.canvas().style.cssText,/pointer-events:none/);assert.match(app.canvas().style.cssText,/object-fit:contain/);assert.equal(app.canvas().attributes.get('aria-hidden'),'true');
   app.view.show(false);assert.equal(app.image.style.opacity,'');assert.equal(app.canvas().hidden,true);
 });
 
-test('Bayer, Floyd–Steinberg and Atkinson give distinct strictly black-and-white output',()=>{
-  const app=harness(),input=gray(16,12),outputs=[1,2,3].map(style=>app.process(input,16,12,style,1,1));
+test('threshold, Bayer, Floyd–Steinberg and Atkinson give distinct strictly black-and-white output',()=>{
+  const app=harness(),input=gray(16,12),outputs=[0,1,2,3].map(style=>app.process(input,16,12,style,1,1));
   for(const output of outputs){binary(output);assert.ok(output.some((value,index)=>index%4===0&&value===0));assert.ok(output.some((value,index)=>index%4===0&&value===255))}
-  assert.equal(new Set(outputs.map(output=>Buffer.from(output).toString('base64'))).size,3);
+  assert.equal(new Set(outputs.map(output=>Buffer.from(output).toString('base64'))).size,4);
 });
 
-test('every style keeps black and white endpoints and preserves source alpha',()=>{
-  const app=harness();for(const value of [0,255])for(let style=0;style<4;style++){
-    const input=gray(9,7,value);input[3]=0;input[7]=128;const output=app.process(input,9,7,style,3,3);
+test('every photo style remains binary throughout the grain and contrast ranges',()=>{
+  const app=harness(),input=gray(17,13);
+  for(let style=0;style<4;style++)for(let grain=1;grain<=8;grain++)for(const contrast of [.5,1,3])binary(app.process(input,17,13,style,grain,contrast));
+});
+
+test('every style keeps black and white endpoints even below minimum contrast and preserves source alpha',()=>{
+  const app=harness();for(const value of [0,255])for(let style=0;style<4;style++)for(const grain of [1,8])for(const contrast of [.5,1,3]){
+    const input=gray(9,7,value);input[3]=0;input[7]=128;const output=app.process(input,9,7,style,grain,contrast);
     for(let i=0;i<output.length;i++)assert.equal(output[i],i%4===3?input[i]:value);
   }
 });
 
-test('grain creates larger uniform cells and contrast strengthens the same grayscale tones',()=>{
+test('grain creates larger uniform cells and contrast changes dither without introducing gray pixels',()=>{
   const app=harness(),input=gray(8,8),fine=app.process(input,8,8,1,1,1),coarse=app.process(input,8,8,1,4,1);binary(coarse);assert.notDeepEqual([...fine],[...coarse]);
   for(let y=0;y<8;y++)for(let x=0;x<8;x++)assert.equal(coarse[(y*8+x)*4],coarse[(Math.floor(y/4)*4*8+Math.floor(x/4)*4)*4]);
-  const tones=gray(2,1,x=>x?175:80),soft=app.process(tones,2,1,0,1,.5),strong=app.process(tones,2,1,0,1,3);assert.ok(strong[0]<soft[0]);assert.ok(strong[4]>soft[4]);
+  const tones=gray(16,8,x=>x<8?80:175),soft=app.process(tones,16,8,1,1,1),strong=app.process(tones,16,8,1,1,3);binary(soft);binary(strong);
+  const whiteCount=(data,start)=>{let count=0;for(let y=0;y<8;y++)for(let x=start;x<start+8;x++)count+=data[(y*16+x)*4]===255;return count};
+  assert.ok(whiteCount(strong,0)<whiteCount(soft,0));assert.ok(whiteCount(strong,8)>whiteCount(soft,8));
 });
 
 test('tone updates coalesce and zoom refresh never rereads or reprocesses photo pixels',()=>{
@@ -68,12 +75,12 @@ test('save and print snapshots flush the same visible processed pixels without c
   const crop=app.view.snapshot({scale:2,x:0,y:0,width:384,height:16},true);assert.equal(crop.width,192);assert.equal(crop.height,8);binary(crop.data);
 });
 
-test('dither snapshots disable interpolation while grayscale retains smooth resizing',()=>{
-  const app=harness(384,16,gray(384,16));app.view.setSource();for(let style=0;style<4;style++){app.view.setStyle(style);app.view.snapshot();assert.equal(app.canvases.at(-1).context.imageSmoothingEnabled,style===0)}
+test('every photo style disables interpolation for saved and printed snapshots',()=>{
+  const app=harness(385,17,gray(385,17));app.view.setSource();for(let style=0;style<4;style++)for(const native of [false,true]){app.view.setStyle(style);const snapshot=app.view.snapshot(undefined,native);assert.equal(app.canvases.at(-1).context.imageSmoothingEnabled,false);binary(snapshot.data);assert.equal(snapshot.width,native?385:384)}
 });
 
 test('a separately decoded source replaces stale DOM pixels and limits the longest side to 2048',()=>{
-  const app=harness(1,1),decoded={naturalWidth:4096,naturalHeight:2,pixels:gray(4096,2,90)};app.view.setSource(decoded);assert.equal(app.canvas().width,2048);assert.equal(app.canvas().height,1);assert.equal(app.canvas().pixels[0],90);assert.equal(app.image.src,'blob:original-jpeg');assert.equal(app.image.naturalWidth,1);
+  const app=harness(1,1),decoded={naturalWidth:4096,naturalHeight:2,pixels:gray(4096,2,90)};app.view.setSource(decoded);assert.equal(app.canvas().width,2048);assert.equal(app.canvas().height,1);assert.equal(app.canvas().pixels[0],0);assert.equal(app.image.src,'blob:original-jpeg');assert.equal(app.image.naturalWidth,1);
 });
 
 test('invalid input, clamped controls and disposal cannot leave stale rendering work or opacity',()=>{

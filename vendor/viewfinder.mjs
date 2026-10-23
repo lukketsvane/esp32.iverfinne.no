@@ -37,7 +37,7 @@ export class Viewfinder {
     this.animation=requestAnimationFrame(frame);
   }
   setStyle(level){this.style=Number.isFinite(level)?Math.max(0,Math.min(3,Math.round(level))):0}
-  setTone({grain=this.grain,contrast=this.contrast}={}){if(Number.isFinite(grain))this.grain=Math.max(1,Math.min(8,Math.round(grain)));if(Number.isFinite(contrast))this.contrast=Math.max(.5,Math.min(3,contrast))}
+  setTone({grain=this.grain,contrast=this.contrast}={}){if(Number.isFinite(grain))this.grain=Math.max(1,Math.min(8,Math.round(grain)));if(Number.isFinite(contrast))this.contrast=Math.max(1,Math.min(3,contrast))}
   draw(time=0){
     const source=this.source;if(!source||!this.context||!this.sampleContext)return;
     const video=source instanceof HTMLVideoElement;if(video&&source.readyState<2)return;

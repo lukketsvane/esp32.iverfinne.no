@@ -39,7 +39,7 @@ test('photo starts with two image buttons and four accessible photo styles',()=>
     const image=app.rail('image',i),primitive=app.rail('primitive',i);assert.equal(image.children.length,2);assert.equal(primitive.children.length,4);
     assert.equal(image.getAttribute('aria-label'),'Bilettype');assert.deepEqual(image.children.map(button=>button.getAttribute('aria-label')),['Svart-kvittfoto','Splats']);assert.deepEqual(image.children.map(button=>button.getAttribute('aria-pressed')),['true','false']);
     assert.equal(image.children[0].children[0].tagName,'I');assert.notEqual(primitive.hidden,true);assert.ok(primitive.children.every(button=>!button.disabled));assert.equal(app.roots[i].children.some(element=>element.tagName==='INPUT'),false);
-    assert.equal(primitive.getAttribute('aria-label'),'Svartkvitt-stil');assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-label')),['Atkinson','Floyd–Steinberg','Bayer','Gråtonar']);assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-pressed')),['false','false','true','false']);
+    assert.equal(primitive.getAttribute('aria-label'),'Svartkvitt-stil');assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-label')),['Atkinson','Floyd–Steinberg','Bayer','Svart-kvitt']);assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-pressed')),['false','false','true','false']);
   }
 });
 
@@ -59,7 +59,7 @@ test('photo and splat styles keep independent selections and mode-specific label
   assert.deepEqual(app.changes,[['image',1],['primitive',2],['image',0],['photo',3],['image',1]]);
 });
 
-test('left-edge photo scrubbing selects each dither without changing the splat style',()=>{
+test('left-edge photo scrubbing selects every black-and-white style without changing the splat style',()=>{
   const app=harness();assert.equal(app.emit('pointerdown',{clientX:4,clientY:100}).prevented,true);
   for(const clientY of [300,500,800])app.emit('pointermove',{clientX:4,clientY});app.emit('pointerup',{clientX:4});
   assert.deepEqual(app.changes,[['photo',3],['photo',2],['photo',1],['photo',0]]);assert.equal(app.controls.primitive,0);

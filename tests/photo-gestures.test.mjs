@@ -44,7 +44,7 @@ test('three-finger tone adjustment respects the deadzone and locks its first axi
 
 test('up is finer, down is coarser and contrast/grain stay inside their supported bounds',()=>{
   const app=harness();app.control.refresh();app.control.state.grain=4;app.three();app.moveThree(0,-100);assert.ok(app.control.state.grain<4);app.moveThree(0,5000);assert.equal(app.control.state.grain,8);app.moveThree(0,-5000);assert.equal(app.control.state.grain,1);assert.equal(app.control.state.contrast,1);
-  app.release();app.three();app.moveThree(3000,0);assert.equal(app.control.state.contrast,3);app.moveThree(-3000,0);assert.equal(app.control.state.contrast,.5);assert.equal(app.control.state.grain,1);app.control.dispose();
+  app.release();app.three();app.moveThree(3000,0);assert.equal(app.control.state.contrast,3);app.moveThree(-3000,0);assert.equal(app.control.state.contrast,1);assert.equal(app.control.state.grain,1);app.control.dispose();
 });
 
 test('three to two to one fingers keep the photo fixed without carrying tone-axis state',()=>{
