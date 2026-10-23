@@ -129,6 +129,7 @@ function harness(options = {}) {
           Object.defineProperty(element, dimension, { get: () => value, set: next => { value = next; element.clears++; } });
         }
         element.getContext = () => ({ drawImage: () => { element.draws++; }, clearRect: () => { element.clears++; } });
+        element.toBlob=(callback,type)=>options.encode?options.encode(callback,type):callback(new Blob(['framed-photo'],{type}));
         canvases.push(element);
       }
       return element;
@@ -182,7 +183,7 @@ function harness(options = {}) {
       getItem(key) { if (options.storageDenied) throw new Error('Storage denied'); return stored.get(key) ?? null; },
       setItem(key, value) { if (options.storageDenied) throw new Error('Storage denied'); stored.set(key, value); },
     },
-    Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};finders.push(this) }setStyle(level){this.style=level}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
+    Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};this.captures=[];finders.push(this) }capture(source){const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;this.captures.push({source,url:source.src,canvas});return canvas}setStyle(level){this.style=level}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
     attachPhotoGestures:(image,binding)=>{if(binding.toneOnly){liveGestureBinding=binding;return {state:liveGestureState}}photoGestureBinding=binding;binding.onChange(photoGestureState);return photoGestureController},
     createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
@@ -419,6 +420,23 @@ test('splats check models only when selected and use fixed quality',async()=>{
   assert.equal(app.get('photo').src,url);assert.equal(app.get('scene-status').textContent,'');
 });
 
+test('selected splats hide the live image and both photo layers until their scene is ready',async()=>{
+  const capture=deferred(),scene=deferred(),app=await connectedCamera({splats:true,fetch:url=>url.startsWith('/capture')?capture.promise:undefined,scene:()=>scene.promise});const taking=app.get('capture-plane').emit('click');await flush();assert.equal(app.get('studio').classList.contains('capturing-splats'),true);assert.equal(app.get('progress').hidden,false);
+  capture.resolve(app.response(new Blob(['raw-camera'],{type:'image/jpeg'})));await taking;await app.tick(0);assert.equal(app.get('photo-dialog').open,true);assert.equal(app.get('photo').hidden,true);assert.equal(app.photoViews[0].shown,false);assert.equal(app.photoViews[0].shows.some(Boolean),false);assert.equal(app.get('scene').hidden,true);assert.equal(app.get('scene-progress').hidden,false);assert.equal(app.get('scene-status').textContent,'');assert.equal(app.get('save-photo').hidden,true);assert.equal(app.get('print-photo').hidden,true);await app.get('save-photo').emit('click');await app.get('print-photo').emit('click');assert.equal(app.saves.length,0);assert.equal(app.printCalls.length,0);
+  scene.resolve({dispose(){}});await app.tick(0);assert.equal(app.get('scene').hidden,false);assert.equal(app.get('photo').hidden,true);assert.equal(app.photoViews[0].shown,false);app.changeStudio('image',0);assert.equal(app.get('photo').hidden,false);assert.equal(app.photoViews[0].shown,true);
+});
+
+test('camera JPEG is framed once and only the derived color PNG is used by review and depth',async()=>{
+  const app=await connectedCamera({splats:true,scene:async()=>({dispose(){}})});await app.get('capture-plane').emit('click');await app.tick(0);const finder=app.finders[0],framed=app.objectUrls.get(app.get('photo').src);assert.equal(finder.captures.length,1);assert.equal(app.objectUrls.get(finder.captures[0].url).type,'image/jpeg');assert.equal(framed.type,'image/png');assert.equal(app.sceneCalls[0].blob,framed);assert.equal(finder.captures[0].canvas.width,1);assert.equal(finder.captures[0].canvas.height,1);assert.ok(app.revoked.includes(finder.captures[0].url));
+  await app.get('close-photo').emit('click');await app.get('last-photo').emit('click');app.changeStudio('image',0);app.changeStudio('image',1);assert.equal(finder.captures.length,1);assert.equal(app.sceneCalls.length,1);assert.equal(app.objectUrls.get(app.get('photo').src),framed);
+});
+
+test('failed or abandoned PNG encoding retains the last valid photo and never publishes a partial frame',async()=>{
+  for(const abandon of [false,true]){
+    let encode,encodes=0;const app=await connectedCamera({encode:(callback,type)=>{if(++encodes===1)callback(new Blob(['first'],{type}));else encode=callback}});await app.get('capture-plane').emit('click');const original=app.get('photo').src;await app.get('close-photo').emit('click');const taking=app.get('capture-plane').emit('click');await flush();if(abandon)await app.emit('pagehide');encode(abandon?new Blob(['late'],{type:'image/png'}):null);await taking;await app.tick(0);assert.equal(app.get('photo').src,original);assert.equal(app.revoked.includes(original),false);assert.equal(app.finders[0].captures[1].canvas.width,1);assert.equal(app.finders[0].captures[1].canvas.height,1);assert.equal(app.get('photo-dialog').open,false);
+  }
+});
+
 test('the image rail reuses one JPEG and one scene while preserving its view state',async()=>{
   let disposed=false,refreshes=0;const viewer={angle:42,dispose(){disposed=true},refresh(){refreshes++}},app=await connectedCamera({scene:async()=>viewer});
   await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
@@ -476,7 +494,7 @@ test('closing review cancels a model check before it can open setup over the cam
 test('missing models ask for setup only for splats and leave the JPEG available',async()=>{
   const app=await connectedCamera({modelsReady:false});await app.get('capture-plane').emit('click');
   assert.equal(app.get('onboarding').open,false);app.changeStudio('image',1);await app.tick(0);
-  assert.equal(app.get('onboarding').open,true);assert.equal(app.get('photo').hidden,false);
+  assert.equal(app.get('onboarding').open,true);assert.equal(app.get('photo').hidden,true);
   assert.match(app.get('photo').src,/^blob:/);assert.equal(app.sceneCalls.length,0);
   assert.equal(app.get('retry-scene').getAttribute('aria-label'),'Klargjer telefonen');assert.equal(app.opened.length,0);
   let prevented=false;await app.get('onboarding').emit('cancel',{preventDefault(){prevented=true}});app.get('onboarding').close();
@@ -734,7 +752,7 @@ test('a suspended capture cannot reopen review or clear a newer capture while fi
   first.resolve(app.response(new Blob(['old'],{type:'image/jpeg'})));await old;await app.tick(0);
   assert.equal(app.get('photo-dialog').open,false);assert.equal(app.get('capture-plane').disabled,true);
   second.resolve(app.response(new Blob(['current'],{type:'image/jpeg'})));await current;await app.tick(0);
-  assert.equal(app.get('photo-dialog').open,true);assert.equal(await app.objectUrls.get(app.get('photo').src).text(),'current');
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(await app.objectUrls.get(app.finders[0].captures[0].url).text(),'current');assert.equal(app.objectUrls.get(app.get('photo').src).type,'image/png');
 });
 
 test('a JPEG decoded after pagehide is rejected and its object URL is released',async()=>{

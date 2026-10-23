@@ -12,7 +12,7 @@ const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder
 const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,generation=0,captureGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
 const photoView=createPhotoView(photo);
-const studioControls=attachStudioControls([$('studio')],(kind,level)=>{if(kind==='primitive')scene?.setPrimitiveLevel(level);else if(kind==='photo'){photoView.setStyle(level);finder.setStyle(level)}else if(kind==='image'&&photoReady&&mode!=='camera'){if(level===0||scene){state('done');if(level===1)scene?.refresh?.()}else void makeScene()}},()=>true,()=>{pointer=null;lastTap=0});
+const studioControls=attachStudioControls([$('studio')],(kind,level)=>{if(kind==='primitive')scene?.setPrimitiveLevel(level);else if(kind==='photo'){photoView.setStyle(level);finder.setStyle(level)}else if(kind==='image'&&mode!=='camera'){if(capturing)state('working');else if(photoReady){if(level===0||scene){state('done');if(level===1)scene?.refresh?.()}else void makeScene()}}},()=>true,()=>{pointer=null;lastTap=0});
 photoView.setStyle(studioControls.photo);finder.setStyle(studioControls.photo);
 const photoGestures=attachPhotoGestures(photo,{enabled:()=>mode==='done'&&studioControls.image===0,onChange:pose=>{photoView.setTone(pose);finder.setTone(pose);Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter()}});
 const liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>mode==='camera'&&studioControls.image===0,onChange:pose=>{captureAfter=performance.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
@@ -22,15 +22,15 @@ const printClient=createPrintClient({printer:new PX10Printer(),buildJob:cloudPri
 
 function state(next,message='',sceneFailure=false){
   mode=next;retryScene=next==='error'&&sceneFailure;$('studio').className='studio '+next;$('status').textContent=message;
-  const reviewing=next!=='camera'&&!capturing&&!!photoBlob,splats=reviewing&&next==='done'&&studioControls.image===1&&scene;
-  $('finder').classList.toggle('hidden',reviewing);photo.hidden=!reviewing||!!splats;$('scene').classList.toggle('hidden',!splats);$('progress').hidden=next!=='working';
-  $('capture-plane').hidden=next!=='camera';$('retry').hidden=next!=='error';$('reset').hidden=next==='camera';$('save').hidden=!reviewing||!photoReady;$('last-photo').hidden=next!=='camera'||!photoReady;$('print').hidden=!reviewing||next!=='done';
-  photoView.show(reviewing&&next==='done'&&!splats);
+  const reviewing=next!=='camera'&&!capturing&&!!photoBlob,splats=reviewing&&next==='done'&&studioControls.image===1&&scene,showPhoto=reviewing&&next==='done'&&studioControls.image===0&&photoReady,splatWorking=next==='working'&&studioControls.image===1;
+  $('finder').classList.toggle('hidden',reviewing||splatWorking);photo.hidden=!showPhoto;$('scene').classList.toggle('hidden',!splats);$('progress').hidden=next!=='working';
+  $('capture-plane').hidden=next!=='camera';$('retry').hidden=next!=='error';$('reset').hidden=next==='camera';$('save').hidden=!showPhoto&&!splats;$('last-photo').hidden=next!=='camera'||!photoReady;$('print').hidden=!showPhoto&&!splats;
+  photoView.show(showPhoto);
   $('studio').setAttribute('aria-busy',String(next==='working'));$('print').disabled=printing;
   updateRecenter();
   if(next==='done'&&studioControls.image===0)photoGestures.refresh?.();
   $('capture-plane').setAttribute('aria-label',stream?'Ta foto':'Opne kameraet');
-  finder.active=!reviewing&&!document.hidden;
+  finder.active=!reviewing&&!splatWorking&&!document.hidden;
 }
 function stopCamera(){stream?.getTracks().forEach(track=>track.stop());stream=null;video.pause();video.srcObject=null}
 function clearScene(){task?.abort();task=null;scene?.dispose();scene=null;$('scene').replaceChildren()}
@@ -68,7 +68,7 @@ async function acceptPhoto(blob,name='entropi.jpg'){
   if(!(blob instanceof Blob)||!blob.type.startsWith('image/')||!blob.size||blob.size>40*1024*1024){state('error','Kamerafotoet kunne ikkje lesast.');return}
   const current=++generation;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
   state('working');
-  try{await photo.decode();if(current!==generation)return;photoView.setSource();photoReady=true;photoGestures.reset();state('done');if(studioControls.image===1)await makeScene()}
+  try{await photo.decode();if(current!==generation)return;photoView.setSource();photoReady=true;photoGestures.reset();if(studioControls.image===1)await makeScene();else state('done')}
   catch(error){if(current===generation)state('error',error.message||'Fotoet kunne ikkje lesast.')}
 }
 
@@ -76,23 +76,23 @@ async function capture(){
   if(mode!=='camera'||performance.now()<captureAfter)return;
   if(!stream){await startCamera();return}
   if(!video.videoWidth||video.readyState<2)return;
-  const current=generation,captureId=++captureGeneration,frame=document.createElement('canvas');frame.width=video.videoWidth;frame.height=video.videoHeight;
+  const current=generation,captureId=++captureGeneration;let frame;
   capturing=true;state('working');
   try{
-    const context=frame.getContext('2d');if(!context)throw new Error('Fotoet kunne ikkje takast.');context.drawImage(video,0,0);
-    const blob=await new Promise(resolve=>frame.toBlob(resolve,'image/jpeg',.94));
+    frame=finder.capture(video);
+    const blob=await new Promise(resolve=>frame.toBlob(resolve,'image/png'));
     if(current!==generation||captureId!==captureGeneration)return;capturing=false;if(document.hidden){state('camera');return}
-    if(blob)await acceptPhoto(blob,'entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.jpg');else state('error','Fotoet kunne ikkje takast.')
+    if(blob)await acceptPhoto(blob,'entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png');else state('error','Fotoet kunne ikkje takast.')
   }catch(error){if(current===generation&&captureId===captureGeneration&&!document.hidden)state('error',error.message||'Fotoet kunne ikkje takast.')}
-  finally{if(captureId===captureGeneration)capturing=false;frame.width=frame.height=1}
+  finally{if(captureId===captureGeneration)capturing=false;if(frame)frame.width=frame.height=1}
 }
 
 function reset(){++captureGeneration;capturing=false;if(!photoReady){++generation;clearScene();clearPhoto()}stopCamera();finder.clear();pointer=null;lastTap=0;state('camera');if(hadCamera)void startCamera()}
 async function printCurrent(){const source=scene,blob=photoBlob,image=studioControls.image;if(printing||mode!=='done'||!photoReady||image===1&&!source)return;printing=true;$('print').disabled=true;try{await printClient.print(image===0?photoView.snapshot(photoGestures.state):source.snapshot(),()=>mode==='done'&&blob===photoBlob&&image===studioControls.image&&(image===0||source===scene))}catch(error){printFeedback(error.message)}finally{printing=false;$('print').disabled=false}}
 async function save(){
-  if(!photoBlob)return;
-  const blob=photoBlob;
-  try{const image=snapshotBlob(studioControls.image===1&&scene&&mode==='done'?scene.snapshot(true):photoView.snapshot(photoGestures.state,true));await savePhoto(image,photoName.replace(/\.[^.]+$/,'')+'.png',()=>photoBlob===blob&&mode!=='camera')}catch(error){printFeedback(error.message)}
+  if(!photoBlob||!photoReady||mode!=='done'||studioControls.image===1&&!scene)return;
+  const blob=photoBlob,source=scene,image=studioControls.image;
+  try{const rendered=snapshotBlob(image===1?source.snapshot(true):photoView.snapshot(photoGestures.state,true));await savePhoto(rendered,photoName.replace(/\.[^.]+$/,'')+'.png',()=>photoBlob===blob&&mode==='done'&&studioControls.image===image&&(image===0||scene===source))}catch(error){printFeedback(error.message)}
 }
 
 $('capture-plane').addEventListener('click',()=>void capture());$('reset').addEventListener('click',reset);$('save').addEventListener('click',()=>void save());

@@ -53,7 +53,7 @@ function harness(options={}){
     File:class extends Blob{constructor(parts,name,properties){super(parts,properties);this.name=name}},
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
-    Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};finders.push(this)}setStyle(level){this.style=level}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
+    Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
     attachPhotoGestures:(image,binding)=>{const state=binding.toneOnly?liveGestureState:photoGestureState;if(binding.toneOnly)liveGestureBinding=binding;else photoGestureBinding=binding;return {state,reset(){Object.assign(state,{scale:1,x:0,y:0});binding.onChange(state)},refresh(){binding.onChange(state)},dispose(){}}},
     createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
@@ -138,17 +138,32 @@ test('dragging out and back or adding another finger cancels a hold instead of p
   assert.equal(app.printCalls.length,0);assert.equal(app.get('studio').className,'studio done');
 });
 
-test('model failure keeps the displayed photo available as a monochrome PNG',async()=>{
+test('model failure requires selecting the retained photo before exporting its monochrome PNG',async()=>{
   const app=harness({image:1,scene:async()=>{throw new Error('Djupnemodellen manglar.')}}),blob=await photoFromDevice(app);
   assert.equal(app.get('studio').className,'studio error');
   assert.match(app.get('status').textContent,/Djupnemodellen manglar/);
-  assert.equal(app.get('save').hidden,false);
-  await app.get('save').emit('click');
+  assert.equal(app.get('save').hidden,true);await app.get('save').emit('click');assert.equal(app.saves.length,0);app.changeStudio('image',0);assert.equal(app.get('save').hidden,false);await app.get('save').emit('click');
   assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].name,'entropi.png');assert.equal(app.encodedSnapshots[0].photo,true);assert.equal(app.urls.get(app.get('photo').src),blob);
 });
 
 test('normal processing uses only progress while actionable model errors remain visible',async()=>{
   const pending=deferred(),app=harness({image:1,scene:()=>pending.promise});await photoFromDevice(app);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);app.sceneCalls[0].progress({phase:'loading-model',percent:35});assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').firstElementChild.style.width,'35%');pending.reject(new Error('Internett manglar. Klargjer telefonen først.'));await app.tick(0);assert.equal(app.get('studio').className,'studio error');assert.match(app.get('status').textContent,/Internett manglar/);const css=await readFile(new URL('../style.css',import.meta.url),'utf8');assert.match(css,/\.studio\.error #status\{/);assert.doesNotMatch(css,/\.studio\.(?:working|opening) #status/);
+});
+
+test('selected splats stay black through decoding and inference without exposing a source photo or processed canvas',async()=>{
+  const decoding=deferred(),processing=deferred(),app=harness({image:1,decode:()=>decoding.promise,scene:()=>processing.promise});await photoFromDevice(app);assert.equal(app.get('studio').className,'studio working');assert.equal(app.get('photo').hidden,true);assert.equal(app.photoViews[0].shown,false);assert.equal(app.get('scene').classList.contains('hidden'),true);
+  decoding.resolve();await app.tick(0);assert.equal(app.sceneCalls.length,1);assert.equal(app.get('studio').className,'studio working');assert.equal(app.get('photo').hidden,true);assert.equal(app.photoViews[0].shows.some(Boolean),false);assert.equal(app.get('progress').hidden,false);assert.equal(app.get('status').textContent,'');assert.equal(app.get('save').hidden,true);assert.equal(app.get('print').hidden,true);await app.get('save').emit('click');await app.get('print').emit('click');assert.equal(app.saves.length,0);assert.equal(app.printCalls.length,0);
+  processing.resolve({dispose(){}});await app.tick(0);assert.equal(app.get('studio').className,'studio done');assert.equal(app.get('scene').classList.contains('hidden'),false);assert.equal(app.get('photo').hidden,true);assert.equal(app.photoViews[0].shown,false);
+});
+
+test('switching photo to pending splats immediately hides both image layers and switching back is instant',async()=>{
+  const pending=deferred(),app=harness({scene:()=>pending.promise});await photoFromDevice(app);const url=app.get('photo').src;assert.equal(app.photoViews[0].shown,true);app.changeStudio('image',1);assert.equal(app.get('photo').hidden,true);assert.equal(app.photoViews[0].shown,false);assert.equal(app.get('scene').classList.contains('hidden'),true);assert.equal(app.get('progress').hidden,false);
+  app.changeStudio('image',0);assert.equal(app.get('photo').hidden,false);assert.equal(app.photoViews[0].shown,true);assert.equal(app.get('photo').src,url);pending.reject(new Error('Late model failure'));await app.tick(0);assert.equal(app.get('studio').className,'studio done');assert.equal(app.photoViews[0].shown,true);
+});
+
+test('native camera capture encodes the finder framing once as PNG and keeps selected splats black during encoding',async()=>{
+  const callbacks=[],types=[],app=harness({image:1,toBlob:(callback,type)=>{callbacks.push(callback);types.push(type)}});await app.get('capture-plane').emit('click');await app.get('capture-plane').emit('click');assert.equal(app.finders[0].captures.length,1);assert.equal(app.get('finder').classList.contains('hidden'),true);assert.equal(app.get('photo').hidden,true);assert.equal(app.get('scene').classList.contains('hidden'),true);assert.equal(app.get('progress').hidden,false);assert.deepEqual(types,['image/png']);
+  const blob=new Blob(['framed-color'],{type:'image/png'});callbacks[0](blob);await app.tick(0);assert.equal(app.sceneCalls[0].blob,blob);assert.equal(app.finders[0].captures[0].source,app.get('video'));assert.equal(app.finders[0].captures[0].canvas.width,1);assert.equal(app.finders[0].captures[0].canvas.height,1);app.changeStudio('image',0);app.changeStudio('image',1);assert.equal(app.finders[0].captures.length,1);
 });
 
 test('returning to the camera keeps pending splats without letting a late result reopen review',async()=>{

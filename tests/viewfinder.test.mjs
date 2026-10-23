@@ -7,7 +7,7 @@ const source=(await readFile(new URL('../vendor/viewfinder.mjs',import.meta.url)
 function finder(solid=null){
   const draws=[],painted=[],parent={style:{}},frames=new Map();let next=0;
   const output={createImageData:(width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)}),putImageData:image=>painted.push(image.data.slice()),fillRect(){}};
-  const sample={drawImage:(...args)=>draws.push(args),getImageData:(x,y,w,h)=>{const data=new Uint8ClampedArray(w*h*4);for(let i=0;i<data.length;i+=4){data[i]=solid??(i*7)%256;data[i+1]=solid??(i*13+80)%256;data[i+2]=solid??(i*23+40)%256;data[i+3]=255}return {data}}};
+  const sample={createImageData:output.createImageData,putImageData:output.putImageData,drawImage:(...args)=>draws.push(args),getImageData:(x,y,w,h)=>{const data=new Uint8ClampedArray(w*h*4);for(let i=0;i<data.length;i+=4){data[i]=solid??(i*7)%256;data[i+1]=solid??(i*13+80)%256;data[i+2]=solid??(i*23+40)%256;data[i+3]=255}return {data}}};
   const document={hidden:false,createElement:()=>({getContext:()=>sample})},canvas={parentElement:parent,ownerDocument:document,style:{},getContext:()=>output};
   const context=vm.createContext({document,HTMLVideoElement:class{},Float32Array,Uint8ClampedArray,Math,Number,requestAnimationFrame:callback=>{frames.set(++next,callback);return next},cancelAnimationFrame:id=>frames.delete(id)});
   vm.runInContext(processor+'\n'+source+'\nglobalThis.finder=new Viewfinder(globalThis.canvas);',Object.assign(context,{canvas}));
@@ -49,4 +49,21 @@ test('the animation samples at most twenty frames per second and skips inactive 
 
 test('visible preview pixels match the finder size to avoid resampling ordered dither into moire',()=>{
   const app=finder();let width=166;app.canvas.getBoundingClientRect=()=>({width});app.view.source={width:640,height:480};app.view.draw();assert.equal(app.canvas.width,166);assert.equal(app.canvas.height,249);const buffer=app.view.output;app.view.draw();assert.equal(app.view.output,buffer);width=200;app.view.draw();assert.equal(app.canvas.width,200);assert.equal(app.canvas.height,300);assert.notEqual(app.view.output,buffer);app.view.dispose();
+});
+
+test('captured frames retain the finder crop and optical geometry at native resolution',()=>{
+  const app=finder(255);
+  for(const [width,height,expected,crop]of [[640,480,[320,480],[160,0,320,480]],[1600,1200,[800,1200],[400,0,800,1200]],[1920,1080,[720,1080],[600,0,720,1080]],[1080,1920,[1080,1620],[0,150,1080,1620]]]){
+    const image={width,height},frame=app.view.capture(image);assert.deepEqual([frame.width,frame.height],expected);assert.deepEqual(app.draws.at(-1),[image,...crop,0,0,...expected]);
+    const pixels=app.painted.at(-1),center=(Math.floor(frame.height/2)*frame.width+Math.floor(frame.width/2))*4;
+    assert.equal(pixels[0],0);assert.equal(pixels[3],255);assert.ok(pixels[center]>220);assert.equal(image.width,width);assert.equal(image.height,height);
+  }
+  const limited=app.view.capture({width:6000,height:4000});assert.equal(limited.width/limited.height,2/3);assert.ok(limited.height<=2048);app.view.dispose();
+});
+
+test('capture preserves color, matches preview grayscale and leaves the live buffers intact',()=>{
+  const app=finder();app.view.source={width:160,height:240};app.canvas.getBoundingClientRect=()=>({width:160});app.view.draw(1000);
+  const preview=app.painted.at(-1),buffer=app.view.output,frame=app.view.capture(),color=app.painted.at(-1);assert.equal(frame.width,160);assert.equal(frame.height,240);assert.equal(app.view.output,buffer);assert.equal(app.canvas.width,160);
+  let colored=false;for(let i=0;i<color.length;i+=4){const value=Math.round(color[i]*.2126+color[i+1]*.7152+color[i+2]*.0722);assert.equal(preview[i],value);colored||=color[i]!==color[i+1]||color[i]!==color[i+2];assert.equal(color[i+3],255)}assert.equal(colored,true);
+  assert.throws(()=>app.view.capture({width:0,height:240}),/ikkje klart/);app.view.dispose();assert.throws(()=>app.view.capture({width:160,height:240}),/ikkje klart/);
 });
