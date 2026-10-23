@@ -41,7 +41,7 @@ test('a connection quota failure retains the short retry guidance without queuin
 });
 
 test('HTTP camera opens a session-bound HTTPS printer synchronously and authenticates every message',async()=>{
-  const app=harness(),snapshot=image(),printing=app.client.print(snapshot);assert.equal(app.opened.length,1);assert.match(app.session,/^[a-f0-9]{32}$/);
+  const app=harness(),snapshot=image(),printing=app.client.print(snapshot);assert.equal(app.opened.length,1);assert.match(app.opened[0].url,/^https:\/\/esp32\.iverfinne\.no\/print\/#/);assert.match(app.session,/^[a-f0-9]{32}$/);
   const ready={type:'entropi-print-ready',session:app.session};
   await app.emit(ready,{origin:'https://untrusted.test'});await app.emit(ready,{source:{}});await app.emit({...ready,session:'wrong'});assert.equal(app.messages.length,0);
   await app.emit(ready);await app.emit(ready);assert.equal(app.messages.length,1);assert.equal(app.messages[0].origin,'https://esp32.iverfinne.no');

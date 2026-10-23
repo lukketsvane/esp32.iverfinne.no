@@ -6,6 +6,7 @@ import vm from 'node:vm';
 const root=new URL('../',import.meta.url),origin='https://esp32.iverfinne.no';
 const read=path=>readFile(new URL(path,root),'utf8');
 const worker=await read('sw.js'),prepare=await read('prepare/sw.js'),registration=await read('pwa.mjs');
+const rewrites=JSON.parse(await read('vercel.json')).rewrites,printFiles=['/print/','/print/app.mjs','/print/printer.mjs','/print/px10-protocol.mjs'];
 
 function serviceWorker(source,network=async()=>new Response('online'),options={}){
   const listeners=new Map(),stores=new Map(),deleted=[],calls=[],installed=[],timers=new Map();let claimed=0,skipped=0,timerId=0,now=100000;
@@ -32,7 +33,7 @@ test('the offline shell contains its complete small module graph without models,
   const app=serviceWorker(worker);let total=0;
   for(const path of app.files){
     assert.doesNotMatch(path,/\.(?:onnx|wasm)$|^\/(?:api|capture|stream|photos)(?:\/|$)/);
-    const relative=path==='/'?'index.html':['/prepare/','/start/'].includes(path)?'prepare/index.html':path.slice(1);total+=(await stat(new URL(relative,root))).size;
+    const relative=path==='/'?'index.html':path==='/prepare/'?'prepare/index.html':(rewrites.find(route=>route.source===path)?.destination??path).slice(1);total+=(await stat(new URL(relative,root))).size;
     if(path.endsWith('.mjs'))for(const match of (await read(relative)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm)){const dependency=new URL(match[1],origin+path).pathname;assert.ok(app.files.includes(dependency),path+' -> '+dependency)}
   }
   assert.ok(total<300000,total+' bytes');
@@ -87,9 +88,29 @@ test('the more specific preparation worker keeps branding and registration avail
 
 test('the canonical start route reuses existing sources with its own offline cache family',async()=>{
   const app=serviceWorker(prepare,undefined,{scriptPath:'/start/sw.js'});app.stores.set('entropi-prepare-v5',new Map());app.stores.set('entropi-app-v4',new Map());app.stores.set('entropi-start-old',new Map());await app.lifecycle('install');await app.lifecycle('activate');
-  assert.equal(app.name,'entropi-start-v3');assert.deepEqual(app.deleted,['entropi-start-old']);assert.ok(app.stores.has('entropi-prepare-v5'));assert.ok(app.stores.has('entropi-app-v4'));
+  assert.equal(app.name,'entropi-start-v4');assert.deepEqual(app.deleted,['entropi-start-old']);assert.ok(app.stores.has('entropi-prepare-v5'));assert.ok(app.stores.has('entropi-app-v4'));
   for(const path of['/start/','/start/index.html','/start/?camera'])assert.equal(await(await app.request(path)).text(),'cached:/prepare/');
   const config=JSON.parse(await read('vercel.json'));for(const path of['/start','/start/','/start/index.html','/start/sw.js'])assert.equal(config.rewrites.find(route=>route.source===path)?.destination,path.endsWith('sw.js')?'/prepare/sw.js':'/prepare/index.html');
+});
+
+test('new print paths bypass a legacy cache graph while its existing helper remains cached',async()=>{
+  for(const source of [worker,prepare]){
+    const legacy=serviceWorker(source.replace(/,'\/print\/[^']*'/g,''),async()=>{throw new Error('Legacy worker must not intercept fresh paths')});await legacy.lifecycle('install');
+    for(const path of [...printFiles,'/print','/print/index.html'])assert.equal(await legacy.request(path),null,path);
+    if(source===prepare)assert.equal(await(await legacy.request('/prepare/print.html')).text(),'cached:/prepare/print.html');
+    assert.equal(legacy.calls.length,0);
+  }
+});
+
+test('the fresh print module graph resolves canonical sources and stays available offline',async()=>{
+  const destinations={'/print':'/prepare/print.html','/print/':'/prepare/print.html','/print/index.html':'/prepare/print.html','/print/app.mjs':'/prepare/print.mjs','/print/printer.mjs':'/vendor/print/printer.mjs','/print/px10-protocol.mjs':'/vendor/print/px10-protocol.mjs'};
+  for(const [path,destination]of Object.entries(destinations)){assert.equal(rewrites.find(route=>route.source===path)?.destination,destination);await stat(new URL(destination.slice(1),root))}
+  const html=await read('prepare/print.html'),module=await read('prepare/print.mjs'),printer=await read('vendor/print/printer.mjs');assert.match(html,/src="\/print\/app\.mjs"/);assert.match(module,/from '\/print\/printer\.mjs'/);assert.match(printer,/from '\.\/px10-protocol\.mjs'/);
+  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v8'],[prepare,'/prepare/sw.js','entropi-prepare-v10'],[prepare,'/start/sw.js','entropi-start-v4']]){
+    const app=serviceWorker(source,async()=>{throw new TypeError('Offline')},{scriptPath});await app.lifecycle('install');assert.equal(app.name,name);
+    for(const path of printFiles){assert.ok(app.files.includes(path));assert.equal(await(await app.request(path)).text(),'cached:'+path);const file=destinations[path].slice(1);if(path.endsWith('.mjs'))for(const match of(await read(file)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm))assert.ok(app.files.includes(new URL(match[1],origin+path).pathname),path+' -> '+match[1])}
+    for(const path of ['/print','/print/index.html'])assert.equal(await(await app.request(path)).text(),'cached:/print/');
+  }
 });
 
 test('worker upgrades offer refresh only to their own onboarding windows without forcing unknown clients',async()=>{

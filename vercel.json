@@ -5,7 +5,13 @@
     { "source": "/start", "destination": "/prepare/index.html" },
     { "source": "/start/", "destination": "/prepare/index.html" },
     { "source": "/start/index.html", "destination": "/prepare/index.html" },
-    { "source": "/start/sw.js", "destination": "/prepare/sw.js" }
+    { "source": "/start/sw.js", "destination": "/prepare/sw.js" },
+    { "source": "/print", "destination": "/prepare/print.html" },
+    { "source": "/print/", "destination": "/prepare/print.html" },
+    { "source": "/print/index.html", "destination": "/prepare/print.html" },
+    { "source": "/print/app.mjs", "destination": "/prepare/print.mjs" },
+    { "source": "/print/printer.mjs", "destination": "/vendor/print/printer.mjs" },
+    { "source": "/print/px10-protocol.mjs", "destination": "/vendor/print/px10-protocol.mjs" }
   ],
   "headers": [
     { "source": "/pointcloud/vendor/(.*).wasm", "headers": [{ "key": "Content-Type", "value": "application/wasm" }] },

@@ -1,4 +1,4 @@
-import { PX10Printer } from '/vendor/print/printer.mjs';
+import { PX10Printer } from '/print/printer.mjs';
 import { cloudPrintJob } from '/vendor/print/cloud-raster.mjs';
 
 const button=document.getElementById('print'),status=document.getElementById('status'),session=location.hash.slice(1),opener=window.opener;
