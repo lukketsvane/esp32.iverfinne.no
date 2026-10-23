@@ -76,6 +76,7 @@ function printFeedback(message){clearTimeout(printTimer);$('print-status').textC
 async function printCurrent(){
   if(printBusy||!photoDialog.open||!photoBlob||studioControls.image===1&&!sceneVisible)return;
   const mode=studioControls.image,blob=photoBlob,source=sceneViewer;
+  ++connectGeneration;connecting=false;clearTimeout(retryTimer);
   printBusy=true;stopStream();controls();refreshReview();printFeedback('');
   try{await printClient.print(mode===0?photoView.snapshot(photoGestures.state):source.snapshot(),()=>photoDialog.open&&photoBlob===blob&&studioControls.image===mode&&(mode===0||source===sceneViewer))}
   catch(error){printFeedback(error.message||'Kunne ikkje skrive ut.')}
@@ -117,8 +118,8 @@ function startStream(){
   streaming=true;finder.active=true;live.src=streamUrl.href+'?t='+Date.now();
   frameTimer=setInterval(()=>{if(!streaming||!live.naturalWidth)return;try{sourceContext.drawImage(live,0,0,source.width,source.height);hasFrame=true}catch{loseConnection('Kamerabiletet kunne ikkje visast.')}},50);
 }
-function resumeStream(){if(document.hidden||reviewing())return;if(connected)startStream();else connect()}
-function scheduleReconnect(){clearTimeout(retryTimer);if(document.hidden||reviewing())return;retryTimer=setTimeout(connect,Math.min(30000,1500*2**Math.min(retryCount++,4)))}
+function resumeStream(){if(document.hidden||reviewing()||printBusy)return;if(connected)startStream();else connect()}
+function scheduleReconnect(){clearTimeout(retryTimer);if(document.hidden||reviewing()||printBusy)return;retryTimer=setTimeout(connect,Math.min(30000,1500*2**Math.min(retryCount++,4)))}
 function loseConnection(message){connected=false;cameraStatus=null;stopStream();controls();notice(message);if(onboarding.open){renderOnboarding();$('onboarding-feedback').textContent=message}scheduleReconnect()}
 function renderOnboarding(){
   const modelNeeded=studioControls.image===1&&!phoneReady;
@@ -151,7 +152,7 @@ async function checkPhone(){
   finally{if(phoneTask===task)phoneTask=null;controls();refreshReview()}
 }
 async function connect(){
-  if(connecting||busy||document.hidden||reviewing())return;
+  if(connecting||busy||printBusy||document.hidden||reviewing())return;
   clearTimeout(retryTimer);connecting=true;connected=false;controls();
   const generation=++connectGeneration;stopStream();hasFrame=false;
   try{
@@ -273,14 +274,14 @@ function suspend(){++connectGeneration;connecting=false;connected=false;clearTim
 function resume(){if(!document.hidden){if(reviewing()){if(studioControls.image===0)photoGestures.refresh?.();else if(!phoneReady&&!phoneTask&&!sceneViewer)void checkPhone()}else connect()}}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});window.addEventListener('pagehide',()=>{notifyCamera('entropi-camera-left');parentReady=false;suspend();phoneTask?.abort()});window.addEventListener('pageshow',resume);window.addEventListener('online',resume);
 setInterval(async()=>{
-  if(!connected||busy||connecting||document.hidden||reviewing())return;
+  if(!connected||busy||printBusy||connecting||document.hidden||reviewing())return;
   const generation=connectGeneration;
   try{
     const status=await request('/status','json',5000);
-    if(generation!==connectGeneration||document.hidden||busy||reviewing())return;
+    if(generation!==connectGeneration||document.hidden||busy||printBusy||reviewing())return;
     if(!validStatus(status))throw new Error('Ugyldig kamerastatus');
     acceptStatus(status);if(!status.camera_ready||!status.stream_ready)throw new Error(healthMessage(status));
-  }catch(error){if(generation===connectGeneration&&!document.hidden&&!busy&&!reviewing()&&connected)loseConnection(error.name==='AbortError'?'Mista kontakten med kameraet. Koplar til på nytt …':error.message)}
+  }catch(error){if(generation===connectGeneration&&!document.hidden&&!busy&&!printBusy&&!reviewing()&&connected)loseConnection(error.name==='AbortError'?'Mista kontakten med kameraet. Koplar til på nytt …':error.message)}
 },10000);
 window.addEventListener('keydown',event=>{if(event.code==='Space'&&!event.repeat&&!onboarding.open&&!reviewing()&&!['INPUT','BUTTON','A'].includes(document.activeElement.tagName)){event.preventDefault();takePhoto()}});
 controls();if(entry.has('setup')){showOnboarding();void checkPhone()}connect();

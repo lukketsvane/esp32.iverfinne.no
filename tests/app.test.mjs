@@ -40,7 +40,7 @@ function harness(options={}){
     elements.set(element.id,element);
   }
   elements.get('progress').firstElementChild=new Element('','I');
-  Object.assign(elements.get('video'),{videoWidth:640,videoHeight:480,play:async()=>{},pause(){}});
+  Object.assign(elements.get('video'),{videoWidth:640,videoHeight:480,play:async()=>{if(options.play)await options.play(elements.get('video').srcObject)},pause(){}});
   const document={hidden:options.hidden??false,referrer:options.referrer??'http://192.168.4.1/',getElementById:id=>elements.get(id),addEventListener(name,callback){if(!events.has(name))events.set(name,[]);events.get(name).push(callback)},createElement(tag){
     const element=new Element('',tag.toUpperCase());
     if(tag==='canvas'){element.getContext=()=>({drawImage(){},getImageData:(x,y,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})});element.toBlob=(callback,type)=>options.toBlob?options.toBlob(callback,type):callback(new Blob(['camera-jpeg'],{type}))}
@@ -296,6 +296,45 @@ test('retrying an unreadable photo returns to the camera and the next photo need
 test('backgrounding releases the camera and returning resumes it without recapturing',async()=>{
   const app=harness();await app.get('capture-plane').emit('click');await app.visibility(true);assert.equal(app.stopped,1);assert.equal(app.mediaRequests,1);
   await app.visibility(false);assert.equal(app.mediaRequests,2);assert.equal(app.sceneCalls.length,0);assert.equal(app.get('studio').className,'studio camera');
+});
+
+test('returning during a pending camera permission request starts a new request and retires the old response',async()=>{
+  for(const failed of [false,true]){
+    const first=deferred(),second=deferred();let requests=0,oldStops=0;const app=harness({media:()=>++requests===1?first.promise:second.promise}),oldMedia={getTracks:()=>[{stop(){oldStops++}}]};
+    await app.get('capture-plane').emit('click');await app.visibility(true);await app.visibility(false);assert.equal(app.mediaRequests,2);assert.equal(app.get('studio').classList.contains('opening'),true);
+    if(failed)first.reject(new Error('late permission error'));else first.resolve(oldMedia);await app.tick(0);assert.equal(oldStops,failed?0:1);assert.equal(app.get('video').srcObject,null);assert.equal(app.get('studio').classList.contains('opening'),true);assert.equal(app.get('studio').className,'studio camera');await app.get('capture-plane').emit('click');assert.equal(app.mediaRequests,2);
+    second.resolve(app.media);await app.tick(0);assert.equal(app.get('video').srcObject,app.media);assert.equal(app.get('capture-plane').getAttribute('aria-label'),'Ta foto');assert.equal(app.get('studio').classList.contains('opening'),false);assert.equal(app.get('status').textContent,'');
+  }
+});
+
+test('a stale video play completion cannot block the resumed camera or clear its opening state',async()=>{
+  for(const failed of [false,true]){
+    const first=deferred(),second=deferred();let starts=0,plays=0,stops=0;const media=()=>({getTracks:()=>[{stop(){stops++}}]}),app=harness({media:async()=>{starts++;return media()},play:()=>++plays===1?first.promise:second.promise});
+    await app.get('capture-plane').emit('click');await app.visibility(true);assert.equal(stops,1);await app.visibility(false);assert.equal(starts,2);const current=app.get('video').srcObject;
+    if(failed)first.reject(new Error('old play failure'));else first.resolve();await app.tick(0);assert.equal(app.get('video').srcObject,current);assert.equal(app.get('studio').classList.contains('opening'),true);assert.equal(app.get('status').textContent,'');assert.equal(stops,1);await app.get('capture-plane').emit('click');assert.equal(starts,2);
+    second.resolve();await app.tick(0);assert.equal(app.get('video').srcObject,current);assert.equal(app.finders[0].source,app.get('video'));assert.equal(app.get('capture-plane').getAttribute('aria-label'),'Ta foto');assert.equal(app.get('studio').classList.contains('opening'),false);
+  }
+});
+
+test('backgrounding an encoding capture resumes the camera and keeps the cached photo, scene and tone',async()=>{
+  for(const persisted of [false,true]){
+    const callbacks=[];let disposed=0;const app=harness({image:1,toBlob:callback=>callbacks.push(callback),scene:async()=>({dispose(){disposed++}})});await photoFromDevice(app);const original=app.get('photo').src;app.changeStudio('image',0);app.gesturePhoto({grain:4,contrast:1.8});await app.get('reset').emit('click');await app.get('capture-plane').emit('click');await app.get('capture-plane').emit('click');assert.equal(callbacks.length,1);assert.equal(app.get('studio').className,'studio working');
+    if(persisted)await app.emit('pagehide',{persisted:true});else await app.visibility(true);assert.equal(app.get('studio').className,'studio camera');assert.equal(disposed,0);assert.equal(app.get('photo').src,original);
+    if(persisted)await app.emit('pageshow',{persisted:true});else await app.visibility(false);assert.equal(app.mediaRequests,2);assert.equal(app.get('video').srcObject,app.media);await app.get('capture-plane').emit('click');assert.equal(callbacks.length,2);
+    callbacks[0](new Blob(['old'],{type:'image/png'}));await app.tick(0);assert.equal(app.get('studio').className,'studio working');assert.equal(app.get('photo').src,original);assert.equal(disposed,0);
+    const fresh=new Blob(['new'],{type:'image/png'});callbacks[1](fresh);await app.tick(0);assert.equal(app.get('studio').className,'studio done');assert.equal(app.urls.get(app.get('photo').src),fresh);assert.equal(disposed,1);assert.deepEqual(app.photoViews[0].tone,{grain:4,contrast:1.8});assert.equal(app.sceneCalls.length,1);
+  }
+});
+
+test('a new incoming photo retires an unfinished capture without waiting for its encoder',async()=>{
+  let encoded;const app=harness({toBlob:callback=>encoded=callback});await app.get('capture-plane').emit('click');await app.get('capture-plane').emit('click');const fresh=await photoFromDevice(app,new Blob(['new'],{type:'image/png'})),url=app.get('photo').src;
+  assert.equal(app.get('studio').className,'studio done');assert.equal(app.photoViews[0].shown,true);assert.equal(app.get('save').hidden,false);encoded(new Blob(['old'],{type:'image/png'}));await app.tick(0);assert.equal(app.get('photo').src,url);assert.equal(app.urls.get(url),fresh);assert.equal(app.get('studio').className,'studio done');assert.equal(app.photoViews[0].sources.length,1);
+});
+
+test('late video play completion cannot revive the camera over a newly accepted photo',async()=>{
+  for(const failed of [false,true]){
+    const pending=deferred(),app=harness({play:()=>pending.promise});await app.get('capture-plane').emit('click');const blob=await photoFromDevice(app);if(failed)pending.reject(new Error('old play failed'));else pending.resolve();await app.tick(0);assert.equal(app.get('video').srcObject,null);assert.equal(app.get('studio').className,'studio done');assert.equal(app.get('status').textContent,'');assert.equal(app.finders[0].active,false);assert.equal(app.urls.get(app.get('photo').src),blob);assert.equal(app.mediaRequests,1);
+  }
 });
 
 test('an installed app starts its viewfinder while a hidden installation waits until visible',async()=>{

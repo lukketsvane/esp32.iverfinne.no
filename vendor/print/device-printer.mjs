@@ -19,7 +19,15 @@ export function createDevicePrinter({fetch:request=globalThis.fetch.bind(globalT
       if(!data||data.id!==id||!states.has(data.state)||!Number.isInteger(data.bytes)||!Number.isInteger(data.total)||data.bytes<0||data.bytes>data.total||data.total!==bytes.length||data.state==='sent'&&data.bytes!==data.total)throw new Error('Utskriftsstatusen kunne ikkje stadfestast.');
       return data;
     }
-    async function read(){const response=await fetch('/print-status?id='+id);if(!response.ok)throw new Error('Utskrifta kunne ikkje stadfestast. Prøv igjen.');return status(response.data)}
+    async function read(){
+      for(let attempt=0;attempt<3;attempt++){
+        let response;
+        try{response=await fetch('/print-status?id='+id)}catch(error){current();if(error instanceof SyntaxError||attempt===2)throw error}
+        if(response?.ok)return status(response.data);
+        if(response&&![408,429,500,502,503,504].includes(response.status)||attempt===2)throw new Error('Utskrifta kunne ikkje stadfestast. Prøv igjen.');
+        await wait();current();
+      }
+    }
     function wait(){return new Promise((resolve,reject)=>{let timer;const finish=error=>{clearTimeout(timer);task.signal.removeEventListener('abort',abort);wake=null;error?reject(error):resolve()},done=()=>finish(),abort=()=>finish(new DOMException('Avbrote.','AbortError'));wake=done;timer=setTimeout(done,interval);task.signal.addEventListener('abort',abort,{once:true})})}
     try{
       const latest=await fetch('/print-status');if(!latest.ok)throw new Error('Skrivaren kunne ikkje nåast. Prøv igjen.');const head=latest.data;

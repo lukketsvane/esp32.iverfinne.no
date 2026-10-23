@@ -671,6 +671,50 @@ test('native device printing holds capture and MJPEG until terminal while preser
   pending.resolve(true);await printing;assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.get('progress').hidden,true);assert.match(app.images[0].src,/\/stream/);assert.equal(app.opened.length,0);await app.get('last-photo').emit('click');assert.equal(app.get('photo').src,original);assert.equal(app.photoGestureState.scale,2);assert.equal(app.photoGestureState.x,20);
 });
 
+test('returning during native printing waits for terminal status before reconnecting the finder',async()=>{
+  const pending=deferred(),app=await connectedCamera({print:()=>pending.promise});
+  await app.get('capture-plane').emit('click');
+  const printing=app.get('print-photo').emit('click');await flush();
+  await app.get('close-photo').emit('click');
+  const statusReads=app.requests.filter(request=>request.url.startsWith('/status')).length;
+  app.document.hidden=true;await app.emit('visibilitychange');await app.emit('pagehide',{persisted:true});
+  app.document.hidden=false;await app.emit('visibilitychange');await app.emit('pageshow',{persisted:true});await app.emit('online');
+  await app.tick(10000);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/status')).length,statusReads);
+  assert.equal(app.images[0].src,'');assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.get('progress').hidden,false);
+  pending.resolve(true);await printing;await app.tick(150);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/status')).length,statusReads+1);
+  assert.match(app.images[0].src,/\/stream/);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.get('progress').hidden,true);
+  assert.equal(app.printCalls.length,1);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+});
+
+test('native printing ignores a stale heartbeat and does not poll camera health until terminal',async()=>{
+  const heartbeat=deferred(),pending=deferred();let statusReads=0;
+  const app=await connectedCamera({print:()=>pending.promise,fetch:url=>url.startsWith('/status')&&++statusReads===2?heartbeat.promise:undefined});
+  await app.get('capture-plane').emit('click');await app.get('close-photo').emit('click');await app.tick(10000);
+  await app.get('last-photo').emit('click');
+  const printing=app.get('print-photo').emit('click');await flush();await app.get('close-photo').emit('click');
+  heartbeat.reject(new Error('network suspended'));await app.tick(10000);
+  assert.equal(statusReads,2);assert.equal(app.get('notice').textContent,'');assert.equal(app.images[0].src,'');
+  pending.resolve(true);await printing;await app.tick(150);
+  assert.equal(statusReads,2);assert.match(app.images[0].src,/\/stream/);assert.equal(app.get('capture-plane').disabled,false);
+});
+
+for(const outcome of ['success','failure'])test(`native printing retires a pending camera reconnect before its late ${outcome}`,async()=>{
+  const reconnect=deferred(),pending=deferred();let statusReads=0;
+  const app=await connectedCamera({print:()=>pending.promise,fetch:url=>url.startsWith('/status')&&++statusReads===2?reconnect.promise:undefined});
+  await app.get('capture-plane').emit('click');await app.get('close-photo').emit('click');
+  app.document.hidden=true;await app.emit('visibilitychange');app.document.hidden=false;await app.emit('visibilitychange');
+  await app.get('last-photo').emit('click');
+  const printing=app.get('print-photo').emit('click');await flush();await app.get('close-photo').emit('click');
+  if(outcome==='success')reconnect.resolve(app.response({...verifiedStatus}));else reconnect.reject(new Error('stale camera reconnect'));
+  await app.tick(0);
+  assert.equal(app.get('notice').textContent,'');assert.equal(app.images[0].src,'');assert.equal(app.get('capture-plane').disabled,true);
+  pending.resolve(true);await printing;await app.tick(150);
+  assert.equal(statusReads,3);assert.equal(app.get('notice').textContent,'');assert.match(app.images[0].src,/\/stream/);assert.equal(app.get('capture-plane').disabled,false);
+  assert.equal(app.printCalls.length,1);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+});
+
 test('returning from working or failed splats measures photo framing after its full viewport is restored',async()=>{
   const pending=deferred(),app=await connectedCamera({scene:async()=>pending.promise});
   await app.get('capture-plane').emit('click');app.gesturePhoto({scale:2,x:33,y:-12});app.changeStudio('image',1);await app.tick(0);

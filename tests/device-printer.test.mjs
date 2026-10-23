@@ -52,8 +52,25 @@ test('response headers do not remove the deadline from a partial acceptance body
 
 test('a partial metadata or polling body fails within its deadline without another upload',async()=>{
   for(const partial of [1,3]){
-    const app=harness((path,init,index)=>index===partial?{ok:true,status:200,json:()=>new Promise(()=>{})}:index===1?head():state('queued'),{timeout:25});
-    const pending=assert.rejects(app.printer.print(random,bytes),/svara ikkje/);await app.advance(partial===1?25:525);await pending;assert.equal(app.requests.length,partial);assert.equal(app.requests.filter(item=>item.init.method==='POST').length,partial===1?0:1);app.printer.dispose();
+    const app=harness((path,init,index)=>index>=partial?{ok:true,status:200,json:()=>new Promise(()=>{})}:index===1?head():state('queued'),{timeout:25});
+    const pending=assert.rejects(app.printer.print(random,bytes),/svara ikkje/);await app.advance(partial===1?25:1575);await pending;assert.equal(app.requests.length,partial===1?1:5);assert.equal(app.requests.filter(item=>item.init.method==='POST').length,partial===1?0:1);app.printer.dispose();
+  }
+});
+
+test('transient status failures recover the accepted job without another upload',async()=>{
+  const app=harness((path,init,index)=>{if(index===1)return head();if(index===2)return state('queued');if(index===3)throw new TypeError('Network lost');if(index===4)return response(null,503);return state()});
+  const pending=app.printer.print(random,bytes);await app.advance(1500);assert.equal((await pending).state,'sent');assert.equal(app.requests.length,5);assert.ok(app.requests.slice(2).every(item=>item.path==='/print-status?id='+id));assert.equal(app.requests.filter(item=>item.init.method==='POST').length,1);app.printer.dispose();
+});
+
+test('persistent status failure stops after three reads and foreground return wakes a retry',async()=>{
+  const app=harness((path,init,index)=>index===1?head():index===2?state('queued'):response(null,503));
+  const pending=assert.rejects(app.printer.print(random,bytes),/ikkje stadfestast/);await app.advance(500);assert.equal(app.requests.length,3);await app.emit('pageshow',{persisted:true});assert.equal(app.requests.length,4);await app.advance(500);await pending;assert.equal(app.requests.length,5);assert.equal(app.requests.filter(item=>item.init.method==='POST').length,1);app.printer.dispose();
+});
+
+test('invalid polled status is rejected immediately without retrying or uploading again',async()=>{
+  for(const result of [response(null,404),state('sent',{id:random}),state('sent',{bytes:2})]){
+    const app=harness((path,init,index)=>index===1?head():index===2?state('queued'):result);
+    const pending=assert.rejects(app.printer.print(random,bytes),/ikkje stadfestast/);await app.advance(500);await pending;assert.equal(app.requests.length,3);assert.equal(app.requests.filter(item=>item.init.method==='POST').length,1);app.printer.dispose();
   }
 });
 

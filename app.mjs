@@ -10,7 +10,7 @@ import { createPrintClient } from './vendor/print-client.mjs';
 
 const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder=new Viewfinder($('viewfinder'));
 const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
-let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,generation=0,captureGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
+let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,generation=0,captureGeneration=0,cameraGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
 const photoView=createPhotoView(photo);
 const studioControls=attachStudioControls([$('studio')],(kind,level)=>{if(kind==='primitive')scene?.setPrimitiveLevel(level);else if(kind==='photo'){photoView.setStyle(level);finder.setStyle(level)}else if(kind==='image'&&mode!=='camera'){if(capturing)state('working');else if(photoReady){if(level===0||scene){state('done');if(level===1)scene?.refresh?.()}else void makeScene()}}},()=>true,()=>{pointer=null;lastTap=0});
 photoView.setStyle(studioControls.photo);finder.setStyle(studioControls.photo);
@@ -32,23 +32,23 @@ function state(next,message='',sceneFailure=false){
   $('capture-plane').setAttribute('aria-label',stream?'Ta foto':'Opne kameraet');
   finder.active=!reviewing&&!splatWorking&&!document.hidden;
 }
-function stopCamera(){stream?.getTracks().forEach(track=>track.stop());stream=null;video.pause();video.srcObject=null}
+function stopCamera(){++cameraGeneration;openingCamera=false;$('studio').classList.remove('opening');stream?.getTracks().forEach(track=>track.stop());stream=null;video.pause();video.srcObject=null}
 function clearScene(){task?.abort();task=null;scene?.dispose();scene=null;$('scene').replaceChildren()}
 function clearPhoto(){if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=null;photoBlob=null;photoReady=false;photo.removeAttribute('src');$('thumbnail').removeAttribute('src')}
 function progress(update){if(studioControls.image!==1||mode==='camera'||capturing)return;const known=Number.isFinite(update.percent);$('progress').classList.toggle('indeterminate',!known);$('progress').firstElementChild.style.width=known?Math.max(0,Math.min(100,update.percent))+'%':'';$('status').textContent=''}
 
 async function startCamera(){
-  if(openingCamera||stream||mode!=='camera')return;
-  const current=generation;openingCamera=true;$('studio').classList.add('opening');$('status').textContent='';
+  if(openingCamera||stream||mode!=='camera'||document.hidden)return;
+  const current=generation,attempt=++cameraGeneration;openingCamera=true;$('studio').classList.add('opening');$('status').textContent='';
   try{
     if(!navigator.mediaDevices?.getUserMedia)throw new Error('Kamera krev ein trygg HTTPS-nettlesar.');
     const media=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
-    if(current!==generation||mode!=='camera'||document.hidden){media.getTracks().forEach(track=>track.stop());return}
+    if(attempt!==cameraGeneration||current!==generation||mode!=='camera'||document.hidden){media.getTracks().forEach(track=>track.stop());return}
     stream=media;video.srcObject=media;await video.play();
-    if(current!==generation||mode!=='camera'||document.hidden)return;
+    if(attempt!==cameraGeneration||current!==generation||mode!=='camera'||document.hidden)return;
     finder.source=video;hadCamera=true;state('camera');
-  }catch(error){if(current===generation&&mode==='camera'&&!document.hidden){stopCamera();state('error',error.name==='NotAllowedError'?'Gi kameraet tilgang og prøv igjen.':error.message||'Kameraet kunne ikkje opnast.')}}
-  finally{openingCamera=false;$('studio').classList.remove('opening')}
+  }catch(error){if(attempt===cameraGeneration&&current===generation&&mode==='camera'&&!document.hidden){stopCamera();state('error',error.name==='NotAllowedError'?'Gi kameraet tilgang og prøv igjen.':error.message||'Kameraet kunne ikkje opnast.')}}
+  finally{if(attempt===cameraGeneration){openingCamera=false;$('studio').classList.remove('opening')}}
 }
 
 async function makeScene(){
@@ -66,14 +66,14 @@ async function makeScene(){
 
 async function acceptPhoto(blob,name='entropi.jpg'){
   if(!(blob instanceof Blob)||!blob.type.startsWith('image/')||!blob.size||blob.size>40*1024*1024){state('error','Kamerafotoet kunne ikkje lesast.');return}
-  const current=++generation;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
+  const current=++generation;++captureGeneration;capturing=false;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
   state('working');
   try{await photo.decode();if(current!==generation)return;photoView.setSource();photoReady=true;photoGestures.reset();if(studioControls.image===1)await makeScene();else state('done')}
   catch(error){if(current===generation)state('error',error.message||'Fotoet kunne ikkje lesast.')}
 }
 
 async function capture(){
-  if(mode!=='camera'||performance.now()<captureAfter)return;
+  if(mode!=='camera'||openingCamera||performance.now()<captureAfter)return;
   if(!stream){await startCamera();return}
   if(!video.videoWidth||video.readyState<2)return;
   const current=generation,captureId=++captureGeneration;let frame;
@@ -106,9 +106,10 @@ $('studio').addEventListener('pointermove',event=>{if(pointer&&Math.hypot(event.
 $('studio').addEventListener('contextmenu',event=>{if(!event.target.closest('button,a'))event.preventDefault()});
 window.addEventListener('message',event=>{if(event.source===window.opener&&allowedOrigins.has(event.origin)&&event.data?.type==='entropi-photo')void acceptPhoto(event.data.blob,typeof event.data.name==='string'?event.data.name:'entropi.jpg')});
 function resume(){finder.active=mode==='camera'&&!document.hidden;if(!document.hidden&&mode==='camera')void startCamera();else if(!document.hidden){if(studioControls.image===1)scene?.refresh?.();else photoGestures.refresh?.()}}
-document.addEventListener('visibilitychange',()=>{if(document.hidden){finder.active=false;stopCamera()}else resume()});
+function suspend(){stopCamera();if(capturing){++captureGeneration;capturing=false;state('camera')}finder.active=false;pointer=null;lastTap=0}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});
 window.addEventListener('pageshow',event=>{if(event.persisted)resume()});
 window.addEventListener('keydown',event=>{if(event.key==='Escape'&&mode!=='camera'){event.preventDefault();reset()}else if(event.code==='Space'&&!event.repeat&&!['INPUT','BUTTON','A'].includes(document.activeElement?.tagName)){event.preventDefault();if(mode==='camera')void capture()}});
-window.addEventListener('pagehide',event=>{stopCamera();finder.active=false;if(!event.persisted){++generation;clearTimeout(printTimer);clearScene();clearPhoto();finder.dispose();photoGestures.dispose();liveGestures.dispose();photoView.dispose();studioControls.dispose();printClient.dispose()}});
+window.addEventListener('pagehide',event=>{suspend();if(!event.persisted){++generation;clearTimeout(printTimer);clearScene();clearPhoto();finder.dispose();photoGestures.dispose();liveGestures.dispose();photoView.dispose();studioControls.dispose();printClient.dispose()}});
 try{const origin=new URL(document.referrer).origin;if(window.opener&&allowedOrigins.has(origin))window.opener.postMessage({type:'entropi-ready'},origin)}catch{}
 if(!document.hidden&&(navigator.standalone||globalThis.matchMedia?.('(display-mode: standalone)')?.matches))void startCamera();
