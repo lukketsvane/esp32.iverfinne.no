@@ -14,14 +14,16 @@ function harness(options={}){
   return {image,control,changes,events,captured,rect,emit,pinch,three,moveThree,release,disable(){enabled=false},enable(){enabled=true}};
 }
 
-test('photo pinch preserves its focal point and single-finger pan stays within the photograph',()=>{
-  const app=harness();app.pinch();assert.equal(app.control.state.scale,3);assert.ok(Math.abs(app.control.state.x-90)<1e-9);
-  app.emit('pointerup',2,300,422);app.emit('pointermove',1,2000,2000);assert.equal(app.control.state.x,390);assert.equal(app.control.state.y,0);assert.match(app.image.style.transform,/scale\(3\)/);app.control.dispose();
+test('photo pinch and single-finger drag cannot zoom or move the photograph',()=>{
+  const app=harness();app.control.refresh();const before={...app.control.state};app.pinch();assert.deepEqual(app.control.state,before);
+  const move=app.emit('pointermove',2,800,100);assert.equal(move.prevented,true);assert.equal(move.stopped,true);
+  app.emit('pointerup',2,800,100);app.emit('pointermove',1,2000,2000);assert.deepEqual(app.control.state,before);assert.equal(app.image.style.transform,'');app.control.dispose();
 });
 
-test('pinching back to the base size restores the untransformed photo',()=>{
-  const app=harness();app.pinch();app.emit('pointermove',1,100,422);app.emit('pointermove',2,200,422);
-  assert.equal(app.control.state.scale,1);assert.equal(app.control.state.x,0);assert.equal(app.image.style.transform,'');app.control.dispose();
+test('repeated pinches cannot change the crop, tone or source dimensions',()=>{
+  const app=harness();app.control.refresh();const before={...app.control.state},changes=app.changes.length;
+  for(let i=0;i<4;i++){app.pinch();app.emit('pointermove',1,100,422);app.emit('pointermove',2,200,422);app.release()}
+  assert.deepEqual(app.control.state,before);assert.equal(app.changes.length,changes);assert.equal(app.image.naturalWidth,1920);assert.equal(app.image.naturalHeight,1080);assert.equal(app.image.style.transform,'');app.control.dispose();
 });
 
 test('recenter clears framing and active fingers while preserving photo tone and image data',()=>{
@@ -31,7 +33,7 @@ test('recenter clears framing and active fingers while preserving photo tone and
 });
 
 test('three-finger tone adjustment respects the deadzone and locks its first axis without changing framing',()=>{
-  const app=harness();app.pinch();app.release();app.control.state.grain=4;const before={scale:app.control.state.scale,x:app.control.state.x,y:app.control.state.y},transform=app.image.style.transform;
+  const app=harness();app.control.refresh();app.pinch();app.release();app.control.state.grain=4;const before={scale:app.control.state.scale,x:app.control.state.x,y:app.control.state.y},transform=app.image.style.transform;
   app.three();app.moveThree(6,6);assert.equal(app.control.state.contrast,1);assert.equal(app.control.state.grain,4);
   app.moveThree(50,3);assert.ok(app.control.state.contrast>1);const contrast=app.control.state.contrast;
   app.moveThree(50,400);assert.equal(app.control.state.contrast,contrast);assert.equal(app.control.state.grain,4);
@@ -45,10 +47,10 @@ test('up is finer, down is coarser and contrast/grain stay inside their supporte
   app.release();app.three();app.moveThree(3000,0);assert.equal(app.control.state.contrast,3);app.moveThree(-3000,0);assert.equal(app.control.state.contrast,.5);assert.equal(app.control.state.grain,1);app.control.dispose();
 });
 
-test('three to two to one fingers resume pinch and pan without carrying tone-axis state',()=>{
+test('three to two to one fingers keep the photo fixed without carrying tone-axis state',()=>{
   const app=harness();app.control.refresh();app.three();app.moveThree(45,0);const contrast=app.control.state.contrast;
-  app.emit('pointerup',3,195,500);app.emit('pointermove',1,100,422);assert.ok(app.control.state.scale>1);assert.equal(app.control.state.contrast,contrast);assert.equal(app.control.state.grain,1);
-  app.emit('pointerup',2,245,422);const before=app.control.state.x;app.emit('pointermove',1,110,422);assert.ok(app.control.state.x>before);assert.equal(app.control.state.contrast,contrast);app.control.dispose();
+  app.emit('pointerup',3,195,500);app.emit('pointermove',1,100,422);assert.equal(app.control.state.scale,1);assert.equal(app.control.state.contrast,contrast);assert.equal(app.control.state.grain,1);
+  app.emit('pointerup',2,245,422);app.emit('pointermove',1,110,422);assert.equal(app.control.state.x,0);assert.equal(app.control.state.y,0);assert.equal(app.image.style.transform,'');assert.equal(app.control.state.contrast,contrast);app.control.dispose();
 });
 
 test('a fourth finger and disabled or mouse input cannot mutate photo framing or tone',()=>{
@@ -57,11 +59,11 @@ test('a fourth finger and disabled or mouse input cannot mutate photo framing or
 });
 
 
-test('hidden layout cannot erase retained pan and reopening remeasures the viewport',()=>{
-  const app=harness();app.pinch();const before={...app.control.state};app.rect.width=app.rect.height=0;app.control.refresh();assert.deepEqual(app.control.state,before);
-  app.rect.width=390;app.rect.height=700;app.control.refresh();assert.equal(app.control.state.height,700);assert.equal(app.control.state.x,before.x);app.control.dispose();
+test('hidden layout retains tone and reopening remeasures the fixed viewport',()=>{
+  const app=harness();app.control.refresh();app.control.state.grain=4;app.control.state.contrast=2;const before={...app.control.state};app.rect.width=app.rect.height=0;app.control.refresh();assert.deepEqual(app.control.state,before);
+  app.rect.width=390;app.rect.height=700;app.control.refresh();assert.equal(app.control.state.height,700);assert.equal(app.control.state.x,0);assert.equal(app.control.state.scale,1);assert.equal(app.control.state.grain,4);assert.equal(app.control.state.contrast,2);app.control.dispose();
 });
 
 test('live tone gestures leave one- and two-finger input untransformed and require three fingers to adjust',()=>{
-  const app=harness({toneOnly:true});app.image.style.transform='unchanged';app.emit('pointerdown',1,100,422);assert.equal(app.emit('pointermove',1,150,422).prevented,false);app.emit('pointerdown',2,200,422);app.emit('pointermove',2,350,422);assert.equal(app.control.state.scale,1);assert.equal(app.changes.length,0);app.release();app.three();assert.equal(app.changes.length,1);app.moveThree(50,0);assert.ok(app.control.state.contrast>1);assert.equal(app.control.state.grain,1);assert.equal(app.image.style.transform,'unchanged');app.emit('pointerup',3,200,500);app.emit('pointermove',2,500,422);assert.equal(app.control.state.scale,1);assert.equal(app.image.style.transform,'unchanged');app.control.dispose();assert.equal(app.image.style.transform,'unchanged');assert.equal(app.captured.size,0);
+  const app=harness({toneOnly:true});app.control.refresh();const changes=app.changes.length;app.emit('pointerdown',1,100,422);assert.equal(app.emit('pointermove',1,150,422).prevented,false);app.emit('pointerdown',2,200,422);app.emit('pointermove',2,350,422);assert.equal(app.control.state.scale,1);assert.equal(app.changes.length,changes);app.release();app.three();assert.equal(app.changes.length,changes+1);app.moveThree(50,0);assert.ok(app.control.state.contrast>1);assert.equal(app.control.state.grain,1);assert.equal(app.image.style.transform,'');app.emit('pointerup',3,200,500);app.emit('pointermove',2,500,422);assert.equal(app.control.state.scale,1);assert.equal(app.image.style.transform,'');app.control.dispose();assert.equal(app.image.style.transform,'');assert.equal(app.captured.size,0);
 });

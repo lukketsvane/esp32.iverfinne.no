@@ -35,8 +35,9 @@ function renderScene(host, cloud, bytes, signal) {
   const points=new Float32Array(cloud.count*8),depths=new Float32Array(cloud.count),indices=Uint32Array.from(progressiveIndices(cloud.count)),view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),colors=new Float32Array(cloud.count*4),rotation=new Float32Array(9);
   let order=indices.slice();
   for(let i=0;i<cloud.count;i++){const color=nearestC64(bytes[i*32+24],bytes[i*32+25],bytes[i*32+26]);for(let c=0;c<3;c++)colors[i*4+c]=color[c]/255;colors[i*4+3]=bytes[i*32+27]/255}
-  const pointers=new Map(),focal=1/Math.tan(24*Math.PI/180),distance=Math.max(.3,cloud.radius*2.8),near=.01,far=Math.max(100,distance*20);
-  let canvas=null,gpu=null,gestures=null,observer=null,yaw=0,pitch=0,zoom=1,panX=0,panY=0,pointScale=1,opacity=1,density=1,definition=.5,frame=0,disposed=false,primitiveLevel=0,targetWidth=0,targetHeight=0,geometryDirty=true,uploadDirty=true,needsGPU=false,reveal=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches?1:0,revealAt=null;
+  const pointers=new Map(),focal=1/Math.tan(24*Math.PI/180),initialYaw=-Math.atan(.16),initialPitch=Math.atan(.045/Math.hypot(.16,1)),near=.01,far=Math.max(100,cloud.radius*1000);
+  const fitDistance=(width,height)=>Math.max(.3,cloud.radius/Math.sin(Math.atan(Math.min(1,width/height)/focal))*1.08);
+  let canvas=null,gpu=null,gestures=null,observer=null,yaw=initialYaw,pitch=initialPitch,zoom=1,panX=0,panY=0,pointScale=1,opacity=1,density=1,definition=.5,frame=0,disposed=false,primitiveLevel=0,targetWidth=0,targetHeight=0,geometryDirty=true,uploadDirty=true,needsGPU=false,reveal=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches?1:0,revealAt=null;
   function createGPU(next){
     const gl=next.getContext('webgl',{alpha:false,antialias:false});
     if(!gl)throw new Error('3D-vising er ikkje tilgjengeleg på telefonen.');
@@ -88,7 +89,7 @@ function renderScene(host, cloud, bytes, signal) {
       initialDensity:density,
       onRotate:rotate,
       onTransform(dx,dy,scale,focusX,focusY){
-        const width=Math.max(1,canvas.clientWidth),height=Math.max(1,canvas.clientHeight),pixelsToWorld=2/(focal*Math.min(1,width/height)*height),before=distance/zoom*pixelsToWorld,nextZoom=Math.max(.4,Math.min(3,zoom*scale)),after=distance/nextZoom*pixelsToWorld;
+        const width=Math.max(1,canvas.clientWidth),height=Math.max(1,canvas.clientHeight),pixelsToWorld=2/(focal*height),distance=fitDistance(width,height),before=distance/zoom*pixelsToWorld,nextZoom=Math.max(.4,Math.min(3,zoom*scale)),after=distance/nextZoom*pixelsToWorld;
         panX+=dx*before-(focusX-width/2)*(before-after);panY-=dy*before-(focusY-height/2)*(before-after);zoom=nextZoom;redraw();
       },
       onDensity(value){density=value;const count=Math.max(1,Math.min(cloud.count,Math.round(cloud.count*value)));if(count!==order.length){order=indices.slice(0,count);geometryDirty=true;redraw()}},
@@ -127,7 +128,7 @@ function renderScene(host, cloud, bytes, signal) {
     for(const [at,count,offset] of attributes){gl.enableVertexAttribArray(at);gl.vertexAttribPointer(at,count,gl.FLOAT,false,32,offset)}
     if(geometryDirty)rebuildPoints();
     if(uploadDirty){gl.bufferData(gl.ARRAY_BUFFER,points.subarray(0,order.length*8),gl.DYNAMIC_DRAW);uploadDirty=false}
-    gl.uniformMatrix3fv(uniforms.uRotation,false,rotation);gl.uniform1f(uniforms.uFocal,focal*Math.min(1,width/height));gl.uniform1f(uniforms.uDistance,distance/zoom);gl.uniform1f(uniforms.uAspect,width/height);gl.uniform1f(uniforms.uHeight,size.height);gl.uniform2f(uniforms.uPan,panX,panY);gl.uniform1f(uniforms.uPointScale,pointScale);gl.uniform1f(uniforms.uOpacity,opacity);gl.uniform1f(uniforms.uReveal,1/cloud.count+(1-1/cloud.count)*reveal**6);
+    gl.uniformMatrix3fv(uniforms.uRotation,false,rotation);gl.uniform1f(uniforms.uFocal,focal);gl.uniform1f(uniforms.uDistance,fitDistance(width,height)/zoom);gl.uniform1f(uniforms.uAspect,width/height);gl.uniform1f(uniforms.uHeight,size.height);gl.uniform2f(uniforms.uPan,panX,panY);gl.uniform1f(uniforms.uPointScale,pointScale);gl.uniform1f(uniforms.uOpacity,opacity);gl.uniform1f(uniforms.uReveal,1/cloud.count+(1-1/cloud.count)*reveal**6);
     gl.clear(gl.COLOR_BUFFER_BIT);gl.drawArrays(gl.POINTS,0,order.length);
     if(primitiveLevel){
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,width,height);gl.disable(gl.BLEND);gl.useProgram(screenProgram);gl.bindBuffer(gl.ARRAY_BUFFER,screenBuffer);for(const [at] of attributes)gl.disableVertexAttribArray(at);gl.enableVertexAttribArray(screenPosition);gl.vertexAttribPointer(screenPosition,2,gl.FLOAT,false,0,0);
@@ -145,7 +146,7 @@ function renderScene(host, cloud, bytes, signal) {
   const lost=event=>{event.preventDefault();canvas.dispatchEvent(new Event('pointercancel',{bubbles:true}));needsGPU=true;revealAt=null;cancelAnimationFrame(frame);frame=0;redraw()};
   const listeners=[['pointerdown',down],['pointermove',move],['pointerup',up],['pointercancel',up],['lostpointercapture',up],['wheel',wheel],['webglcontextlost',lost]];
   function dispose(){if(disposed)return;disposed=true;cancelAnimationFrame(frame);observer?.disconnect();signal.removeEventListener('abort',dispose);releaseGPU()}
-  const api={dispose,onError:null,refresh(){if(disposed)return false;if(needsGPU&&!recover())return false;redraw();return true},resetView(){geometryDirty||=!!yaw||!!pitch;yaw=pitch=panX=panY=0;zoom=1;api.refresh()},snapshot(native=false){
+  const api={dispose,onError:null,refresh(){if(disposed)return false;if(needsGPU&&!recover())return false;redraw();return true},resetView(){geometryDirty||=yaw!==initialYaw||pitch!==initialPitch;yaw=initialYaw;pitch=initialPitch;panX=panY=0;zoom=1;api.refresh()},snapshot(native=false){
     if(disposed)throw new Error('Scena er lukka.');
     if(needsGPU&&!recover())throw new Error('3D-visinga er avbroten. Prøv igjen.');
     reveal=1;revealAt=null;cancelAnimationFrame(frame);frame=0;draw(performance.now(),true);

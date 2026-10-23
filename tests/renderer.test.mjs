@@ -51,9 +51,15 @@ test('pan, zoom, definition, resize and palette changes reuse the sorted point b
 });
 
 test('context loss rebuilds from cached points and preserves camera, density, definition and style',()=>{
-  const app=harness();app.viewer.setPrimitiveLevel(2);three(app,'y',90);three(app,'x',30);app.canvas.emit('wheel',{deltaY:60});app.canvas.emit('pointerdown',{pointerType:'mouse'});app.canvas.emit('pointermove',{pointerType:'mouse',clientX:130,clientY:110});app.canvas.emit('pointerup',{pointerType:'mouse'});app.flush();
+  const app=harness(),initial=state(app);app.viewer.setPrimitiveLevel(2);three(app,'y',90);three(app,'x',30);app.canvas.emit('wheel',{deltaY:60});app.canvas.emit('pointerdown',{pointerType:'mouse'});app.canvas.emit('pointermove',{pointerType:'mouse',clientX:130,clientY:110});app.canvas.emit('pointerup',{pointerType:'mouse'});app.flush();
   const before=state(app),old=app.canvas,sorts=app.sorts,uploads=app.uploads;old.gl.getExtension().loseContext();app.flush();assert.notEqual(app.canvas,old);assert.deepEqual(state(app),before);assert.equal(app.sorts,sorts);assert.equal(app.uploads,uploads+1);assert.equal(app.gl.draws.at(-1).mode,app.gl.TRIANGLE_STRIP);
-  app.viewer.resetView();app.flush();const reset=state(app);assert.deepEqual(reset.rotation.map(value=>value||0),[1,0,0,0,1,0,0,0,1]);assert.deepEqual(reset.pan,[0,0]);assert.equal(reset.distance,2.8);for(const key of ['count','pointScale','opacity'])assert.equal(reset[key],before[key]);assert.equal(app.gl.draws.at(-1).mode,app.gl.TRIANGLE_STRIP);app.viewer.dispose();
+  app.viewer.resetView();app.flush();const reset=state(app);assert.deepEqual(reset.rotation,initial.rotation);assert.deepEqual(reset.pan,[0,0]);assert.equal(reset.distance,initial.distance);for(const key of ['count','pointScale','opacity'])assert.equal(reset[key],before[key]);assert.equal(app.gl.draws.at(-1).mode,app.gl.TRIANGLE_STRIP);app.viewer.dispose();
+});
+
+test('the initial camera matches the reference 48 degree sphere fit and slight viewing angle in both orientations',()=>{
+  const app=harness(),initial=state(app),focal=1/Math.tan(24*Math.PI/180),direction=[.16,.045,1],length=Math.hypot(...direction),rotation=initial.rotation;
+  const transformed=[0,1,2].map(row=>direction.reduce((sum,value,column)=>sum+value*rotation[column*3+row],0)/length);assert.ok(Math.abs(transformed[0])<1e-7&&Math.abs(transformed[1])<1e-7&&Math.abs(transformed[2]-1)<1e-7);
+  for(const [width,height]of [[390,844],[844,390]]){app.host.clientWidth=width;app.host.clientHeight=height;app.viewer.refresh();app.flush();const uniforms=app.gl.uniforms,halfAngle=Math.min(24*Math.PI/180,Math.atan(Math.tan(24*Math.PI/180)*width/height));assert.equal(uniforms.uFocal,focal);assert.ok(Math.abs(uniforms.uDistance-1.08/Math.sin(halfAngle))<1e-12);assert.deepEqual(uniforms.uRotation,initial.rotation)}app.viewer.dispose();
 });
 
 test('failed automatic GPU recovery reports the error and an explicit refresh can retry without new geometry',()=>{

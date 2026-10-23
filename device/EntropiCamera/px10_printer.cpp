@@ -401,8 +401,19 @@ void scanParameters() {
 void initializeBle() {
   Serial.printf("Printer BLE init: internal free=%u largest=%u\n", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
   bool good = btStartMode(BT_MODE_BLE);
-  if (good && esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_UNINITIALIZED) good = esp_bluedroid_init() == ESP_OK;
-  if (good && esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_INITIALIZED) good = esp_bluedroid_enable() == ESP_OK;
+  size_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  size_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  constexpr size_t hostStacks = CONFIG_BT_BTC_TASK_STACK_SIZE + CONFIG_BT_BTU_TASK_STACK_SIZE;
+  constexpr size_t largestStack = CONFIG_BT_BTC_TASK_STACK_SIZE > CONFIG_BT_BTU_TASK_STACK_SIZE ? CONFIG_BT_BTC_TASK_STACK_SIZE : CONFIG_BT_BTU_TASK_STACK_SIZE;
+  good = good && psramFound() && freeInternal >= hostStacks + 8192 && largestInternal >= largestStack + 512;
+  Serial.printf("Printer BLE controller: %s internal=%u largest=%u psram=%u\n", good ? "ready" : "memory guard", static_cast<unsigned>(freeInternal), static_cast<unsigned>(largestInternal), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+  if (good) {
+    heap_caps_malloc_extmem_enable(0);
+    if (esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_UNINITIALIZED) good = esp_bluedroid_init() == ESP_OK;
+    if (good && esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_INITIALIZED) good = esp_bluedroid_enable() == ESP_OK;
+    heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
+    Serial.printf("Printer BLE host: %s internal=%u largest=%u psram=%u\n", good ? "ready" : "failed", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+  }
   if (good) good = esp_ble_gap_register_callback(gapCallback) == ESP_OK && esp_ble_gattc_register_callback(gattCallback) == ESP_OK && esp_ble_gatt_set_local_mtu(185) == ESP_OK;
   setPhase(Phase::REGISTER, 5000);
   if (good) good = esp_ble_gattc_app_register(appId) == ESP_OK;
