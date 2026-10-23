@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
-const photo=(await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8')).replace(/^export /gm,''),view=(await readFile(new URL('../vendor/photo-view.mjs',import.meta.url),'utf8')).replace(/^import .*\n/,'').replace(/^export /gm,'');
+const colors=(await readFile(new URL('../vendor/color-schemes.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
+const photo=(await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8')).replace(/^export /gm,''),view=(await readFile(new URL('../vendor/photo-view.mjs',import.meta.url),'utf8')).replace(/^import .*\r?\n/gm,'').replace(/^export /gm,'');
 function harness(width=16,height=12,pixels){
   const frames=new Map(),canvases=[];let serial=0,draws=0,writes=0;
   const document={createElement(){
@@ -25,7 +26,7 @@ function harness(width=16,height=12,pixels){
   }};
   const image={ownerDocument:document,naturalWidth:width,naturalHeight:height,src:'blob:original-jpeg',style:{opacity:'',transform:'translate(0px, 0px) scale(1)'},pixels:pixels||new Uint8ClampedArray(width*height*4).fill(255),after(canvas){this.next=canvas}};
   const context=vm.createContext({document,Uint8ClampedArray,Float32Array,Math,Number,Boolean,Error,requestAnimationFrame(callback){frames.set(++serial,callback);return serial},cancelAnimationFrame(id){frames.delete(id)}});
-  vm.runInContext(photo+'\n'+view,context);
+  vm.runInContext(colors+'\n'+photo+'\n'+view,context);
   return {image,view:context.createPhotoView(image),process:context.processPhoto,canvas:()=>image.next,canvases,flush(){for(const [id,callback]of [...frames]){frames.delete(id);callback()}},get pending(){return frames.size},get draws(){return draws},get writes(){return writes}};
 }
 function gray(width,height,value=(x,y)=>(x*19+y*31)%256){const data=new Uint8ClampedArray(width*height*4);for(let y=0;y<height;y++)for(let x=0;x<width;x++){const i=(y*width+x)*4;data[i]=data[i+1]=data[i+2]=typeof value==='function'?value(x,y):value;data[i+3]=255}return data}
