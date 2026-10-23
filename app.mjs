@@ -4,6 +4,7 @@ import { attachStudioControls } from './vendor/studio.mjs';
 import { snapshotBlob, savePhoto } from './vendor/photo.mjs';
 import { attachPhotoGestures } from './vendor/photo-gestures.mjs';
 import { createPhotoView } from './vendor/photo-view.mjs';
+import { attachColorSchemeControls,readColorScheme,saveColorScheme } from './vendor/color-schemes.mjs';
 import { PX10Printer } from './vendor/print/printer.mjs';
 import { cloudPrintJob } from './vendor/print/cloud-raster.mjs';
 import { createPrintClient } from './vendor/print-client.mjs';
@@ -12,8 +13,14 @@ const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder
 const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,generation=0,captureGeneration=0,cameraGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
 const photoView=createPhotoView(photo);
-const studioControls=attachStudioControls([$('studio')],(kind,level)=>{if(kind==='primitive')scene?.setPrimitiveLevel(level);else if(kind==='photo'){photoView.setStyle(level);finder.setStyle(level)}else if(kind==='image'&&mode!=='camera'){if(capturing)state('working');else if(photoReady){if(level===0||scene){state('done');if(level===1)scene?.refresh?.()}else void makeScene()}}},()=>true,()=>{pointer=null;lastTap=0});
+const paletteSelection={photo:readColorScheme('photo'),depth:readColorScheme('depth')};
+const studioControls=attachStudioControls([$('studio')],(kind,level)=>{if(kind==='primitive')scene?.setPrimitiveLevel(level);else if(kind==='photo'){photoView.setStyle(level);finder.setStyle(level)}else if(kind==='image'){paletteControls.refresh();if(mode!=='camera'){if(capturing)state('working');else if(photoReady){if(level===0||scene){state('done');if(level===1)scene?.refresh?.()}else void makeScene()}}}},()=>true,()=>{pointer=null;lastTap=0});
+const paletteControls=attachColorSchemeControls([$('studio')],()=>mode==='camera'||studioControls.image===0?'photo':'depth',kind=>paletteSelection[kind],(kind,id)=>{
+  paletteSelection[kind]=id;saveColorScheme(kind,id);
+  if(kind==='photo'){photoView.setPalette(id);finder.setPalette(id)}else scene?.setPalette(id);
+});
 photoView.setStyle(studioControls.photo);finder.setStyle(studioControls.photo);
+photoView.setPalette(paletteSelection.photo);finder.setPalette(paletteSelection.photo);
 const photoGestures=attachPhotoGestures(photo,{enabled:()=>mode==='done'&&studioControls.image===0,onChange:pose=>{photoView.setTone(pose);finder.setTone(pose);Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter()}});
 const liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>mode==='camera'&&studioControls.image===0,onChange:pose=>{captureAfter=performance.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
 function updateRecenter(){$('recenter').hidden=mode!=='done'||(studioControls.image===0?photoGestures.state.scale<=1:!scene)}
@@ -21,7 +28,7 @@ function printFeedback(message){clearTimeout(printTimer);$('print-status').textC
 const printClient=createPrintClient({printer:new PX10Printer(),buildJob:cloudPrintJob,report:printFeedback});
 
 function state(next,message='',sceneFailure=false){
-  mode=next;retryScene=next==='error'&&sceneFailure;$('studio').className='studio '+next;$('status').textContent=message;
+  mode=next;paletteControls.refresh();retryScene=next==='error'&&sceneFailure;$('studio').className='studio '+next;$('status').textContent=message;
   const reviewing=next!=='camera'&&!capturing&&!!photoBlob,splats=reviewing&&next==='done'&&studioControls.image===1&&scene,showPhoto=reviewing&&next==='done'&&studioControls.image===0&&photoReady,splatWorking=next==='working'&&studioControls.image===1;
   $('finder').classList.toggle('hidden',reviewing||splatWorking);photo.hidden=!showPhoto;$('scene').classList.toggle('hidden',!splats);$('progress').hidden=next!=='working';
   $('capture-plane').hidden=next!=='camera';$('retry').hidden=next!=='error';$('reset').hidden=next==='camera';$('save').hidden=!showPhoto&&!splats;$('last-photo').hidden=next!=='camera'||!photoReady;$('print').hidden=!showPhoto&&!splats;
@@ -59,7 +66,7 @@ async function makeScene(){
   try{
     const result=await createDepthScene($('scene'),blob,update=>{if(current===generation)progress(update)},processing.signal);
     if(current!==generation||blob!==photoBlob){result.dispose();return}
-    scene=result;scene.onError=error=>{if(scene===result&&studioControls.image===1&&mode!=='camera'&&!capturing)state('error',error.message,true)};scene.setPrimitiveLevel(studioControls.primitive);if(mode!=='camera'&&!capturing)state('done');
+    scene=result;scene.onError=error=>{if(scene===result&&studioControls.image===1&&mode!=='camera'&&!capturing)state('error',error.message,true)};scene.setPrimitiveLevel(studioControls.primitive);scene.setPalette(paletteSelection.depth);if(mode!=='camera'&&!capturing)state('done');
   }catch(error){if(!processing.signal.aborted&&current===generation&&studioControls.image===1&&mode!=='camera'&&!capturing)state('error',error.message||'Kunne ikkje lage splats.',true)}
   finally{if(task===processing)task=null}
 }
@@ -110,6 +117,6 @@ function suspend(){stopCamera();if(capturing){++captureGeneration;capturing=fals
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});
 window.addEventListener('pageshow',event=>{if(event.persisted)resume()});
 window.addEventListener('keydown',event=>{if(event.key==='Escape'&&mode!=='camera'){event.preventDefault();reset()}else if(event.code==='Space'&&!event.repeat&&!['INPUT','BUTTON','A'].includes(document.activeElement?.tagName)){event.preventDefault();if(mode==='camera')void capture()}});
-window.addEventListener('pagehide',event=>{suspend();if(!event.persisted){++generation;clearTimeout(printTimer);clearScene();clearPhoto();finder.dispose();photoGestures.dispose();liveGestures.dispose();photoView.dispose();studioControls.dispose();printClient.dispose()}});
+window.addEventListener('pagehide',event=>{suspend();if(!event.persisted){++generation;clearTimeout(printTimer);clearScene();clearPhoto();finder.dispose();photoGestures.dispose();liveGestures.dispose();photoView.dispose();studioControls.dispose();paletteControls.dispose();printClient.dispose()}});
 try{const origin=new URL(document.referrer).origin;if(window.opener&&allowedOrigins.has(origin))window.opener.postMessage({type:'entropi-ready'},origin)}catch{}
 if(!document.hidden&&(navigator.standalone||globalThis.matchMedia?.('(display-mode: standalone)')?.matches))void startCamera();
