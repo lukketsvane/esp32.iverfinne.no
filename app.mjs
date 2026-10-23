@@ -13,6 +13,8 @@ const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder
 const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,generation=0,captureGeneration=0,cameraGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
 const photoView=createPhotoView(photo);
+let pixelSize=1;
+try{const stored=Number(globalThis.localStorage?.getItem('entropi-pixel-size-v1'));if(Number.isFinite(stored)&&stored>=1&&stored<=8)pixelSize=stored}catch{}
 const paletteSelection={photo:readColorScheme('photo'),depth:readColorScheme('depth')};
 const profileIndex=kind=>Math.max(0,COLOR_SCHEMES.findIndex(scheme=>scheme.id===paletteSelection[kind]));
 const studioControls=attachStudioControls([$('studio')],(kind,level)=>{
@@ -28,13 +30,22 @@ const studioControls=attachStudioControls([$('studio')],(kind,level)=>{
 },()=>true,()=>{pointer=null;lastTap=0},{photo:profileIndex('photo'),primitive:profileIndex('depth')});
 photoView.setStyle(COLOR_SCHEMES[studioControls.photo].style);finder.setStyle(COLOR_SCHEMES[studioControls.photo].style);
 photoView.setPalette(paletteSelection.photo);finder.setPalette(paletteSelection.photo);
-const photoGestures=attachPhotoGestures(photo,{enabled:()=>mode==='done'&&studioControls.image===0,onChange:pose=>{photoView.setTone(pose);finder.setTone(pose);Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter()}});
-const liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>mode==='camera'&&studioControls.image===0,onChange:pose=>{captureAfter=performance.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
+function sizeGesture(){pointer=null;lastTap=0;captureAfter=performance.now()+400}
+function applyPixelSize(value){
+  const next=Number.isFinite(value)?Math.max(1,Math.min(8,value)):pixelSize,changed=next!==pixelSize;pixelSize=next;
+  photoGestures.state.grain=liveGestures.state.grain=pixelSize;
+  photoView.setTone({grain:pixelSize});finder.setTone({grain:pixelSize});scene?.setPixelSize(pixelSize);
+  if(changed)try{globalThis.localStorage?.setItem('entropi-pixel-size-v1',String(pixelSize))}catch{}
+}
+const photoGestures=attachPhotoGestures(photo,{enabled:()=>!document.hidden&&mode==='done'&&studioControls.image===0,onGesture:sizeGesture,onChange:pose=>{applyPixelSize(pose.grain);photoView.setTone(pose);finder.setTone(pose);liveGestures.state.contrast=pose.contrast;photoView.refresh();updateRecenter()}});
+const liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>!document.hidden&&mode==='camera',onGesture:sizeGesture,onChange:pose=>{captureAfter=performance.now()+400;applyPixelSize(pose.grain);photoGestures.state.contrast=pose.contrast;photoView.setTone(pose);finder.setTone(pose)}});
+applyPixelSize(pixelSize);
 function updateRecenter(){$('recenter').hidden=mode!=='done'||(studioControls.image===0?photoGestures.state.scale<=1:!scene)}
 function printFeedback(message){clearTimeout(printTimer);$('print-status').textContent=message;printTimer=setTimeout(()=>{$('print-status').textContent=''},6000)}
 const printClient=createPrintClient({printer:new PX10Printer(),buildJob:cloudPrintJob,report:printFeedback});
 
 function state(next,message='',sceneFailure=false){
+  photoGestures.cancel?.();liveGestures.cancel?.();scene?.cancelGestures?.();
   mode=next;retryScene=next==='error'&&sceneFailure;$('studio').className='studio '+next;$('status').textContent=message;
   const reviewing=next!=='camera'&&!capturing&&!!photoBlob,splats=reviewing&&next==='done'&&studioControls.image===1&&scene,showPhoto=reviewing&&next==='done'&&studioControls.image===0&&photoReady,splatWorking=next==='working'&&studioControls.image===1;
   $('finder').classList.toggle('hidden',reviewing||splatWorking);photo.hidden=!showPhoto;$('scene').classList.toggle('hidden',!splats);$('progress').hidden=next!=='working';
@@ -73,7 +84,7 @@ async function makeScene(){
   try{
     const result=await createDepthScene($('scene'),blob,update=>{if(current===generation)progress(update)},processing.signal);
     if(current!==generation||blob!==photoBlob){result.dispose();return}
-    scene=result;scene.onError=error=>{if(scene===result&&studioControls.image===1&&mode!=='camera'&&!capturing)state('error',error.message,true)};scene.setPrimitiveLevel(COLOR_SCHEMES[studioControls.primitive].primitive);scene.setPalette(paletteSelection.depth);if(mode!=='camera'&&!capturing)state('done');
+    scene=result;scene.onPixelSize=value=>{sizeGesture();applyPixelSize(value)};scene.setPixelSize(pixelSize);scene.onError=error=>{if(scene===result&&studioControls.image===1&&mode!=='camera'&&!capturing)state('error',error.message,true)};scene.setPrimitiveLevel(COLOR_SCHEMES[studioControls.primitive].primitive);scene.setPalette(paletteSelection.depth);if(mode!=='camera'&&!capturing)state('done');
   }catch(error){if(!processing.signal.aborted&&current===generation&&studioControls.image===1&&mode!=='camera'&&!capturing)state('error',error.message||'Kunne ikkje lage splats.',true)}
   finally{if(task===processing)task=null}
 }
@@ -120,7 +131,7 @@ $('studio').addEventListener('pointermove',event=>{if(pointer&&Math.hypot(event.
 $('studio').addEventListener('contextmenu',event=>{if(!event.target.closest('button,a'))event.preventDefault()});
 window.addEventListener('message',event=>{if(event.source===window.opener&&allowedOrigins.has(event.origin)&&event.data?.type==='entropi-photo')void acceptPhoto(event.data.blob,typeof event.data.name==='string'?event.data.name:'entropi.jpg')});
 function resume(){finder.active=mode==='camera'&&!document.hidden;if(!document.hidden&&mode==='camera')void startCamera();else if(!document.hidden){if(studioControls.image===1)scene?.refresh?.();else photoGestures.refresh?.()}}
-function suspend(){stopCamera();if(capturing){++captureGeneration;capturing=false;state('camera')}finder.active=false;pointer=null;lastTap=0}
+function suspend(){stopCamera();photoGestures.cancel?.();liveGestures.cancel?.();scene?.cancelGestures?.();if(capturing){++captureGeneration;capturing=false;state('camera')}finder.active=false;pointer=null;lastTap=0}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});
 window.addEventListener('pageshow',event=>{if(event.persisted)resume()});
 window.addEventListener('keydown',event=>{if(event.key==='Escape'&&mode!=='camera'){event.preventDefault();reset()}else if(event.code==='Space'&&!event.repeat&&!['INPUT','BUTTON','A'].includes(document.activeElement?.tagName)){event.preventDefault();if(mode==='camera')void capture()}});

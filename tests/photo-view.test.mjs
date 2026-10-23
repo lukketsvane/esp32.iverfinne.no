@@ -125,3 +125,37 @@ test('historical palettes save exactly the RGB pixels shown by the photo canvas'
     assert.ok(chromatic.size>=2,id);
   }
 });
+
+test('review and exports convert global CSS pixel size using the contained image instead of source resolution',()=>{
+  const width=64,height=48,input=gray(width,height),app=harness(width,height,input);
+  let rect={width:32,height:12};
+  app.image.getBoundingClientRect=()=>rect;
+  app.view.setSource();app.view.setTone({grain:2});app.view.setStyle(1);app.flush();
+  for(const id of ['macintosh','ibm5151','ibmcga','gameboy','bluecrt','amber','appleii','c64','zx']){
+    app.view.setPalette(id);app.flush();
+    const expected=app.process(input,width,height,1,8,1,id);
+    assert.deepEqual([...app.canvas().pixels],[...expected],id+' uses the 16×12 contained area');
+    assert.deepEqual([...app.view.snapshot(undefined,true).data],[...expected]);
+  }
+  const reads=app.draws;
+  rect={width:64,height:24};app.view.refresh();app.flush();
+  assert.deepEqual([...app.canvas().pixels],[...app.process(input,width,height,1,4,1,'zx')]);
+  assert.equal(app.draws,reads,'resize uses cached original pixels');
+  rect={width:0,height:0};app.view.refresh();app.flush();
+  assert.deepEqual([...app.view.snapshot(undefined,true).data],[...app.process(input,width,height,1,4,1,'zx')],'hidden layout retains the last visible fit');
+  app.view.dispose();
+});
+
+test('hidden decoded photos use the parent layout immediately and replacement sources cannot reuse stale scale',()=>{
+  const app=harness(64,48,gray(64,48));
+  app.image.getBoundingClientRect=()=>({width:0,height:0});
+  app.image.parentElement={getBoundingClientRect:()=>({width:16,height:12})};
+  app.view.setTone({grain:2});app.view.setSource();
+  assert.deepEqual([...app.canvas().pixels],[...app.process(app.image.pixels,64,48,0,8,1)]);
+  const decoded={width:32,height:24,pixels:gray(32,24)};app.view.setSource(decoded);
+  assert.deepEqual([...app.canvas().pixels],[...app.process(decoded.pixels,32,24,0,4,1)]);
+  app.image.parentElement.getBoundingClientRect=()=>({width:0,height:0});
+  app.view.setSource(decoded);
+  assert.deepEqual([...app.canvas().pixels],[...app.process(decoded.pixels,32,24,0,2,1)]);
+  app.view.dispose();
+});

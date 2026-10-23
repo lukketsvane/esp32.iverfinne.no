@@ -7,13 +7,13 @@ const brightness=(r,g,b)=>.2126*r+.7152*g+.0722*b;
 
 export function toneContrast(value,contrast){return contrast<1?(value<127.5?127.5*(value/127.5)**contrast:255-127.5*((255-value)/127.5)**contrast):clamp((value-127.5)*contrast+127.5)}
 
-function sampleGrid(source,width,height,gridWidth,gridHeight,contrast){
+function sampleGrid(source,width,height,gridWidth,gridHeight,contrast,grain){
   const rgb=new Uint8Array(gridWidth*gridHeight*3);
   for(let y=0;y<gridHeight;y++)for(let x=0;x<gridWidth;x++){
     let r=0,g=0,b=0;
     for(const dy of [.25,.75])for(const dx of [.25,.75]){
-      const sx=Math.min(width-1,Math.floor((x+dx)*width/gridWidth));
-      const sy=Math.min(height-1,Math.floor((y+dy)*height/gridHeight));
+      const sx=Math.min(width-1,Math.floor((x+dx)*grain));
+      const sy=Math.min(height-1,Math.floor((y+dy)*grain));
       const at=(sy*width+sx)*4;
       r+=source[at];g+=source[at+1];b+=source[at+2];
     }
@@ -98,21 +98,20 @@ function appleHiResMode(rgb,width,height){
   return indices;
 }
 
-export function renderRetroPixels(source,width,height,schemeId,contrast=1){
+export function renderRetroPixels(source,width,height,schemeId,contrast=1,grain=1){
   const scheme=resolveColorScheme(schemeId);
   if(!scheme.mode)throw new Error('Ukjend skjermmodus.');
-  const heightLimit=scheme.mode==='c64'?200:192;
-  const pixelAspect=scheme.mode==='c64'?2:1;
-  const gridHeight=Math.max(1,Math.min(heightLimit,height));
-  const gridWidth=Math.max(1,Math.min(scheme.mode==='c64'?160:scheme.mode==='appleii'?280:256,Math.round(gridHeight*width/height/pixelAspect)));
-  const rgb=sampleGrid(source,width,height,gridWidth,gridHeight,Math.max(.5,Math.min(3,contrast)));
+  // The profile controls its inks and colour-cell rules, never pixel size.
+  grain=Number.isFinite(grain)?Math.max(1,Math.round(grain)):1;
+  const gridWidth=Math.max(1,Math.ceil(width/grain)),gridHeight=Math.max(1,Math.ceil(height/grain));
+  const rgb=sampleGrid(source,width,height,gridWidth,gridHeight,Math.max(.5,Math.min(3,contrast)),grain);
   const indexes=scheme.mode==='appleii'?appleHiResMode(rgb,gridWidth,gridHeight):colorCellMode(rgb,gridWidth,gridHeight,scheme.colors,scheme.mode);
   const palette=scheme.mode==='appleii'?[[0,0,0],[0,214,56],[184,45,255],[255,255,255],[255,137,40],[55,112,255]]:scheme.colors;
   const output=new Uint8ClampedArray(source.length);
   for(let y=0;y<height;y++){
-    const gy=Math.min(gridHeight-1,Math.floor((y+.5)*gridHeight/height));
+    const gy=Math.min(gridHeight-1,Math.floor(y/grain));
     for(let x=0;x<width;x++){
-      const gx=Math.min(gridWidth-1,Math.floor((x+.5)*gridWidth/width));
+      const gx=Math.min(gridWidth-1,Math.floor(x/grain));
       const at=(y*width+x)*4,color=palette[indexes[gy*gridWidth+gx]];
       if(source[at+3]<128){output[at+3]=source[at+3];continue}
       const blackBorder=source[at]===0&&source[at+1]===0&&source[at+2]===0;

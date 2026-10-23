@@ -3,9 +3,10 @@ import {resolveColorScheme} from './color-schemes.mjs';
 import {renderRetroPixels,toneContrast} from './retro-modes.mjs';
 
 export function processPhoto(source,width,height,style,grain,contrast,schemeId='original'){
+  grain=Number.isFinite(grain)?Math.max(1,Math.round(grain)):1;
   contrast=Math.max(.5,Math.min(3,contrast));
   const scheme=resolveColorScheme(schemeId);
-  if(scheme.mode)return renderRetroPixels(source,width,height,schemeId,contrast);
+  if(scheme.mode)return renderRetroPixels(source,width,height,schemeId,contrast,grain);
   const cols=Math.ceil(width/grain),rows=Math.ceil(height/grain),values=new Float32Array(cols*rows);
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
     let sum=0,count=0;
@@ -45,28 +46,36 @@ export function createPhotoView(image){
   canvas.setAttribute('aria-hidden','true');canvas.hidden=true;
   canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform-origin:center;pointer-events:none;image-rendering:pixelated';
   image.after(canvas);
-  let source=null,style=0,grain=1,contrast=1,palette='original',frame=0,dirty=false,disposed=false;
+  let source=null,style=0,grain=1,contrast=1,palette='original',frame=0,dirty=false,disposed=false,renderedGrain=0,lastFit=1;
   const finite=(value,min,max,fallback)=>Number.isFinite(value)?Math.max(min,Math.min(max,value)):fallback;
+  function sourceGrain(){
+    let rect=image.getBoundingClientRect?.();
+    if(!rect?.width||!rect?.height)rect=image.parentElement?.getBoundingClientRect?.();
+    if(rect?.width>0&&rect?.height>0&&canvas.width&&canvas.height)lastFit=Math.min(rect.width/canvas.width,rect.height/canvas.height);
+    return Math.max(1,Math.round(grain/lastFit));
+  }
   function render(){
     if(frame){cancelAnimationFrame(frame);frame=0}
-    if(disposed||!source||!dirty)return;
+    if(disposed||!source)return;
+    const step=sourceGrain();
+    if(!dirty&&step===renderedGrain)return;
     const pixels=context.createImageData(canvas.width,canvas.height);
-    pixels.data.set(processPhoto(source,canvas.width,canvas.height,style,grain,contrast,palette));context.putImageData(pixels,0,0);dirty=false;
+    pixels.data.set(processPhoto(source,canvas.width,canvas.height,style,step,contrast,palette));context.putImageData(pixels,0,0);dirty=false;renderedGrain=step;
   }
   function schedule(){if(!disposed&&source){dirty=true;if(!frame)frame=requestAnimationFrame(render)}}
-  function refresh(){if(!disposed)canvas.style.transform=image.style.transform}
+  function refresh(){if(!disposed){canvas.style.transform=image.style.transform;if(source&&sourceGrain()!==renderedGrain)schedule()}}
   function show(visible){if(disposed)return;const active=Boolean(visible&&source);if(active)render();canvas.hidden=!active;image.style.opacity=active?'0':opacity;refresh()}
   function setSource(decoded=image){
     if(disposed)return;
     const width=decoded.naturalWidth||decoded.width,height=decoded.naturalHeight||decoded.height;
     if(!width||!height)throw new Error('Fotoet er ikkje klart.');
-    const scale=Math.min(1,2048/Math.max(width,height));canvas.width=Math.max(1,Math.round(width*scale));canvas.height=Math.max(1,Math.round(height*scale));
+    const scale=Math.min(1,2048/Math.max(width,height));canvas.width=Math.max(1,Math.round(width*scale));canvas.height=Math.max(1,Math.round(height*scale));lastFit=1;renderedGrain=0;
     context.drawImage(decoded,0,0,canvas.width,canvas.height);source=context.getImageData(0,0,canvas.width,canvas.height).data;
     dirty=true;render();refresh();
   }
   function setStyle(value){const next=Math.round(finite(value,0,3,0));if(style!==next){style=next;schedule()}}
   function setPalette(value){const next=resolveColorScheme(value).id;if(palette!==next){palette=next;schedule()}}
-  function setTone(tone={}){const nextGrain=Math.round(finite(tone.grain??grain,1,8,grain)),nextContrast=finite(tone.contrast??contrast,.5,3,contrast);if(grain!==nextGrain||contrast!==nextContrast){grain=nextGrain;contrast=nextContrast;schedule()}}
+  function setTone(tone={}){const nextGrain=finite(tone.grain??grain,1,8,grain),nextContrast=finite(tone.contrast??contrast,.5,3,contrast);if(grain!==nextGrain||contrast!==nextContrast){grain=nextGrain;contrast=nextContrast;schedule()}}
   function snapshot(pose,native=false){if(disposed||!source)throw new Error('Fotoet er ikkje klart.');render();return photoSnapshot(canvas,pose,native,true)}
   function dispose(){if(disposed)return;disposed=true;if(frame)cancelAnimationFrame(frame);source=null;image.style.opacity=opacity;canvas.remove()}
   return {setSource,setStyle,setPalette,setTone,show,refresh,snapshot,dispose};

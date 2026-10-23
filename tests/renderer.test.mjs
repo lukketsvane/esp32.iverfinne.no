@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { gaussianSplats } from '../pointcloud/math.mjs';
 import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, primitiveDimensions } from '../pointcloud/primitive.mjs';
 import { attachViewerGestures, progressiveIndices } from '../vendor/viewer-gestures.mjs';
-import {resolveColorScheme,gaussianInk} from '../vendor/color-schemes.mjs';
+import {COLOR_SCHEMES,resolveColorScheme,gaussianInk} from '../vendor/color-schemes.mjs';
 import {renderRetroPixels} from '../vendor/retro-modes.mjs';
 
 const source=await readFile(new URL('../vendor/scene.mjs',import.meta.url),'utf8'),renderer=source.slice(source.indexOf('function renderScene('),source.indexOf('\nexport async function createDepthScene'));
@@ -25,13 +25,13 @@ function harness(options={}){
     let constant=100;const values=new Map(),uniforms={},draws=[];
     const target={uniforms,draws,lost:false,isContextLost(){return this.lost},getParameter:()=>[1,64],getShaderParameter:()=>true,getProgramParameter:()=>true,getAttribLocation:(program,name)=>({aPosition:0,aScale:1,aColor:2,p:0})[name],getUniformLocation:(program,name)=>name,getError:()=>0,
       getExtension:()=>({loseContext(){target.lost=true;canvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}))}}),
-      uniform1f:(name,value)=>uniforms[name]=value,uniform2f:(name,x,y)=>uniforms[name]=[x,y],uniformMatrix3fv:(name,transpose,value)=>uniforms[name]=Array.from(value),
+      uniform1f:(name,value)=>uniforms[name]=value,uniform1i:(name,value)=>uniforms[name]=value,uniform2f:(name,x,y)=>uniforms[name]=[x,y],uniformMatrix3fv:(name,transpose,value)=>uniforms[name]=Array.from(value),
       bufferData(type,data,usage){if(usage===gl.DYNAMIC_DRAW)uploads++},drawArrays(mode,first,count){draws.push({mode,count})}
     };
     const gl=new Proxy(target,{get(object,key){if(key in object)return object[key];if(/^[A-Z_0-9]+$/.test(key)){if(!values.has(key))values.set(key,constant++);return values.get(key)}if(key.startsWith('create'))return ()=>({});if(key==='checkFramebufferStatus')return ()=>gl.FRAMEBUFFER_COMPLETE;return ()=>{}}});return gl;
   }
   class Indices extends Uint32Array{sort(compare){sorts++;return super.sort(compare)}}
-  const context=vm.createContext({document:{createElement:()=>new Canvas()},Event,Float32Array,Uint32Array:Indices,DataView,Map,Math,performance:{now:()=>now},matchMedia:()=>({matches:options.reduced===true}),nearestC64,resolveColorScheme,gaussianInk,renderRetroPixels,PRIMITIVE_MODES,PRIMITIVE_BAYER,normalizePrimitiveLevel,primitiveDimensions,attachViewerGestures,progressiveIndices,
+  const context=vm.createContext({document:{createElement:()=>new Canvas()},devicePixelRatio:options.ratio??1,Event,Float32Array,Uint32Array:Indices,DataView,Map,Math,performance:{now:()=>now},matchMedia:()=>({matches:options.reduced===true}),nearestC64,resolveColorScheme,gaussianInk,renderRetroPixels,PRIMITIVE_MODES,PRIMITIVE_BAYER,normalizePrimitiveLevel,primitiveDimensions,attachViewerGestures,progressiveIndices,
     requestAnimationFrame:callback=>{const id=++frameId;frames.set(id,callback);return id},cancelAnimationFrame:id=>frames.delete(id),ResizeObserver:class{observe(){}disconnect(){}}
   });vm.runInContext(renderer,context);
   const count=256,positions=new Float32Array(count*3),colors=new Uint8Array(count*3).fill(150);for(let i=0;i<count;i++){positions[i*3]=(i%16-8)/16;positions[i*3+1]=(Math.floor(i/16)-8)/16;positions[i*3+2]=Math.sin(i)*.1}
@@ -100,10 +100,78 @@ test('switching historic color systems recolors the cached higher-detail Gaussia
     app.viewer.setPalette(id);
     app.flush();
     assert.ok(app.uploads>start,id);
-    assert.equal(app.gl.draws.at(-1).mode,app.gl.POINTS);
+    assert.equal(app.gl.draws.at(-1).mode,app.gl.TRIANGLE_STRIP);
+    assert.equal(app.gl.uniforms.level,0);
   }
   const raster=app.viewer.snapshot(true);
   assert.equal(raster.width,300);
   assert.equal(raster.height,600);
+  app.viewer.dispose();
+});
+
+test('all nine Gaussian profiles share a CSS-pixel grid at every size and device pixel ratio',()=>{
+  for(const ratio of [1,2,3]){
+    const app=harness({ratio,reduced:true});
+    for(const grain of [1,2,4,8]){
+      app.viewer.setPixelSize(grain);
+      for(const scheme of COLOR_SCHEMES){
+        app.viewer.setPalette(scheme.id);app.viewer.setPrimitiveLevel(scheme.primitive);app.flush();
+        assert.deepEqual(app.gl.uniforms.size,[Math.ceil(300/grain),Math.ceil(600/grain)],scheme.id+' at '+grain+' CSS pixels, DPR '+ratio);
+        assert.equal(app.gl.draws.at(-1).mode,app.gl.TRIANGLE_STRIP);
+      }
+    }
+    const sorts=app.sorts,uploads=app.uploads;
+    app.viewer.setPixelSize(2);app.flush();assert.equal(app.sorts,sorts);assert.equal(app.uploads,uploads);
+    app.viewer.setPixelSize(4);app.gl.getExtension().loseContext();app.flush();assert.deepEqual(app.gl.uniforms.size,[75,150]);
+    app.viewer.resetView();app.flush();assert.deepEqual(app.gl.uniforms.size,[75,150]);
+    app.viewer.dispose();
+  }
+});
+
+test('pinch changes the global pixel size without moving the model and cancellation releases fingers',()=>{
+  const app=harness({reduced:true}),requests=[];
+  app.viewer.onPixelSize=value=>{requests.push(value);app.viewer.setPixelSize(value)};
+  const before=state(app);
+  app.canvas.emit('pointerdown',{pointerId:1,clientX:100,clientY:100});app.canvas.emit('pointerdown',{pointerId:2,clientX:200,clientY:100});
+  app.canvas.emit('pointermove',{pointerId:1,clientX:50,clientY:100});app.canvas.emit('pointermove',{pointerId:2,clientX:250,clientY:100});app.flush();
+  assert.equal(requests.at(-1),2);assert.deepEqual(app.gl.uniforms.size,[150,300]);assert.deepEqual(state(app),before);
+  app.viewer.cancelGestures();assert.equal(app.canvas.captures.size,0);
+  const count=requests.length;app.canvas.emit('pointermove',{pointerId:1,clientX:0,clientY:100});app.flush();assert.equal(requests.length,count);
+  app.canvas.emit('wheel',{deltaY:-1000});app.flush();assert.ok(requests.at(-1)>2);assert.deepEqual(state(app),before);
+  app.viewer.setPixelSize(99);app.flush();assert.deepEqual(app.gl.uniforms.size,[38,75]);
+  app.viewer.setPixelSize(0);app.flush();assert.deepEqual(app.gl.uniforms.size,[300,600]);
+  app.viewer.dispose();
+});
+
+test('two-finger translation continues to pan with shared pixel sizing and does not zoom the model',()=>{
+  const app=harness({reduced:true});app.viewer.setPixelSize(4);app.viewer.onPixelSize=value=>app.viewer.setPixelSize(value);app.flush();
+  const before=state(app);
+  app.canvas.emit('pointerdown',{pointerId:1,clientX:100,clientY:100});app.canvas.emit('pointerdown',{pointerId:2,clientX:200,clientY:100});
+  app.canvas.emit('pointermove',{pointerId:1,clientX:110,clientY:100});app.canvas.emit('pointermove',{pointerId:2,clientX:210,clientY:100});app.flush();
+  assert.notDeepEqual(app.gl.uniforms.uPan,before.pan);assert.equal(app.gl.uniforms.uDistance,before.distance);assert.deepEqual(app.gl.uniforms.uRotation,before.rotation);assert.deepEqual(app.gl.uniforms.size,[75,150]);
+  app.viewer.cancelGestures();app.viewer.dispose();
+});
+
+test('staggered two-finger panning cannot drift pixel size at either bound',()=>{
+  for(const size of [1,8])for(const dx of [-20,20]){
+    const app=harness({reduced:true}),sizes=[];app.viewer.setPixelSize(size);app.viewer.onPixelSize=value=>{sizes.push(value);app.viewer.setPixelSize(value)};
+    app.canvas.emit('pointerdown',{pointerId:1,clientX:100,clientY:100});app.canvas.emit('pointerdown',{pointerId:2,clientX:300,clientY:100});
+    for(let step=1;step<=4;step++){
+      app.canvas.emit('pointermove',{pointerId:1,clientX:100+dx*step,clientY:100});app.canvas.emit('pointermove',{pointerId:2,clientX:300+dx*step,clientY:100});
+      assert.equal(sizes.at(-1),size,'size '+size+', translation '+dx+', step '+step);
+    }
+    app.viewer.dispose();
+  }
+});
+
+test('pinch remains anchored through bound reversal and reanchors after finger transitions',()=>{
+  const app=harness({reduced:true}),sizes=[];app.viewer.setPixelSize(4);app.viewer.onPixelSize=value=>{sizes.push(value);app.viewer.setPixelSize(value)};
+  const point=(type,id,x)=>app.canvas.emit(type,{pointerId:id,clientX:x,clientY:100});
+  point('pointerdown',1,100);point('pointerdown',2,300);
+  for(const [x,size]of [[1000,8],[500,8],[300,4],[120,1],[150,1],[300,4]]){point('pointermove',2,x);assert.equal(sizes.at(-1),size,'gap '+(x-100))}
+  point('pointermove',2,200);assert.equal(sizes.at(-1),2);
+  point('pointerdown',3,250);point('pointerup',3,250);point('pointermove',2,250);assert.equal(sizes.at(-1),3);
+  point('pointerup',2,250);point('pointerdown',4,300);point('pointermove',4,500);assert.equal(sizes.at(-1),6);
+  app.viewer.cancelGestures();point('pointerdown',1,100);point('pointerdown',2,300);point('pointermove',2,350);assert.equal(sizes.at(-1),7.5);
   app.viewer.dispose();
 });

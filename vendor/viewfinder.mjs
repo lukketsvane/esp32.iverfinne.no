@@ -40,7 +40,7 @@ export class Viewfinder {
   }
   setStyle(level){this.style=Number.isFinite(level)?Math.max(0,Math.min(3,Math.round(level))):0}
   setPalette(id){this.palette=id}
-  setTone({grain=this.grain,contrast=this.contrast}={}){if(Number.isFinite(grain))this.grain=Math.max(1,Math.min(8,Math.round(grain)));if(Number.isFinite(contrast))this.contrast=Math.max(.5,Math.min(3,contrast))}
+  setTone({grain=this.grain,contrast=this.contrast}={}){if(Number.isFinite(grain))this.grain=Math.max(1,Math.min(8,grain));if(Number.isFinite(contrast))this.contrast=Math.max(.5,Math.min(3,contrast))}
   draw(time=0){
     const source=this.source;if(!source||!this.context||!this.sampleContext)return;
     const video=source instanceof HTMLVideoElement;if(video&&source.readyState<2)return;
@@ -48,7 +48,8 @@ export class Viewfinder {
     this.fit();
     try{
       paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,false);this.time=time;
-      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast,this.palette));maskFinderFrame(this.output.data,this.projection);this.context.putImageData(this.output,0,0);
+      const displayWidth=this.canvas.getBoundingClientRect?.().width||this.canvas.width,step=this.grain*this.canvas.width/displayWidth;
+      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,step,this.contrast,this.palette));maskFinderFrame(this.output.data,this.projection);this.context.putImageData(this.output,0,0);
     }catch{}
   }
   fit(){

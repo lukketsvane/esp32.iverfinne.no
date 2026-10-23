@@ -12,7 +12,8 @@ function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{reso
 
 function harness(options={}){
   let now=1000,nextTimer=0,nextUrl=0,mediaRequests=0,stopped=0;
-  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),saves=[],encodedSnapshots=[],sceneCalls=[],messages=[],studioBindings=[],printCalls=[],revoked=[],photoViews=[];
+  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),saves=[],encodedSnapshots=[],sceneCalls=[],messages=[],studioBindings=[],printCalls=[],revoked=[],photoViews=[],scenes=[],gestureCancels={photo:0,live:0};
+  const storage=options.storage??new Map(),storageWrites=[];
   const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)},nativeSnapshot={width:640,height:960,data:new Uint8ClampedArray(640*960*4)};let printDisposed=false;
   const studioControls={image:options.image??0,primitive:0,photo:0,dispose(){}},finders=[];
   const photoGestureState={scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1},liveGestureState={...photoGestureState};let photoGestureBinding,liveGestureBinding;
@@ -55,15 +56,16 @@ function harness(options={}){
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
     COLOR_SCHEMES,
-    Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
+    localStorage:{getItem:key=>{if(options.storageError)throw new Error('unavailable');return storage.get(key)??null},setItem(key,value){if(options.storageError)throw new Error('unavailable');storage.set(key,value);storageWrites.push([key,value])}},
+    Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]}clear(){}dispose(){}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
     readColorScheme:()=> 'macintosh',saveColorScheme(){},attachColorSchemeControls:()=>({refresh(){},dispose(){}}),
-    attachPhotoGestures:(image,binding)=>{const state=binding.toneOnly?liveGestureState:photoGestureState;if(binding.toneOnly)liveGestureBinding=binding;else photoGestureBinding=binding;return {state,reset(){Object.assign(state,{scale:1,x:0,y:0});binding.onChange(state)},refresh(){binding.onChange(state)},dispose(){}}},
+    attachPhotoGestures:(image,binding)=>{const state=binding.toneOnly?liveGestureState:photoGestureState;if(binding.toneOnly)liveGestureBinding=binding;else photoGestureBinding=binding;return {state,cancel(){gestureCancels[binding.toneOnly?'live':'photo']++},reset(){Object.assign(state,{scale:1,x:0,y:0});binding.onChange(state)},refresh(){binding.onChange(state)},dispose(){}}},
     createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setPalette(id){this.palette=id},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
     PX10Printer:class{},cloudPrintJob:()=>new Uint8Array(),
     createPrintClient:()=>({print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return Promise.resolve(true)},dispose(){printDisposed=true}}),
-    createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});return options.scene?{setPrimitiveLevel(){},setPalette(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,progress,signal,quality)}:{dispose(){},setPrimitiveLevel(){},setPalette(){},snapshot:native=>native?nativeSnapshot:snapshot}},
+    createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});const result={dispose(){},setPrimitiveLevel(){},setPalette(){},setPixelSize(value){this.pixelSize=value},snapshot:native=>native?nativeSnapshot:snapshot,...options.scene?await options.scene(host,blob,progress,signal,quality):{}};scenes.push(result);return result},
     performance:{now:()=>now},Date:class extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}},
     setTimeout:(callback,delay=0)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)
   });
@@ -73,8 +75,9 @@ function harness(options={}){
   function changeStudio(kind,level){studioControls[kind]=level;for(const binding of studioBindings)binding.onChange(kind,level)}
   function gestureStudio(){for(const binding of studioBindings)binding.onGesture?.()}
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
+  function sizeGesture(kind='live'){(kind==='live'?liveGestureBinding:photoGestureBinding).onGesture?.()}
   function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
-  return {get:id=>elements.get(id),opener,sceneCalls,studioControls,changeStudio,gestureStudio,gesturePhoto,gestureLive,photoGestureState,liveGestureState,finders,photoViews,messages,urls,revoked,saves,encodedSnapshots,printCalls,snapshot,nativeSnapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
+  return {get:id=>elements.get(id),opener,sceneCalls,scenes,storage,storageWrites,gestureCancels,sizeGesture,studioControls,changeStudio,gestureStudio,gesturePhoto,gestureLive,photoGestureState,liveGestureState,finders,photoViews,messages,urls,revoked,saves,encodedSnapshots,printCalls,snapshot,nativeSnapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
 }
 
 async function photoFromDevice(app,blob=new Blob(['camera-jpeg'],{type:'image/jpeg'})){
@@ -391,4 +394,58 @@ test('a failed new capture retries the camera rather than reprocessing the retai
 test('a scene save requests native rendered pixels and a pending save becomes stale after a new photo',async()=>{
   const flags=[],native={width:20,height:30,data:new Uint8ClampedArray(20*30*4)},app=harness({image:1,scene:async()=>({dispose(){},snapshot:flag=>{flags.push(flag);return native}})});await photoFromDevice(app);await app.get('save').emit('click');assert.deepEqual(flags,[true]);assert.equal(app.encodedSnapshots[0],native);assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].isCurrent(),true);
   await app.get('reset').emit('click');assert.equal(app.saves[0].isCurrent(),false);await photoFromDevice(app,new Blob(['replacement'],{type:'image/jpeg'}));assert.equal(app.saves[0].isCurrent(),false);
+});
+
+test('one persisted pixel size initializes live and photo views and a subsequently created scene',async()=>{
+  const storage=new Map([['entropi-pixel-size-v1','2.75']]),app=harness({storage});
+  assert.equal(app.finders[0].tone.grain,2.75);assert.equal(app.photoViews[0].tone.grain,2.75);
+  assert.equal(app.photoGestureState.grain,2.75);assert.equal(app.liveGestureState.grain,2.75);assert.equal(app.storageWrites.length,0);
+  await photoFromDevice(app);app.changeStudio('image',1);await app.tick(0);assert.equal(app.scenes[0].pixelSize,2.75);
+  for(let level=0;level<COLOR_SCHEMES.length;level++){
+    app.changeStudio('primitive',level);assert.equal(app.scenes[0].pixelSize,2.75);
+    app.changeStudio('image',0);app.changeStudio('photo',level);assert.equal(app.photoViews[0].tone.grain,2.75);assert.equal(app.finders[0].tone.grain,2.75);
+    app.changeStudio('image',1);await app.tick(0);
+  }
+  assert.equal(app.sceneCalls.length,1);assert.equal(app.storageWrites.length,0);
+});
+
+test('live, photo and depth changes share the size across mode switches, saves and reloads',async()=>{
+  const app=harness();app.gestureLive({grain:3.5,contrast:1.8});await photoFromDevice(app);
+  app.changeStudio('image',1);await app.tick(0);const scene=app.scenes[0];assert.equal(scene.pixelSize,3.5);
+  scene.onPixelSize(6.25);assert.equal(scene.pixelSize,6.25);assert.equal(app.finders[0].tone.grain,6.25);assert.equal(app.photoViews[0].tone.grain,6.25);assert.equal(app.liveGestureState.grain,6.25);assert.equal(app.photoGestureState.grain,6.25);
+  app.changeStudio('image',0);await app.tick(0);assert.equal(app.photoViews[0].tone.contrast,1.8);
+  await app.get('save').emit('click');await app.get('print').emit('click');
+  for(const output of [app.encodedSnapshots[0],app.printCalls[0].image])assert.equal(output.tone.grain,6.25);
+  app.gesturePhoto({grain:2.4});assert.equal(scene.pixelSize,2.4);assert.equal(app.finders[0].tone.grain,2.4);assert.equal(app.storage.get('entropi-pixel-size-v1'),'2.4');
+  const reloaded=harness({storage:app.storage});assert.equal(reloaded.finders[0].tone.grain,2.4);assert.equal(reloaded.photoGestureState.grain,2.4);
+});
+
+test('invalid or unavailable saved sizes fall back safely and unavailable storage does not block changes',()=>{
+  for(const stored of ['','NaN','Infinity','0','0.5','9','-1','garbage']){
+    const app=harness({storage:new Map([['entropi-pixel-size-v1',stored]])});assert.equal(app.finders[0].tone.grain,1,stored);assert.equal(app.photoGestureState.grain,1,stored);
+  }
+  const app=harness({storageError:true});assert.equal(app.finders[0].tone.grain,1);assert.doesNotThrow(()=>app.gestureLive({grain:4}));assert.equal(app.photoViews[0].tone.grain,4);
+});
+
+test('a long pinch at either limit cannot fall through to camera capture on final release',async()=>{
+  for(const grain of [1,8]){
+    const app=harness();await app.get('capture-plane').emit('click');app.sizeGesture();app.gestureLive({grain});
+    await app.tick(2000);app.sizeGesture();await app.get('capture-plane').emit('click');assert.equal(app.finders[0].captures.length,0);assert.equal(app.get('studio').className,'studio camera');
+    await app.tick(401);await app.get('capture-plane').emit('click');assert.equal(app.finders[0].captures.length,1);assert.equal(app.photoViews[0].tone.grain,grain);
+  }
+});
+
+test('a size gesture clears pending print and double-tap actions even when size is unchanged',async()=>{
+  const app=harness();await photoFromDevice(app);await app.get('studio').emit('pointerdown');await app.tick(600);app.sizeGesture('photo');await app.get('studio').emit('pointerup');assert.equal(app.printCalls.length,0);
+  await tap(app);await app.tick(100);app.sizeGesture('photo');await tap(app);assert.equal(app.get('studio').className,'studio done');assert.equal(app.printCalls.length,0);
+});
+
+test('backgrounding cancels live and photo pointers while retaining their shared size',async()=>{
+  for(const persisted of [false,true]){
+    const app=harness();app.gestureLive({grain:3.25});await photoFromDevice(app);const before={...app.gestureCancels};
+    if(persisted)await app.emit('pagehide',{persisted:true});else await app.visibility(true);
+    assert.equal(app.gestureCancels.live,before.live+1);assert.equal(app.gestureCancels.photo,before.photo+1);assert.equal(app.liveGestureState.grain,3.25);assert.equal(app.photoGestureState.grain,3.25);
+    if(!persisted){assert.equal(app.gesturePhoto({grain:8}),false);assert.equal(app.gestureLive({grain:8}),false);await app.visibility(false)}else await app.emit('pageshow',{persisted:true});
+    assert.equal(app.photoViews[0].tone.grain,3.25);assert.equal(app.gesturePhoto({grain:4}),true);assert.equal(app.liveGestureState.grain,4);
+  }
 });

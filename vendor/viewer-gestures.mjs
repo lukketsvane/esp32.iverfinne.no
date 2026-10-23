@@ -6,11 +6,11 @@ export function progressiveIndices(count){
   return indices;
 }
 
-export function attachViewerGestures(canvas,{onRotate,onTransform,onDensity,onDefinition,initialDensity=1,onTouch=()=>{}}){
+export function attachViewerGestures(canvas,{onRotate,onTransform,onDensity,onDefinition,initialDensity=1,onTouch=()=>{},onPinchStart=()=>{},onPinchScale=()=>{}}){
   const pointers=new Map(),state={density:clamp(1+Math.log10(clamp(initialDensity,1e-6,1))/6,0,1),definition:.5};
   let start=null,previous=null,axis=null,disposed=false;
   const measure=()=>{const points=[...pointers.values()];return {x:points.reduce((sum,point)=>sum+point.x,0)/points.length,y:points.reduce((sum,point)=>sum+point.y,0)/points.length,gap:points.length===2?Math.hypot(points[0].x-points[1].x,points[0].y-points[1].y):0}};
-  const reset=()=>{start=previous=pointers.size>0&&pointers.size<=3?measure():null;axis=null};
+  const reset=()=>{start=previous=pointers.size>0&&pointers.size<=3?measure():null;axis=null;if(pointers.size===2)onPinchStart()};
   const down=event=>{
     if(disposed||event.pointerType!=='touch')return;
     if(pointers.size===0)onTouch(true);pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});canvas.setPointerCapture(event.pointerId);reset();if(pointers.size>1)event.preventDefault();
@@ -20,7 +20,11 @@ export function attachViewerGestures(canvas,{onRotate,onTransform,onDensity,onDe
     if(pointers.size>3||!previous||!start)return;
     const current=measure(),dx=current.x-previous.x,dy=current.y-previous.y;
     if(pointers.size===1){if(dx||dy)onRotate(dx,dy)}
-    else if(pointers.size===2){const rect=canvas.getBoundingClientRect(),scale=previous.gap>0&&current.gap>0?current.gap/previous.gap:1;if(dx||dy||scale!==1)onTransform(dx,dy,scale,current.x-rect.left,current.y-rect.top)}
+    else if(pointers.size===2){
+      const rect=canvas.getBoundingClientRect(),scale=previous.gap>0&&current.gap>0?current.gap/previous.gap:1;
+      if(!start.gap&&current.gap>0){start={...start,gap:current.gap};onPinchStart()}
+      if(dx||dy||scale!==1){onPinchScale(start.gap>0?current.gap/start.gap:1);onTransform(dx,dy,scale,current.x-rect.left,current.y-rect.top)}
+    }
     else{
       if(!axis&&Math.hypot(current.x-start.x,current.y-start.y)>=10)axis=Math.abs(current.x-start.x)>Math.abs(current.y-start.y)?'definition':'density';
       if(axis==='density'){
@@ -37,7 +41,11 @@ export function attachViewerGestures(canvas,{onRotate,onTransform,onDensity,onDe
     if(event.pointerType!=='touch'||!pointers.delete(event.pointerId))return;
     if(pointers.size===0)onTouch(false);reset();
   };
+  function cancel(){
+    const captured=[...pointers.keys()];if(pointers.size)onTouch(false);pointers.clear();reset();
+    for(const id of captured)if(canvas.hasPointerCapture?.(id))canvas.releasePointerCapture(id);
+  }
   const listeners=[['pointerdown',down],['pointermove',move],['pointerup',up],['pointercancel',up],['lostpointercapture',up]];
   for(const [name,listener] of listeners)canvas.addEventListener(name,listener,true);
-  return {state,dispose(){if(disposed)return;disposed=true;const captured=[...pointers.keys()];if(pointers.size)onTouch(false);pointers.clear();for(const [name,listener] of listeners)canvas.removeEventListener(name,listener,true);for(const id of captured)if(canvas.hasPointerCapture?.(id))canvas.releasePointerCapture(id)}};
+  return {state,cancel,dispose(){if(disposed)return;disposed=true;for(const [name,listener] of listeners)canvas.removeEventListener(name,listener,true);cancel()}};
 }

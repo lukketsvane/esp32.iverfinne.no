@@ -40,7 +40,7 @@ test('retro preview and review honor soft contrast without lifting their black o
   }
 });
 
-test('C64 uses all 16 VIC-II hues, four inks per 4x8 cell, and double-width pixels',()=>{
+test('C64 keeps all 16 VIC-II hues and four inks per 4x8 cell on the shared square grid',()=>{
   const palette=resolveColorScheme('c64').colors;
   assert.equal(palette.length,16);
   assert.deepEqual(palette[2],[129,51,56]);
@@ -53,11 +53,12 @@ test('C64 uses all 16 VIC-II hues, four inks per 4x8 cell, and double-width pixe
   const possible=new Set(palette.map(key)),used=rgbSet(output,320,0,0,320,200);
   assert.ok(used.size>8);
   for(const entry of used)assert.ok(possible.has(entry),entry);
-  for(let y=0;y<200;y+=8)for(let x=0;x<320;x+=8){
-    const colors=rgbSet(output,320,x,y,8,8);
+  for(let y=0;y<200;y+=8)for(let x=0;x<320;x+=4){
+    const colors=rgbSet(output,320,x,y,4,8);
     assert.ok(colors.size<=4,'C64 cell '+x+','+y+': '+colors.size);
   }
-  for(let y=0;y<200;y++)for(let x=0;x<320;x+=2)assert.deepEqual(pixel(output,320,x,y),pixel(output,320,x+1,y));
+  const alternating=frame(32,8,x=>palette[x%2?2:3]),fine=renderRetroPixels(alternating,32,8,'c64');
+  assert.notDeepEqual(pixel(fine,32,0,0),pixel(fine,32,1,0));
 });
 
 test('ZX Spectrum uses 15 RGB colors and at most two matching-brightness inks per 8x8 attribute',()=>{
@@ -125,4 +126,22 @@ test('new Gaussian geometry uses 50k or more points and keeps depth inference in
   assert.equal(cloud.pixelOffsets.length,cloud.count);
   assert.ok(cloud.pixelOffsets.at(-1)<rgba.length);
   assert.ok(cloud.count>=3*Math.ceil(420/3)*Math.ceil(280/3));
+});
+
+test('all nine screen profiles obey the same grain cells without profile resolution caps',()=>{
+  const ids=['macintosh','ibm5151','ibmcga','gameboy','bluecrt','amber','appleii','c64','zx'];
+  const width=37,height=29,input=frame(width,height,(x,y)=>[1+(x*13+y*3)%254,1+(x*5+y*17)%254,1+(x*19+y*7)%254]);
+  for(const id of ids){
+    const scheme=resolveColorScheme(id),fine=processPhoto(input,width,height,scheme.style,1,1,id);
+    for(const grain of [2,4,8]){
+      const output=processPhoto(input,width,height,scheme.style,grain,1,id);
+      assert.notDeepEqual(output,fine,id+' responds to '+grain);
+      for(let y=0;y<height;y++)for(let x=0;x<width;x++)assert.deepEqual(pixel(output,width,x,y),pixel(output,width,Math.floor(x/grain)*grain,Math.floor(y/grain)*grain),id+' has one color per shared cell');
+    }
+  }
+  for(const id of ['appleii','c64','zx']){
+    const input=frame(420,240,x=>x%2?[255,255,255]:[0,0,0]);
+    const output=processPhoto(input,420,240,1,1,1,id);
+    assert.notDeepEqual(pixel(output,420,300,30),pixel(output,420,301,30),id+' retains single-pixel detail past old native width');
+  }
 });
