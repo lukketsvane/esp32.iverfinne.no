@@ -4,22 +4,22 @@ const status=document.getElementById('status'),bar=document.getElementById('prog
 const allowed=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 const cameraName='entropi-camera-'+crypto.randomUUID();
 const scopePath=/^\/start(?:\/|$)/.test(new URL(location.href).pathname)?'/start/':'/prepare/',workerURL=new URL(scopePath+'sw.js',location.href).href;
-let peer=null,peerOrigin=null,manifest,ready=false,prepared=false,downloading=false,session=null,pending=null,closed=false,preparation=0,delivery=0,task=null,cameraConnected=false,launchFailed=false,launchTimer=0,cameraPort=null,resumeDownload=false,pendingUpdate=false;
+let peer=null,peerOrigin=null,manifest,ready=false,prepared=false,downloading=false,session=null,pending=null,closed=false,preparation=0,delivery=0,task=null,cameraConnected=false,launchFailed=false,launchTimer=0,cameraPort=null,resumeDownload=false,pendingUpdate=false,cameraError='',modelError='',modelMissing=false;
 if(transfer)try{const origin=new URL(document.referrer).origin;if(window.opener&&allowed.has(origin)){peer=window.opener;peerOrigin=origin}}catch{}
 const send=data=>{if(peer&&peerOrigin)peer.postMessage(data,peerOrigin)};
-function show(phase,message=''){
-  status.textContent=message;bar.hidden=phase!=='working'&&phase!=='launching'&&!downloading;next.hidden=transfer||!prepared&&!cameraConnected&&(phase==='working'||downloading);
-  retry.hidden=transfer?phase!=='error':prepared||downloading;retry.disabled=phase==='working'||phase==='launching'||!!launchTimer||session!==null;retry.textContent=phase==='error'?'Prøv 3D igjen':'Klargjer 3D';
-  const network=document.getElementById('network');network.hidden=cameraConnected||!prepared&&(phase==='working'||phase==='launching'||downloading);document.getElementById('connection-hint').hidden=cameraConnected;
-  openCamera.disabled=next.hidden||phase==='launching'||!!launchTimer||session!==null;openCamera.textContent=cameraConnected?'Tilbake til kameraet':launchFailed?'Prøv igjen':'Opne kameraet ↗';document.documentElement.dataset.ready=String(prepared);
+function show(phase){
+  status.textContent=cameraError||modelError;bar.hidden=transfer?phase!=='working'&&phase!=='launching'&&!downloading:!downloading&&!launchTimer&&session===null;next.hidden=transfer;
+  retry.hidden=transfer?phase!=='error':prepared||downloading||!modelMissing;retry.disabled=downloading||session!==null;retry.textContent=modelError?'Prøv 3D igjen':'Klargjer 3D';
+  const network=document.getElementById('network');network.hidden=transfer||cameraConnected;document.getElementById('connection-hint').hidden=cameraConnected;if(launchFailed)document.getElementById('connection-help').open=true;
+  openCamera.disabled=transfer||closed||!!launchTimer||session!==null&&!cameraConnected;openCamera.setAttribute('aria-disabled',String(openCamera.disabled));openCamera.textContent=cameraConnected?'Tilbake til kameraet':launchFailed?'Prøv igjen':'Opne kameraet ↗';document.documentElement.dataset.ready=String(prepared);
   applyUpdate();
 }
 function applyUpdate(){if(pendingUpdate&&!transfer&&!closed&&!downloading&&session===null&&(!peer||peer.closed)&&!document.hidden){pendingUpdate=false;location.reload()}}
 function cancelDelivery(){delivery++;session=null;const waiting=pending;pending=null;waiting?.reject(new DOMException('Avbrote.','AbortError'))}
 function stopLaunch(){clearTimeout(launchTimer);launchTimer=0}
 function closeCameraPort(){if(cameraPort){cameraPort.onmessage=null;cameraPort.close();cameraPort=null}}
-function waitForCamera(){stopLaunch();cameraConnected=false;launchFailed=false;bar.removeAttribute('value');show('launching');launchTimer=setTimeout(()=>{stopLaunch();if(closed)return;launchFailed=true;show('ready','Finn ikkje kameraet. Vel ENTROPI under Wi-Fi og prøv igjen.')},10000)}
-function fail(error,keepPrepared=false){if(keepPrepared){launchFailed=true;show('ready',error.message)}else{prepared=false;ready=false;show('error',error.message||'3D kunne ikkje klargjerast.')}send({type:'entropi-models-error',session,code:error.code||'PHONE_SETUP_FAILED',message:status.textContent})}
+function waitForCamera(){stopLaunch();cameraConnected=false;launchFailed=false;cameraError='';bar.removeAttribute('value');launchTimer=setTimeout(()=>{stopLaunch();if(closed)return;launchFailed=true;cameraError='Finn ikkje kameraet. Vel ENTROPI under Wi-Fi og prøv igjen.';show('ready')},10000);show('launching')}
+function fail(error,keepPrepared=false){modelError=error.message||'3D kunne ikkje klargjerast.';modelMissing=true;if(!keepPrepared){prepared=false;ready=false}show('error');send({type:'entropi-models-error',session,code:error.code||'PHONE_SETUP_FAILED',message:modelError})}
 
 async function controlled(){
   if(!navigator.serviceWorker)throw new Error('Opne klargjeringa i nettlesaren med internett.');
@@ -36,7 +36,7 @@ async function controlled(){
 }
 
 async function prepare(download=false,preserveCamera=false){
-  const generation=++preparation;task?.abort();const currentTask=task=new AbortController();let stallTimer;const watch=()=>{clearTimeout(stallTimer);stallTimer=setTimeout(()=>currentTask.abort(new Error('Nedlastinga stoppa. Prøv igjen med internett.')),30000)};cancelDelivery();if(!download&&!preserveCamera){closeCameraPort();cameraConnected=false}prepared=false;ready=false;downloading=download;bar.removeAttribute('value');show('working','');
+  const generation=++preparation;task?.abort();const currentTask=task=new AbortController();let stallTimer;const watch=()=>{clearTimeout(stallTimer);stallTimer=setTimeout(()=>currentTask.abort(new Error('Nedlastinga stoppa. Prøv igjen med internett.')),30000)};cancelDelivery();if(!download&&!preserveCamera){closeCameraPort();cameraConnected=false}prepared=false;ready=false;downloading=download;modelError='';modelMissing=false;bar.removeAttribute('value');show('working');
   try{
     if(transfer&&!peer)throw new Error('Opne klargjeringa frå kameraet i nettlesaren.');
     await controlled();if(closed||generation!==preparation)return;const response=await fetch('/pointcloud/models/manifest.json',{signal:currentTask.signal});if(!response.ok)throw new Error('Modellmanifestet manglar.');manifest=await response.json();
@@ -48,13 +48,13 @@ async function prepare(download=false,preserveCamera=false){
       await loadCachedAsset(manifest[key]);if(closed||generation!==preparation)return;completed+=manifest[key].bytes;
     }
     await navigator.storage?.persist?.().catch(()=>false);
-    if(closed||generation!==preparation)return;downloading=false;prepared=true;show('ready','');
-  }catch(error){if(!closed&&generation===preparation){downloading=false;if(!download&&!transfer&&error.code==='PHONE_SETUP_REQUIRED')show('photo');else fail(error)}}
+    if(closed||generation!==preparation)return;downloading=false;prepared=true;modelError='';show('ready');
+  }catch(error){if(!closed&&generation===preparation){downloading=false;if(!download&&!transfer&&error.code==='PHONE_SETUP_REQUIRED'){modelMissing=true;show('photo')}else fail(error)}}
   finally{clearTimeout(stallTimer)}
 }
 
 async function deliver(requestedSession){
-  const generation=++delivery;stopLaunch();session=requestedSession;bar.value=0;show('working');
+  const generation=++delivery;stopLaunch();session=requestedSession;let failed=false;bar.value=0;show('working');
   try{
     for(const [index,key] of ['asset','runtime'].entries()){
       const bytes=await loadCachedAsset(manifest[key]);if(closed||generation!==delivery)return;
@@ -65,17 +65,18 @@ async function deliver(requestedSession){
       });
       if(closed||generation!==delivery)return;bar.value=(index+1)/2*100;
     }
-    if(closed||generation!==delivery)return;prepared=true;send({type:'entropi-models-complete',session});if(transfer){show('waiting');setTimeout(()=>window.close(),150)}else if(cameraConnected)show('ready');else waitForCamera();
-  }catch(error){if(!closed&&generation===delivery)fail(error,!transfer&&prepared&&error.code!=='PHONE_SETUP_REQUIRED')}
-  finally{if(generation===delivery){session=null;pending=null;if(!launchTimer){openCamera.disabled=transfer;retry.disabled=false}}}
+    if(closed||generation!==delivery)return;prepared=true;modelError='';send({type:'entropi-models-complete',session});if(transfer){show('waiting');setTimeout(()=>window.close(),150)}else if(cameraConnected||launchFailed)show('ready');else waitForCamera();
+  }catch(error){if(!closed&&generation===delivery){failed=true;fail(error,!transfer&&prepared&&error.code!=='PHONE_SETUP_REQUIRED')}}
+  finally{if(generation===delivery){session=null;pending=null;show(failed?'error':'waiting')}}
 }
 
-openCamera.addEventListener('click',()=>{
+openCamera.addEventListener('click',event=>{
+  event.preventDefault();
   if(transfer||closed||openCamera.disabled)return;
   if(cameraConnected&&peer&&!peer.closed){try{peer.focus();return}catch{}}
   closeCameraPort();cancelDelivery();cameraConnected=false;peerOrigin=null;
   try{peer=window.open('http://192.168.4.1/?connect',cameraName)}catch{peer=null}
-  if(peer)waitForCamera();else{launchFailed=true;show('ready','Tillat opning av kameraet, og prøv igjen.')}
+  if(peer)waitForCamera();else{launchFailed=true;cameraError='Tillat opning av kameraet, og prøv igjen.';show('ready')}
 });
 retry.addEventListener('click',()=>void prepare(!transfer,true));
 document.getElementById('back').addEventListener('click',event=>{try{const previous=new URL(document.referrer);if(previous.origin===location.origin&&previous.pathname==='/'&&history.length>1){event.preventDefault();history.back()}}catch{}});
@@ -86,12 +87,12 @@ window.addEventListener('message',event=>{
     if(data?.type==='entropi-camera-ready'){
       const port=event.ports?.[0];if(!port)return;closeCameraPort();cameraPort=port;
       port.onmessage=message=>{if(closed||cameraPort!==port||message.data?.type!=='entropi-camera-left')return;closeCameraPort();stopLaunch();cameraConnected=false;peerOrigin=null;cancelDelivery();show('ready')};port.start();
-      stopLaunch();peerOrigin=event.origin;cameraConnected=true;launchFailed=false;show('ready');return;
+      stopLaunch();peerOrigin=event.origin;cameraConnected=true;launchFailed=false;cameraError='';show('ready');return;
     }
-    if(data?.type==='entropi-models-connect'){stopLaunch();peerOrigin=event.origin;bar.removeAttribute('value');show('working');send({type:'entropi-models-ready'});return}
+    if(data?.type==='entropi-models-connect'){peerOrigin=event.origin;bar.removeAttribute('value');show('working');send({type:'entropi-models-ready'});return}
   }
   if(transfer&&!ready||event.origin!==peerOrigin)return;
-  if(data?.type==='entropi-models-request'&&session===null&&typeof data.session==='string'&&data.session.length>0&&data.session.length<=128){if(!transfer&&!prepared){send({type:'entropi-models-error',session:data.session,code:'PHONE_SETUP_REQUIRED',message:'Klargjer 3D på telefonen med internett først.'});if(!downloading)show('error','Klargjer 3D på telefonen med internett først.')}else void deliver(data.session)}
+  if(data?.type==='entropi-models-request'&&session===null&&typeof data.session==='string'&&data.session.length>0&&data.session.length<=128){if(!transfer&&!prepared){send({type:'entropi-models-error',session:data.session,code:'PHONE_SETUP_REQUIRED',message:'Klargjer 3D på telefonen med internett først.'});if(!downloading){modelError='Klargjer 3D på telefonen med internett først.';modelMissing=true;show('error')}}else void deliver(data.session)}
   else if(data?.type==='entropi-model-ack'&&data.session===session&&pending&&data.key===pending.key)pending.resolve();
   else if(data?.type==='entropi-models-cancel'&&session!==null&&data.session===session){stopLaunch();cancelDelivery();show(prepared?'ready':'waiting')}
 });

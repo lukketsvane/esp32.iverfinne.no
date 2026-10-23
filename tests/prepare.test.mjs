@@ -14,7 +14,7 @@ function deferred(){let resolve;const promise=new Promise(yes=>{resolve=yes});re
 
 function harness(options={}){
   const elements=new Map(),events=new Map(),workerEvents=new Map(),timers=new Map(),messages=[],opened=[],reads={asset:0,runtime:0},downloads=[],registrations=[];let timerId=0,closed=0,focused=0,reloads=0;
-  for(const match of html.matchAll(/<\w+\b[^>]*\bid="([^"]+)"[^>]*>/g))elements.set(match[1],{hidden:/\bhidden\b/.test(match[0]),textContent:'',listeners:new Map(),addEventListener(name,listener){this.listeners.set(name,listener)},removeAttribute(name){delete this[name]},async click(event={}){this.listeners.get('click')?.(event);await flush()}});
+  for(const match of html.matchAll(/<\w+\b[^>]*\bid="([^"]+)"[^>]*>/g))elements.set(match[1],{hidden:/\bhidden\b/.test(match[0]),textContent:'',listeners:new Map(),attributes:new Map(),setAttribute(name,value){this.attributes.set(name,String(value))},addEventListener(name,listener){this.listeners.set(name,listener)},removeAttribute(name){delete this[name]},async click(event={}){this.listeners.get('click')?.({preventDefault(){},...event});await flush()}});
   const addEventListener=(name,listener)=>{if(!events.has(name))events.set(name,[]);events.get(name).push(listener)};
   const peer={closed:false,photo:null,focus(){focused++},postMessage:(data,target)=>messages.push({data,target})};
   const document={hidden:false,addEventListener,documentElement:{dataset:{}},referrer:options.referrer??origin+'/',getElementById:id=>elements.get(id)};
@@ -22,7 +22,7 @@ function harness(options={}){
   const context=vm.createContext({
     document,location:{origin:secure,href:secure+scope+(options.transfer?'?transfer':options.camera?'?camera':''),reload(){reloads++}},history:options.history,URL,AbortController,DOMException,Uint8Array,ArrayBuffer,crypto:webcrypto,
     window:{opener:options.transfer?peer:null,addEventListener,open(url,target){opened.push({url,target});if(options.popupBlocked)return null;peer.closed=false;peer.photo=null;return peer},close(){closed++}},
-    navigator:{onLine:options.onLine,serviceWorker:{controller,ready:Promise.resolve(registration),register:async(...args)=>{registrations.push(args);if(options.registrationError)throw options.registrationError;return registration},addEventListener(name,listener){if(!workerEvents.has(name))workerEvents.set(name,[]);workerEvents.get(name).push(listener)},removeEventListener(name,listener){workerEvents.set(name,(workerEvents.get(name)||[]).filter(value=>value!==listener))}},storage:{persist:async()=>true}},
+    navigator:{onLine:options.onLine,serviceWorker:options.noServiceWorker?undefined:{controller,ready:Promise.resolve(registration),register:async(...args)=>{registrations.push(args);if(options.registrationError)throw options.registrationError;await options.registration?.();return registration},addEventListener(name,listener){if(!workerEvents.has(name))workerEvents.set(name,[]);workerEvents.get(name).push(listener)},removeEventListener(name,listener){workerEvents.set(name,(workerEvents.get(name)||[]).filter(value=>value!==listener))}},storage:{persist:async()=>true}},
     fetch:async()=>({ok:true,json:async()=>manifest}),
     loadAsset:async(asset,progress,signal)=>{downloads.push(asset.key);await options.load?.(asset.key,{progress,signal});signal.throwIfAborted();progress(100);return bytes[asset.key].slice()},
     loadCachedAsset:async asset=>{const count=++reads[asset.key];if(options.read)await options.read(asset.key,count);return bytes[asset.key].slice()},
@@ -39,31 +39,30 @@ function harness(options={}){
   return {get:id=>elements.get(id),document,peer,messages,opened,reads,downloads,registrations,event,emit,connect,cameraReady,complete,expire,update,get closed(){return closed},get focused(){return focused},get reloads(){return reloads}};
 }
 
-test('QR preparation verifies both cached readbacks before revealing its camera action',async()=>{
+test('QR and camera are available while model readiness waits for both verified cache readbacks',async()=>{
   const asset=deferred(),runtime=deferred(),app=harness({read:key=>(key==='asset'?asset:runtime).promise});await flush();
-  assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('ready').hidden,true);assert.equal(app.get('network').hidden,true);assert.equal(app.get('open-camera').disabled,true);
+  assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('ready').hidden,false);assert.equal(app.get('network').hidden,false);assert.equal(app.get('open-camera').disabled,false);
   asset.resolve();await flush();assert.equal(app.reads.runtime,1);assert.equal(app.document.documentElement.dataset.ready,'false');
   runtime.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('ready').hidden,false);
   await app.get('open-camera').click();assert.equal(app.opened.length,1);
   assert.deepEqual(app.downloads,['asset','runtime']);assert.equal(app.opened[0].url,origin+'/?connect');assert.match(app.opened[0].target,/^entropi-camera-[0-9a-f-]+$/);
 });
 
-test('automatic preparation shows only progress without a skip action or loading caption',async()=>{
+test('automatic preparation keeps QR and camera usable without a skip action or loading caption',async()=>{
   const loading=deferred(),app=harness({load:key=>key==='asset'?loading.promise:undefined});await flush();
-  assert.equal(app.get('ready').hidden,true);assert.equal(app.get('retry').hidden,true);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);
-  await app.get('open-camera').click();assert.equal(app.opened.length,0);assert.doesNotMatch(source+html,/Berre foto|photoFlow|Klargjer …/);
-  loading.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('ready').hidden,false);await app.get('open-camera').click();assert.equal(app.opened.length,1);
+  assert.equal(app.get('ready').hidden,false);assert.equal(app.get('retry').hidden,true);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);
+  await app.get('open-camera').click();assert.equal(app.opened.length,1);assert.doesNotMatch(source+html,/Berre foto|photoFlow|Klargjer …/);
+  loading.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('ready').hidden,false);await app.cameraReady();await app.get('open-camera').click();assert.equal(app.opened.length,1);assert.equal(app.focused,1);
 });
 
 test('routine camera and transfer states stay silent while connection instructions remain available on demand',async()=>{
-  const app=harness();await flush();assert.equal(app.get('status').textContent,'');await app.connect();assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);await app.emit({type:'entropi-models-request',session:'silent'});assert.equal(app.get('status').textContent,'');await app.complete('silent');assert.equal(app.get('status').textContent,'');await app.cameraReady();assert.equal(app.get('status').textContent,'');assert.equal(app.get('open-camera').textContent,'Tilbake til kameraet');assert.match(html,/<details><summary>Hjelp<\/summary><p id="connection-hint">Hald inne/);assert.doesNotMatch(html,/Utan passord · utan internett|button\{[^}]*border:1px|button:focus-visible[^}]*outline:1px/);
+  const app=harness();await flush();assert.equal(app.get('status').textContent,'');await app.connect();assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);await app.emit({type:'entropi-models-request',session:'silent'});assert.equal(app.get('status').textContent,'');await app.complete('silent');assert.equal(app.get('status').textContent,'');await app.cameraReady();assert.equal(app.get('status').textContent,'');assert.equal(app.get('open-camera').textContent,'Tilbake til kameraet');assert.match(html,/Hald inne QR-koden og vel «Kople til nettverk»/);assert.match(html,/<code>http:\/\/192\.168\.4\.1<\/code>/);assert.match(html,/Advarsel om usikker forbindelse/);assert.doesNotMatch(html,/id="http-help" hidden|<strong>ENTROPI|\.network\{[^}]*border:|Utan passord · utan internett|button\{[^}]*border:1px|button:focus-visible[^}]*outline:1px/);
 });
 
-test('QR network instructions appear only after successful automatic preparation and hide on camera connection',async()=>{
+test('QR instructions are immediate and hide when a camera connects before models finish',async()=>{
   const loading=deferred(),app=harness({load:key=>key==='asset'?loading.promise:undefined});await flush();
-  assert.equal(app.get('network').hidden,true);assert.equal(app.get('retry').hidden,true);assert.equal(app.get('open-camera').disabled,true);
-  loading.resolve();await flush();assert.equal(app.get('network').hidden,false);assert.equal(app.document.documentElement.dataset.ready,'true');
-  await app.get('open-camera').click();await app.cameraReady();assert.equal(app.get('network').hidden,true);assert.equal(app.get('open-camera').textContent,'Tilbake til kameraet');
+  assert.equal(app.get('network').hidden,false);assert.equal(app.get('retry').hidden,true);assert.equal(app.get('open-camera').disabled,false);
+  await app.get('open-camera').click();await app.cameraReady();assert.equal(app.get('network').hidden,true);assert.equal(app.get('open-camera').textContent,'Tilbake til kameraet');assert.equal(app.document.documentElement.dataset.ready,'false');loading.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('network').hidden,true);
 });
 
 test('only the returned camera child and an allowed HTTP origin can start a retained transfer',async()=>{
@@ -123,7 +122,7 @@ test('failed cache verification shows retry and cannot advertise a prepared phon
 
 test('an unacknowledged transfer fails visibly and leaves the retained source available to retry',async()=>{
   const app=harness();await flush();await app.connect();await app.emit({type:'entropi-models-request',session:'timed-out'});await app.expire(60000);
-  assert.equal(app.closed,0);assert.equal(app.get('ready').hidden,false);assert.equal(app.get('open-camera').textContent,'Prøv igjen');assert.equal(app.document.documentElement.dataset.ready,'true');
+  assert.equal(app.closed,0);assert.equal(app.get('ready').hidden,false);assert.equal(app.get('open-camera').textContent,'Opne kameraet ↗');assert.equal(app.document.documentElement.dataset.ready,'true');
   assert.equal(app.messages.at(-1).data.type,'entropi-models-error');assert.equal(app.messages.at(-1).data.session,'timed-out');
   assert.equal(app.messages.some(message=>message.data.type==='entropi-models-complete'),false);
   await app.get('open-camera').click();assert.equal(app.opened.length,2);assert.equal(app.opened[0].target,app.opened[1].target);assert.equal(app.downloads.length,2);
@@ -151,9 +150,9 @@ test('only a known camera ready message enables a focus return that preserves it
 
 test('a protocol hello and model completion cannot claim the camera is ready',async()=>{
   const app=harness();await flush();await app.connect();await app.expire(10000);
-  assert.doesNotMatch(app.get('status').textContent,/Finn ikkje|Kameraet er klart/);
+  assert.match(app.get('status').textContent,/Finn ikkje kameraet/);const cameraError=app.get('status').textContent;
   await app.emit({type:'entropi-models-request',session:'current'});await app.complete('current');
-  assert.equal(app.get('status').textContent,'');assert.equal(app.get('open-camera').disabled,true);
+  assert.equal(app.get('status').textContent,cameraError);assert.equal(app.get('open-camera').disabled,false);assert.equal(app.get('connection-help').open,true);
   await app.cameraReady();await app.expire(10000);assert.equal(app.get('status').textContent,'');
 });
 
@@ -187,10 +186,10 @@ test('a blocked camera window leaves verified preparation intact for a launch re
   await app.get('open-camera').click();assert.equal(app.opened[0].target,app.opened[1].target);assert.deepEqual(app.downloads,['asset','runtime']);
 });
 
-test('a restored page revalidates model storage before revealing a new camera action',async()=>{
+test('a restored page keeps camera opening available while revalidating model storage',async()=>{
   const restored=deferred(),app=harness({read:(key,count)=>key==='asset'&&count===2?restored.promise:undefined});await flush();
   assert.equal(app.document.documentElement.dataset.ready,'true');await app.event('pagehide');await app.event('pageshow',{persisted:true});
-  assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('open-camera').disabled,true);
+  assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('open-camera').disabled,false);assert.equal(app.get('network').hidden,false);
   restored.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.reads.runtime,2);await app.get('open-camera').click();assert.equal(app.opened.length,1);
 });
 
@@ -219,9 +218,31 @@ test('success or failure copying models preserves a camera that already owns a p
     const app=harness();await flush();await app.get('open-camera').click();const port=await app.cameraReady();app.peer.photo='original-jpeg';
     await app.emit({type:'entropi-models-connect'});await app.emit({type:'entropi-models-request',session:'copy'});
     if(complete)await app.complete('copy');else await app.expire(60000);
-    await app.expire(10000);assert.equal(app.get('open-camera').textContent,'Tilbake til kameraet');assert.equal(app.get('open-camera').disabled,false);assert.equal(port.closed,false);
+    await app.expire(10000);assert.equal(app.get('open-camera').textContent,'Tilbake til kameraet');assert.equal(app.get('open-camera').disabled,false);assert.equal(app.get('progress').hidden,true);assert.equal(port.closed,false);
     await app.get('open-camera').click();assert.equal(app.focused,1);assert.equal(app.opened.length,1);assert.equal(app.peer.photo,'original-jpeg');
   }
+});
+
+test('initial HTML supplies visible QR and an actual HTTP camera link even if its module never loads',()=>{
+  assert.doesNotMatch(html,/<(?:section|div)\b[^>]*id="(?:ready|network)"[^>]*\bhidden\b/);assert.match(html,/<a id="open-camera" href="http:\/\/192\.168\.4\.1\/\?connect" target="_blank">/);assert.doesNotMatch(html,/id="http-help" hidden/);
+});
+
+test('unavailable or stalled model setup cannot disable the initial QR and camera action',async()=>{
+  const registration=deferred();
+  for(const options of[{noServiceWorker:true},{noController:true,registration:()=>registration.promise},{noController:true,registrationError:new Error('Worker unavailable')},{load:()=>{throw new Error('Internett manglar.')}}]){
+    const app=harness(options);await flush();assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('ready').hidden,false);assert.equal(app.get('network').hidden,false);assert.equal(app.get('open-camera').disabled,false);await app.get('open-camera').click();assert.equal(app.opened.length,1);await app.cameraReady();assert.equal(app.get('open-camera').textContent,'Tilbake til kameraet');assert.equal(app.document.documentElement.dataset.ready,'false');
+  }
+});
+
+test('model success or failure never erases a camera launch error or its manual HTTP help',async()=>{
+  for(const failed of[false,true]){
+    const loading=deferred(),app=harness({load:async key=>{if(key==='asset'){await loading.promise;if(failed)throw new Error('Modellnedlastinga feila.')}}});await flush();await app.connect();await app.expire(10000);const error=app.get('status').textContent;assert.match(error,/Finn ikkje kameraet/);assert.equal(app.get('connection-help').open,true);assert.equal(app.get('open-camera').disabled,false);
+    loading.resolve();await flush();assert.equal(app.get('status').textContent,error);assert.equal(app.document.documentElement.dataset.ready,String(!failed));assert.equal(app.get('network').hidden,false);assert.equal(app.get('open-camera').disabled,false);const port=await app.cameraReady();app.peer.photo='retained';assert.equal(app.get('status').textContent,failed?'Modellnedlastinga feila.':'');await app.get('open-camera').click();assert.equal(app.focused,1);assert.equal(app.peer.photo,'retained');assert.equal(port.closed,false);
+  }
+});
+
+test('retrying optional models and hello-only messages cannot block an already connected photo',async()=>{
+  let cached=false;const loading=deferred(),missing=()=>Object.assign(new Error('Missing'),{code:'PHONE_SETUP_REQUIRED'}),app=harness({camera:true,read:()=>{if(!cached)throw missing()},load:async()=>{await loading.promise;cached=true}});await flush();await app.get('open-camera').click();await app.cameraReady();app.peer.photo='retained';await app.emit({type:'entropi-models-connect'});assert.equal(app.get('retry').disabled,false);assert.equal(app.get('open-camera').disabled,false);await app.get('retry').click();assert.equal(app.get('retry').hidden,true);assert.equal(app.get('open-camera').disabled,false);await app.get('open-camera').click();assert.equal(app.focused,1);assert.equal(app.opened.length,1);assert.equal(app.peer.photo,'retained');loading.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');
 });
 
 test('BFCache restoration preserves the authenticated camera port and focuses its existing photo',async()=>{
