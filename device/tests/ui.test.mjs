@@ -29,7 +29,7 @@ function harness(options = {}) {
   const objectUrls = new Map();
   const sceneCalls = [];
   const viewers=[];
-  const printCalls = [], saves=[], encodedSnapshots=[];
+  const printCalls = [], saves=[], encodedSnapshots=[],photoViews=[];
   let printReport=()=>{};
   const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)},nativeSnapshot={width:640,height:960,data:new Uint8ClampedArray(640*960*4)};
   const modelChecks = [];
@@ -37,8 +37,8 @@ function harness(options = {}) {
   const opened = [];
   const messages = [];
   const studioBindings = [];
-  const studioControls = { image: 0, primitive: 0, dispose() {} };
-  const photoGestureState={scale:1,x:0,y:0,width:390,height:844},photoRefreshes=[];let photoGestureBinding,photoResets=0;
+  const studioControls = { image: 0, primitive: 0, photo:0, dispose() {} };
+  const photoGestureState={scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1},photoRefreshes=[];let photoGestureBinding,photoResets=0;
   const photoGestureController={state:photoGestureState,reset(){photoResets++;Object.assign(photoGestureState,{scale:1,x:0,y:0});photoGestureBinding.onChange(photoGestureState)},refresh(){photoRefreshes.push({working:elements.get('photo-dialog').classList.contains('working'),error:elements.get('photo-dialog').classList.contains('error')});photoGestureBinding.onChange(photoGestureState)},dispose(){}};
   const childWindow = { postMessage: (data, origin, ports) => messages.push({ data, origin, ports }) };
   class MessageChannel {
@@ -185,6 +185,7 @@ function harness(options = {}) {
     Viewfinder: class { constructor(canvas) { this.canvas = canvas; } },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
     attachPhotoGestures:(image,binding)=>{photoGestureBinding=binding;binding.onChange(photoGestureState);return photoGestureController},
+    createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
     phoneModelsReady: async signal => { modelChecks.push(signal); return typeof options.modelsReady==='function'?options.modelsReady(signal):options.modelsReady!==false; },
     requestPhoneModels: async (signal,onProgress,source) => { preparations.push({signal,onProgress,source}); if(options.prepare)await options.prepare(signal,onProgress,source); },
     createPrintClient:({report})=>{printReport=report;return {print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return options.print?options.print(image,isCurrent,report):Promise.resolve(true)},dispose(){}}},
@@ -226,7 +227,7 @@ function harness(options = {}) {
   function changeStudio(kind, level) { studioControls[kind] = level; for (const binding of studioBindings) binding.onChange(kind, level); }
   function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
-  return { elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, viewers, printCalls, saves, encodedSnapshots, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, photoRefreshes, gesturePhoto, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
+  return { elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, viewers, printCalls, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, photoRefreshes, gesturePhoto, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id) };
 }
 
 async function connectedCamera(options = {}) {
@@ -608,7 +609,7 @@ test('capture failure exposes only a transparent retry glyph and preserves the o
   assert.equal(app.elements.has('settings-dialog'),false);assert.equal(app.elements.has('settings-button'),false);
   assert.match(html,/<p id="notice" class="sr"/);assert.doesNotMatch(html,/drop-shadow/);
   await app.get('capture-plane').emit('click');const url=app.get('photo').src;
-  assert.equal(app.get('photo-icon').getAttribute('hidden'),'');assert.equal(app.get('thumbnail').hidden,false);
+  assert.equal(app.get('photo-icon'),undefined);assert.doesNotMatch(html,/id="photo-icon"/);assert.equal(app.get('thumbnail').hidden,false);
   await app.get('close-photo').emit('click');await app.get('capture-plane').emit('click');
   assert.equal(app.get('retry-capture').hidden,false);assert.equal(app.get('retry-capture').disabled,false);
   assert.match(app.get('notice').textContent,/ikkje takast/);assert.equal(app.get('thumbnail').src,url);
@@ -886,10 +887,20 @@ test('the click following a result double tap cannot capture another photo', asy
 });
 
 test('save is an action that encodes the displayed native photo framing without navigating its JPEG',async()=>{
-  const app=await connectedCamera();await app.get('capture-plane').emit('click');const url=app.get('photo').src;app.gesturePhoto({scale:2,x:30,y:-10});await app.get('save-photo').emit('click');assert.equal(app.get('save-photo').tagName,'BUTTON');assert.equal(app.get('save-photo').getAttribute('href'),null);assert.equal(app.saves.length,1);assert.equal(app.saves[0].blob.type,'image/png');assert.match(app.saves[0].name,/\.png$/);assert.equal(app.encodedSnapshots[0].native,true);assert.deepEqual(app.encodedSnapshots[0].pose,{scale:2,x:30,y:-10,width:390,height:844});assert.equal(app.get('photo').src,url);assert.equal(app.saves[0].isCurrent(),true);
+  const app=await connectedCamera();await app.get('capture-plane').emit('click');const url=app.get('photo').src;app.gesturePhoto({scale:2,x:30,y:-10});await app.get('save-photo').emit('click');assert.equal(app.get('save-photo').tagName,'BUTTON');assert.equal(app.get('save-photo').getAttribute('href'),null);assert.equal(app.saves.length,1);assert.equal(app.saves[0].blob.type,'image/png');assert.match(app.saves[0].name,/\.png$/);assert.equal(app.encodedSnapshots[0].native,true);assert.deepEqual(app.encodedSnapshots[0].pose,{scale:2,x:30,y:-10,width:390,height:844,grain:1,contrast:1});assert.equal(app.get('photo').src,url);assert.equal(app.saves[0].isCurrent(),true);
   await app.get('close-photo').emit('click');assert.equal(app.saves[0].isCurrent(),false);await app.get('capture-plane').emit('click');assert.equal(app.saves[0].isCurrent(),false);
 });
 
 test('splat saving requests its native current palette instead of the source image or print resolution',async()=>{
   let level=0;const flags=[],native={width:640,height:960,data:new Uint8ClampedArray(640*960*4)};const app=await connectedCamera({splats:true,scene:async()=>({dispose(){},setPrimitiveLevel:value=>level=value,snapshot:nativeSize=>{flags.push(nativeSize);return {...native,level}}})});await app.get('capture-plane').emit('click');await app.tick(0);app.changeStudio('primitive',2);await app.get('save-photo').emit('click');assert.deepEqual(flags,[true]);assert.equal(app.encodedSnapshots[0].width,640);assert.equal(app.encodedSnapshots[0].height,960);assert.equal(app.encodedSnapshots[0].level,2);assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.sceneCalls.length,1);
+});
+
+test('photo style and three-finger tone feed the rendered save and print source without model work',async()=>{
+  const app=await connectedCamera({modelsReady:false});await app.get('capture-plane').emit('click');const view=app.photoViews[0],url=app.get('photo').src;assert.equal(view.source.naturalWidth,1600);assert.notEqual(view.source,app.get('photo'));assert.equal(view.shown,true);app.changeStudio('photo',1);const refreshes=view.refreshes;assert.equal(app.gesturePhoto({grain:4,contrast:1.8,scale:2,x:30,y:-10}),true);assert.deepEqual(view.tone,{grain:4,contrast:1.8});assert.ok(view.refreshes>refreshes);
+  await app.get('save-photo').emit('click');await app.get('print-photo').emit('click');for(const output of [app.encodedSnapshots[0],app.printCalls[0].image]){assert.equal(output.style,1);assert.deepEqual(output.tone,{grain:4,contrast:1.8});assert.equal(output.photo,true)}assert.deepEqual(view.snapshots.map(call=>call.native),[true,false]);assert.equal(app.sceneCalls.length,0);assert.equal(app.modelChecks.length,0);assert.equal(app.get('photo').src,url);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  await app.get('close-photo').emit('click');assert.equal(view.shown,false);await app.get('last-photo').emit('click');assert.equal(view.shown,true);assert.equal(view.sources.length,1);assert.equal(view.style,1);assert.deepEqual(view.tone,{grain:4,contrast:1.8});
+});
+
+test('photo and splat styles stay independent while the same original JPEG and scene are reused',async()=>{
+  const styles=[],app=await connectedCamera({scene:async()=>({dispose(){},setPrimitiveLevel:value=>styles.push(value)})});await app.get('capture-plane').emit('click');const view=app.photoViews[0],url=app.get('photo').src;app.changeStudio('photo',3);app.changeStudio('image',1);await app.tick(0);assert.equal(view.shown,false);app.changeStudio('primitive',2);assert.equal(styles.at(-1),2);app.changeStudio('image',0);assert.equal(view.shown,true);assert.equal(view.style,3);app.changeStudio('photo',1);app.changeStudio('image',1);await app.tick(0);assert.equal(app.sceneCalls.length,1);assert.equal(app.studioControls.primitive,2);assert.equal(view.style,1);assert.equal(view.sources.length,1);assert.equal(app.get('photo').src,url);
 });

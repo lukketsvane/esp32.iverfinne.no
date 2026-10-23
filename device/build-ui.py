@@ -19,6 +19,9 @@ studio += "\n" + (shared / "vendor/photo-gestures.mjs").read_text(encoding="utf-
 printing = (shared / "vendor/print-client.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing = "const createPrintClient = (() => {\n" + printing + "\nreturn createPrintClient;\n})();"
 printing += "\n" + (shared / "vendor/photo.mjs").read_text(encoding="utf-8").replace("export ", "")
+photo_view = (shared / "vendor/photo-view.mjs").read_text(encoding="utf-8").replace("export ", "")
+photo_view = re.sub(r"^import .*?;\s*", "", photo_view, flags=re.MULTILINE)
+printing += "\n" + photo_view
 assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)

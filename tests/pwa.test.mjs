@@ -87,7 +87,7 @@ test('the more specific preparation worker keeps branding and registration avail
 
 test('the canonical start route reuses existing sources with its own offline cache family',async()=>{
   const app=serviceWorker(prepare,undefined,{scriptPath:'/start/sw.js'});app.stores.set('entropi-prepare-v5',new Map());app.stores.set('entropi-app-v4',new Map());app.stores.set('entropi-start-old',new Map());await app.lifecycle('install');await app.lifecycle('activate');
-  assert.equal(app.name,'entropi-start-v1');assert.deepEqual(app.deleted,['entropi-start-old']);assert.ok(app.stores.has('entropi-prepare-v5'));assert.ok(app.stores.has('entropi-app-v4'));
+  assert.equal(app.name,'entropi-start-v2');assert.deepEqual(app.deleted,['entropi-start-old']);assert.ok(app.stores.has('entropi-prepare-v5'));assert.ok(app.stores.has('entropi-app-v4'));
   for(const path of['/start/','/start/index.html','/start/?camera'])assert.equal(await(await app.request(path)).text(),'cached:/prepare/');
   const config=JSON.parse(await read('vercel.json'));for(const path of['/start','/start/','/start/index.html','/start/sw.js'])assert.equal(config.rewrites.find(route=>route.source===path)?.destination,path.endsWith('sw.js')?'/prepare/sw.js':'/prepare/index.html');
 });

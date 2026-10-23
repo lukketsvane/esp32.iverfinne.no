@@ -39,26 +39,25 @@ function harness(options={}){
   return {get:id=>elements.get(id),document,peer,messages,opened,reads,downloads,registrations,event,emit,connect,cameraReady,complete,expire,update,get closed(){return closed},get focused(){return focused},get reloads(){return reloads}};
 }
 
-test('QR preparation verifies both cached readbacks while photo opening stays available',async()=>{
+test('QR preparation verifies both cached readbacks before revealing its camera action',async()=>{
   const asset=deferred(),runtime=deferred(),app=harness({read:key=>(key==='asset'?asset:runtime).promise});await flush();
-  assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('ready').hidden,false);assert.equal(app.get('network').hidden,true);
+  assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('ready').hidden,true);assert.equal(app.get('network').hidden,true);assert.equal(app.get('open-camera').disabled,true);
   asset.resolve();await flush();assert.equal(app.reads.runtime,1);assert.equal(app.document.documentElement.dataset.ready,'false');
   runtime.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('ready').hidden,false);
   await app.get('open-camera').click();assert.equal(app.opened.length,1);
   assert.deepEqual(app.downloads,['asset','runtime']);assert.equal(app.opened[0].url,origin+'/?connect');assert.match(app.opened[0].target,/^entropi-camera-[0-9a-f-]+$/);
 });
 
-test('skipping automatic preparation reveals Wi-Fi before opening any HTTP camera window',async()=>{
+test('automatic preparation shows only progress without a skip action or loading caption',async()=>{
   const loading=deferred(),app=harness({load:key=>key==='asset'?loading.promise:undefined});await flush();
-  assert.equal(app.get('open-camera').textContent,'Berre foto');await app.get('open-camera').click();
-  assert.equal(app.opened.length,0);assert.equal(app.get('network').hidden,false);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,true);assert.equal(app.document.documentElement.dataset.ready,'false');
-  assert.equal(app.get('open-camera').textContent,'Opne kameraet ↗');await app.get('open-camera').click();assert.equal(app.opened.length,1);
-  loading.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'false');
+  assert.equal(app.get('ready').hidden,true);assert.equal(app.get('retry').hidden,true);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);
+  await app.get('open-camera').click();assert.equal(app.opened.length,0);assert.doesNotMatch(source+html,/Berre foto|photoFlow|Klargjer …/);
+  loading.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('ready').hidden,false);await app.get('open-camera').click();assert.equal(app.opened.length,1);
 });
 
 test('QR network instructions appear only after successful automatic preparation and hide on camera connection',async()=>{
   const loading=deferred(),app=harness({load:key=>key==='asset'?loading.promise:undefined});await flush();
-  assert.equal(app.get('network').hidden,true);assert.equal(app.get('retry').hidden,true);assert.equal(app.get('open-camera').disabled,false);
+  assert.equal(app.get('network').hidden,true);assert.equal(app.get('retry').hidden,true);assert.equal(app.get('open-camera').disabled,true);
   loading.resolve();await flush();assert.equal(app.get('network').hidden,false);assert.equal(app.document.documentElement.dataset.ready,'true');
   await app.get('open-camera').click();await app.cameraReady();assert.equal(app.get('network').hidden,true);assert.equal(app.get('open-camera').textContent,'Tilbake til kameraet');
 });
@@ -184,10 +183,10 @@ test('a blocked camera window leaves verified preparation intact for a launch re
   await app.get('open-camera').click();assert.equal(app.opened[0].target,app.opened[1].target);assert.deepEqual(app.downloads,['asset','runtime']);
 });
 
-test('a restored page revalidates model storage without gating photo opening',async()=>{
+test('a restored page revalidates model storage before revealing a new camera action',async()=>{
   const restored=deferred(),app=harness({read:(key,count)=>key==='asset'&&count===2?restored.promise:undefined});await flush();
   assert.equal(app.document.documentElement.dataset.ready,'true');await app.event('pagehide');await app.event('pageshow',{persisted:true});
-  assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('open-camera').disabled,false);
+  assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('open-camera').disabled,true);
   restored.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.reads.runtime,2);await app.get('open-camera').click();assert.equal(app.opened.length,1);
 });
 
@@ -244,12 +243,11 @@ test('stalled downloads fail with a retry while preserving camera opening',async
   assert.match(app.get('status').textContent,/Nedlastinga stoppa/);assert.equal(app.get('retry').hidden,false);assert.equal(app.get('open-camera').disabled,false);assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('network').hidden,false);
 });
 
-test('BFCache resumes interrupted automatic preparation but never restarts an explicit photo skip',async()=>{
-  for(const skip of[false,true]){
-    let attempts=0;const app=harness({load:(_, {signal})=>{if(attempts++===0)return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason)))},read:()=>{if(skip)throw Object.assign(new Error('Missing'),{code:'PHONE_SETUP_REQUIRED'})}});await flush();
-    if(skip)await app.get('open-camera').click();await app.event('pagehide',{persisted:true});await app.event('pageshow',{persisted:true});
-    assert.equal(app.document.documentElement.dataset.ready,skip?'false':'true');assert.equal(app.downloads.length,skip?1:3);
-  }
+test('BFCache resumes interrupted automatic preparation while camera entry remains cache only',async()=>{
+  let attempts=0;const app=harness({load:(_, {signal})=>{if(attempts++===0)return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason)))}});await flush();
+  await app.event('pagehide',{persisted:true});await app.event('pageshow',{persisted:true});assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.downloads.length,3);
+  const camera=harness({camera:true,read:()=>{throw Object.assign(new Error('Missing'),{code:'PHONE_SETUP_REQUIRED'})}});await flush();await camera.event('pagehide',{persisted:true});await camera.event('pageshow',{persisted:true});
+  assert.equal(camera.document.documentElement.dataset.ready,'false');assert.equal(camera.downloads.length,0);assert.equal(camera.get('open-camera').disabled,false);
 });
 
 test('only its controlling worker may request an idle onboarding refresh',async()=>{

@@ -31,7 +31,7 @@ export function snapshotBlob(image){
   return new Blob([bytes],{type:'image/png'});
 }
 
-export function photoSnapshot(image,pose,native=false){
+export function photoSnapshot(image,pose,native=false,nearest=false){
   const width=image.naturalWidth||image.width,height=image.naturalHeight||image.height;
   if(!width||!height)throw new Error('Fotoet er ikkje klart.');
   let x=0,y=0,w=width,h=height;
@@ -41,7 +41,7 @@ export function photoSnapshot(image,pose,native=false){
   }
   const canvas=document.createElement('canvas');canvas.width=native?Math.max(1,Math.round(w)):384;canvas.height=native?Math.max(1,Math.round(h)):Math.max(1,Math.min(1024,Math.round(384*h/w)));
   const context=canvas.getContext('2d');if(!context)throw new Error('Kunne ikkje lese fotoet.');
-  context.drawImage(image,x,y,w,h,0,0,canvas.width,canvas.height);
+  context.imageSmoothingEnabled=!nearest;context.drawImage(image,x,y,w,h,0,0,canvas.width,canvas.height);
   const data=context.getImageData(0,0,canvas.width,canvas.height).data;
   for(let i=0;i<data.length;i+=4){const value=Math.round(data[i]*.2126+data[i+1]*.7152+data[i+2]*.0722);data[i]=data[i+1]=data[i+2]=value}
   return {width:canvas.width,height:canvas.height,data,photo:true};

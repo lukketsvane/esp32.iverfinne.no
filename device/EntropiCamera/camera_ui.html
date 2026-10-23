@@ -23,7 +23,7 @@
 <button id="retry-capture" class="access-control capture-retry" aria-label="Ta foto på nytt" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v5h-5"/></svg></button>
 <p id="notice" class="sr" role="status" aria-live="polite"></p>
 <button id="connection" class="access-control top right" aria-label="Wi-Fi og tilkopling"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8a14 14 0 0 1 18 0M6 11a9 9 0 0 1 12 0m-9 3a4 4 0 0 1 6 0"/><circle cx="12" cy="18" r=".7"/></svg><span id="connection-label" class="sr"></span></button>
-<button id="last-photo" class="access-control" aria-label="Opne siste foto" hidden><svg id="photo-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m5 16 4-4 4 4 3-3 4 4"/></svg><img id="thumbnail" alt="" width="28" height="28" hidden></button>
+<button id="last-photo" class="access-control" aria-label="Opne siste foto" hidden><img id="thumbnail" alt="" width="28" height="28" hidden></button>
 </main>
 <dialog id="onboarding" class="sheet" aria-labelledby="onboarding-title"><div class="sheet-content"><div class="handle"></div><div class="sheet-head"><span class="eyebrow">ENTROPI</span><button id="close-onboarding" class="icon" aria-label="Lukk tilkopling"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><h1 id="onboarding-title">Fullfør tilkoplinga</h1><p id="onboarding-copy"></p><div id="onboarding-feedback" class="feedback" role="status" aria-live="polite"></div><a id="onboarding-prepare" class="primary" href="https://esp32.iverfinne.no/start/" target="_blank" rel="noopener">Klargjer i nettlesaren ↗</a><button id="onboarding-next" class="quiet">Allereie klargjord? Fullfør</button><details id="onboarding-help"><summary>Treng du hjelp?</summary><p>Klargjer telefonen med internett før du koplar til ENTROPI. Nettet er ope og fungerer utan internett.</p><p>Opne 192.168.4.1 i nettlesaren. Kjem Wi-Fi-vindauget tilbake, slå av Autopålogging for ENTROPI.</p></details></div></dialog>
 <dialog id="photo-dialog" class="review" aria-label="Biletet ditt">
@@ -62,9 +62,10 @@ finder.source=source;
 const live=new Image();live.crossOrigin='anonymous';
 const streamUrl=new URL('/stream',location.href);streamUrl.port='81';
 let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',parentReady=false,parentPort=null,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,sceneError='',sceneMessage='',captureAfter=0,captureTask=null,captureFailed=false,printBusy=false,printTimer=0;
-let reviewDown=null,reviewTap=null,photoGestures=null,photoPose={scale:1,x:0,y:0};
-const studioControls=attachStudioControls([studio,photoDialog],(kind,level)=>{reviewDown=reviewTap=null;if(kind==='primitive')sceneViewer?.setPrimitiveLevel(level);else if(kind==='image'){refreshReview();if(photoDialog.open&&level===1)void makeScene()}},()=>!onboarding.open,()=>{reviewDown=reviewTap=null});
-photoGestures=attachPhotoGestures($('photo'),{enabled:()=>photoDialog.open&&studioControls.image===0&&!onboarding.open,onChange:pose=>{if(pose.scale!==photoPose.scale||pose.x!==photoPose.x||pose.y!==photoPose.y){reviewDown=reviewTap=null;photoPose={scale:pose.scale,x:pose.x,y:pose.y}}updateRecenter()}});
+let reviewDown=null,reviewTap=null,photoGestures=null,photoPose={scale:1,x:0,y:0,grain:1,contrast:1};
+const photoView=createPhotoView($('photo'));
+const studioControls=attachStudioControls([studio,photoDialog],(kind,level)=>{reviewDown=reviewTap=null;if(kind==='primitive')sceneViewer?.setPrimitiveLevel(level);else if(kind==='photo')photoView.setStyle(level);else if(kind==='image'){refreshReview();if(photoDialog.open&&level===1)void makeScene()}},()=>!onboarding.open,()=>{reviewDown=reviewTap=null});
+photoGestures=attachPhotoGestures($('photo'),{enabled:()=>photoDialog.open&&studioControls.image===0&&!onboarding.open,onChange:pose=>{if(pose.scale!==photoPose.scale||pose.x!==photoPose.x||pose.y!==photoPose.y||pose.grain!==photoPose.grain||pose.contrast!==photoPose.contrast){reviewDown=reviewTap=null;photoPose={scale:pose.scale,x:pose.x,y:pose.y,grain:pose.grain,contrast:pose.contrast}}photoView.setTone(pose);photoView.refresh();updateRecenter()}});
 const printClient=createPrintClient({report:printFeedback});
 const reviewing=()=>photoDialog.open;
 function notice(text,transient=false){clearTimeout(noticeTimer);$('notice').textContent=text;if(transient)noticeTimer=setTimeout(()=>{$('notice').textContent=''},4500)}
@@ -73,7 +74,7 @@ async function printCurrent(){
   if(printBusy||!photoDialog.open||!photoBlob||studioControls.image===1&&!sceneVisible)return;
   const mode=studioControls.image,blob=photoBlob,source=sceneViewer;
   printBusy=true;refreshReview();printFeedback('Opnar skrivaren …');
-  try{await printClient.print(mode===0?photoSnapshot($('photo'),photoGestures.state):source.snapshot(),()=>photoDialog.open&&photoBlob===blob&&studioControls.image===mode&&(mode===0||source===sceneViewer))}
+  try{await printClient.print(mode===0?photoView.snapshot(photoGestures.state):source.snapshot(),()=>photoDialog.open&&photoBlob===blob&&studioControls.image===mode&&(mode===0||source===sceneViewer))}
   catch(error){printFeedback(error.message||'Kunne ikkje skrive ut.')}
   finally{printBusy=false;refreshReview()}
 }
@@ -172,7 +173,7 @@ async function showPhoto(blob,signal){
   clearScene();
   printFeedback('');
   photoBlob=blob;photoUrl=url;photoName='entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.jpg';
-  $('photo').src=url;$('thumbnail').src=url;$('thumbnail').hidden=false;$('photo-icon').setAttribute('hidden','');$('last-photo').hidden=false;
+  $('photo').src=url;$('thumbnail').src=url;$('thumbnail').hidden=false;photoView.setSource(img);$('last-photo').hidden=false;
   if(!photoDialog.open)photoDialog.showModal();
   photoGestures.reset();
   refreshReview();if(studioControls.image===1)void makeScene();
@@ -198,6 +199,7 @@ function refreshReview(){
   sceneVisible=open&&splats&&!!sceneViewer&&!sceneError;$('scene').hidden=!sceneVisible;$('photo').hidden=sceneVisible;
   if(sceneVisible&&!wasVisible&&sceneViewer.refresh?.()===false&&!sceneError)sceneError='3D-visinga er ikkje tilgjengeleg. Prøv igjen.';
   sceneVisible=open&&splats&&!!sceneViewer&&!sceneError;$('scene').hidden=!sceneVisible;$('photo').hidden=sceneVisible;
+  photoView.show(open&&!splats);
   const failed=needsSetup||!!sceneError;
   photoDialog.classList.toggle('working',open&&splats&&pending);photoDialog.classList.toggle('error',open&&splats&&failed&&!pending);
   if(open&&!splats)photoGestures.refresh?.();
@@ -232,7 +234,7 @@ async function makeScene(){
   }finally{if(sceneTask===task){sceneTask=null;refreshReview()}}
 }
 $('capture-plane').addEventListener('click',takePhoto);$('retry-capture').addEventListener('click',takePhoto);
-$('save-photo').addEventListener('click',async()=>{const blob=photoBlob;if(blob)try{const image=snapshotBlob(studioControls.image===1&&sceneVisible?sceneViewer.snapshot(true):photoSnapshot($('photo'),photoGestures.state,true));await savePhoto(image,photoName.replace(/\.[^.]+$/,'')+'.png',()=>photoBlob===blob&&photoDialog.open)}catch(error){printFeedback(error.message)}});
+$('save-photo').addEventListener('click',async()=>{const blob=photoBlob;if(blob)try{const image=snapshotBlob(studioControls.image===1&&sceneVisible?sceneViewer.snapshot(true):photoView.snapshot(photoGestures.state,true));await savePhoto(image,photoName.replace(/\.[^.]+$/,'')+'.png',()=>photoBlob===blob&&photoDialog.open)}catch(error){printFeedback(error.message)}});
 $('connection').addEventListener('click',showOnboarding);
 $('onboarding-next').addEventListener('click',()=>{if(studioControls.image===1&&!phoneReady)void setupPhone();else if(connected)onboarding.close();else connect()});
 $('onboarding').addEventListener('cancel',event=>{event.preventDefault();closeOnboarding()});$('close-onboarding').addEventListener('click',closeOnboarding);
