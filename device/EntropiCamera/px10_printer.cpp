@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <esp32-hal-alloc-ble-mem.h>
 #include <esp32-hal-bt.h>
+#include "esp_bt.h"
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gattc_api.h"
