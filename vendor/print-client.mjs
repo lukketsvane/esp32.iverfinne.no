@@ -12,7 +12,7 @@ export function createPrintClient({printer,buildJob,report=()=>{}}={}){
     try{
       if(printer){
         const connecting=printer.device?printer.start():printer.choose();
-        if(!await connecting||!printer.ready){if(!disposed)report(printer.supported?'Skrivaren er ikkje tilkopla.':'Bluetooth er ikkje tilgjengeleg i denne nettlesaren.');return false}
+        if(!await connecting||!printer.ready){if(!disposed)report(printer.lastError||(printer.supported?'Skrivaren er ikkje tilkopla.':'Bluetooth er ikkje tilgjengeleg i denne nettlesaren.'));return false}
         if(disposed||!isCurrent())return false;
         const job=buildJob(image);if(disposed||!isCurrent())return false;
         const accepted=printer.enqueue('entropi-'+fresh(),job);if(accepted){attempted.add(image);report('Sender til skrivaren …')}return accepted;
@@ -37,7 +37,7 @@ export function createPrintClient({printer,buildJob,report=()=>{}}={}){
           }else if(data.type==='entropi-print-started'&&sent)attempted.add(image);
           else if(data.type==='entropi-print-result'&&sent&&typeof data.ok==='boolean')finish(data.ok,data.ok?'Sendt til skrivaren.':data.message||'Utskrifta vart avbroten.');
         };
-        const timer=setTimeout(()=>finish(false,'Skrivarsida svara ikkje. Prøv igjen.'),120000);
+        const timer=setTimeout(()=>finish(false,'Skrivarsida svara ikkje. Prøv igjen.'),300000);
         const poll=setInterval(()=>{if(disposed||!isCurrent()||popup.closed)finish(false)},250);
         pending=()=>finish(false);window.addEventListener('message',messageReceived);
       });

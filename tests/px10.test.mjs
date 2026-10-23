@@ -148,6 +148,105 @@ test('partial failure never resends that result after reconnecting', async t => 
   assert.equal(fake.writes.length, 1);
 });
 
+test('default writes remain ordered and at least 50 milliseconds apart', async t => {
+  const times = [], fake = fakeBLE({ write: async () => { times.push(Date.now()); } });
+  const printer = new PX10Printer({ bluetooth: () => fake.bluetooth, storage: () => fake.storage });
+  t.after(() => printer.dispose()); await printer.choose();
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  const bytes = Uint8Array.from({ length: 60 }, (_, i) => i), sending = printer.send('paced', bytes);
+  await flush(); assert.deepEqual(times, [10000]);
+  t.mock.timers.tick(49); await flush(); assert.equal(times.length, 1);
+  t.mock.timers.tick(1); await flush(); assert.deepEqual(times, [10000, 10050]);
+  t.mock.timers.tick(50); await sending;
+  assert.deepEqual(times, [10000, 10050, 10100]);
+  assert.deepEqual(joinBytes(fake.writes), bytes); assert.ok(fake.writes.every(chunk => chunk.length === 20));
+});
+
+test('discovery quota stops alternate discovery and all connection requests until explicit retry after a minute', async t => {
+  const fake = fakeBLE(), printer = printerFor(fake); t.after(() => printer.dispose());
+  const discover = fake.device.gatt.getPrimaryService, events = [];
+  printer.addEventListener('status', event => events.push(event.detail));
+  fake.device.gatt.getPrimaryService = async id => {
+    fake.services.push(id); throw Object.assign(new Error('Native quota'), { code: 'RATE_LIMIT' });
+  };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  assert.equal(await printer.choose(), false);
+  assert.deepEqual(fake.services, [UUID('ae30')]); assert.equal(fake.connections(), 1);
+  assert.equal(printer.lastError, 'Vent eitt minutt før nytt forsøk.');
+  assert.equal(events.at(-1).state, 'failed'); assert.equal(events.filter(event => event.state === 'failed').length, 1);
+  assert.equal(printer.active, false); assert.equal(printer.retryTimer, null);
+  t.mock.timers.tick(59999);
+  assert.equal(await printer.start(), false); assert.equal(await printer.choose(), false); assert.equal(await printer.link(), false);
+  assert.equal(fake.connections(), 1); assert.equal(fake.choices(), 1);
+  fake.device.gatt.getPrimaryService = discover;
+  t.mock.timers.tick(1); await Promise.resolve(); assert.equal(fake.connections(), 1);
+  assert.equal(await printer.start(), true); assert.equal(printer.ready, true); assert.equal(printer.lastError, '');
+  assert.equal(fake.connections(), 2); assert.equal(fake.writes.length, 0);
+});
+
+test('restore and chooser quotas are exposed without repeated native requests', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  for (const [method, error] of [
+    ['getDevices', { code: 'RATE_LIMIT_EXCEEDED', message: 'Native quota' }],
+    ['requestDevice', new Error('Too many BLE requests')]
+  ]) {
+    const fake = fakeBLE(), printer = printerFor(fake); t.after(() => printer.dispose());
+    let calls = 0; fake.bluetooth[method] = () => { calls++; return Promise.reject(error); };
+    assert.equal(await printer[method === 'getDevices' ? 'start' : 'choose'](), false);
+    assert.equal(printer.lastError, 'Vent eitt minutt før nytt forsøk.');
+    assert.equal(await printer.start(), false); assert.equal(await printer.choose(), false);
+    t.mock.timers.tick(60000); await Promise.resolve();
+    assert.equal(calls, 1); assert.equal(fake.connections(), 0); assert.equal(printer.retryTimer, null);
+  }
+});
+
+test('partial write quota clears queued jobs, blocks retries and never replays after cooldown', async t => {
+  let release, limited = true;
+  const fake = fakeBLE({ write: async (_, index) => {
+    if (index === 0) await new Promise(resolve => { release = resolve; });
+    if (limited && index === 1) throw new Error('Rate limit exceeded — too many BLE requests');
+  } });
+  const printer = printerFor(fake); t.after(() => printer.dispose()); await printer.choose();
+  const events = []; printer.addEventListener('status', event => events.push(event.detail));
+  t.mock.timers.enable({ apis: ['Date'], now: 10000 });
+  const sending = printer.send('partial-quota', new Uint8Array(60));
+  assert.equal(printer.enqueue('queued', new Uint8Array(20)), true); release();
+  await assert.rejects(sending, /Rate limit/);
+  assert.equal(fake.writes.length, 1); assert.equal(printer.queue.length, 0); assert.equal(printer.retryTimer, null);
+  assert.equal(events.at(-1).message, 'Vent eitt minutt før nytt forsøk.'); assert.equal(events.at(-1).bytes, 20);
+  assert.equal(events.some(event => event.state === 'sent' || event.state === 'reconnecting'), false);
+  assert.equal(printer.enqueue('blocked', new Uint8Array(20)), false);
+  assert.equal(await printer.start(), false); assert.equal(await printer.choose(), false); assert.equal(await printer.link(), false);
+  await assert.rejects(printer.send('blocked', new Uint8Array(20)), /Vent eitt minutt/);
+  assert.equal(fake.connections(), 1); assert.equal(fake.choices(), 1);
+  t.mock.timers.tick(60000); await Promise.resolve(); assert.equal(fake.connections(), 1);
+  limited = false; assert.equal(await printer.start(), true); assert.equal(printer.lastError, '');
+  await assert.rejects(printer.send('partial-quota', new Uint8Array(60)), /alt forsøkt/);
+  assert.equal(printer.enqueue('queued', new Uint8Array(20)), false); assert.equal(fake.writes.length, 1);
+  await printer.send('fresh', new Uint8Array(20)); assert.equal(fake.writes.length, 2);
+});
+
+test('quota cooldown survives helper replacement and storage failure still blocks the current instance', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  const fake = fakeBLE(); let requests = 0;
+  const getDevices = fake.bluetooth.getDevices;
+  fake.bluetooth.getDevices = () => { requests++; return Promise.reject({ code: 'RATE_LIMIT' }); };
+  const first = printerFor(fake); assert.equal(await first.start(), false); first.dispose();
+  const reloaded = printerFor(fake); t.after(() => reloaded.dispose());
+  assert.equal(reloaded.lastError, 'Vent eitt minutt før nytt forsøk.');
+  assert.equal(await reloaded.start(), false); assert.equal(await reloaded.choose(), false);
+  assert.equal(requests, 1); assert.equal(fake.choices(), 0); assert.equal(fake.connections(), 0);
+  t.mock.timers.tick(60000); await Promise.resolve(); assert.equal(requests, 1);
+  fake.bluetooth.getDevices = getDevices; fake.grant();
+  assert.equal(await reloaded.start(), true); assert.equal(reloaded.lastError, ''); assert.equal(fake.connections(), 1);
+  const denied = printerFor(fake, { storage: () => { throw new Error('Storage denied'); } });
+  t.after(() => denied.dispose());
+  fake.bluetooth.getDevices = () => { requests++; return Promise.reject(new Error('Rate-limit exceeded')); };
+  assert.equal(await denied.start(), false); assert.equal(await denied.start(), false); assert.equal(await denied.choose(), false);
+  assert.equal(denied.lastError, 'Vent eitt minutt før nytt forsøk.'); assert.equal(requests, 2); assert.equal(fake.choices(), 0);
+});
+
 test('an unresolved write is retired, and late completion cannot report a successful print', async t => {
   let release;
   const fake = fakeBLE({ write: () => new Promise(resolve => { release = resolve; }) });

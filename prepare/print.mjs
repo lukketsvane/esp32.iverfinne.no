@@ -25,7 +25,7 @@ button.addEventListener('click',async()=>{
   busy=true;button.disabled=true;button.setAttribute('aria-busy','true');document.body.classList.remove('error');document.body.classList.add('working');status.textContent='Koplar til …';
   try{
     const connecting=printer.device?printer.start():printer.choose();
-    if(!await connecting||!printer.ready){if(!closed)fail(printer.supported?'Skrivaren er ikkje tilkopla.':'Bluetooth er ikkje tilgjengeleg i denne nettlesaren.');return}
+    if(!await connecting||!printer.ready){if(!closed)fail(printer.lastError||(printer.supported?'Skrivaren er ikkje tilkopla.':'Bluetooth er ikkje tilgjengeleg i denne nettlesaren.'));return}
     if(closed)return;
     const job=cloudPrintJob(image);started=true;send({type:'entropi-print-started'});
     if(!printer.enqueue('entropi-'+session,job)){fail('Utskrifta er alt forsøkt.');send({type:'entropi-print-result',ok:false,message:status.textContent})}

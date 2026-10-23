@@ -53,6 +53,11 @@ test('cancelled pairing permits a deliberate retry while disposal prevents late 
   const late=app.elements.get('print').click();await app.hide();release(true);await late;assert.equal(app.disposed,true);assert.equal(app.jobs.length,0);
 });
 
+test('a connection quota failure shows the short guidance and permits a later explicit tap',async()=>{
+  const app=harness({choose:async()=>false});app.printer.lastError='Vent eitt minutt før nytt forsøk.';await app.emit(app.image());await app.elements.get('print').click();
+  assert.equal(app.elements.get('status').textContent,app.printer.lastError);assert.equal(app.elements.get('print').disabled,false);assert.equal(app.jobs.length,0);assert.equal(app.choices,1);
+});
+
 test('untrusted entry and missing Bluetooth produce an actionable error without printing',async()=>{
   for(const options of [{referrer:'https://untrusted.test/'},{session:'bad'},{noOpener:true}]){
     const app=harness(options);assert.equal(app.messages.length,0);assert.equal(app.elements.get('print').disabled,true);assert.equal(app.jobs.length,0);

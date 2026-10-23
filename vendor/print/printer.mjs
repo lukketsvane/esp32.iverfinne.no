@@ -2,10 +2,13 @@ import { PRINTER_NAME, PacketDecoder } from './px10-protocol.mjs';
 
 const UUID = short => `0000${short}-0000-1000-8000-00805f9b34fb`;
 const STORAGE_KEY = 'entropi.px10.device.v1';
+const COOLDOWN_KEY = 'entropi.px10.cooldown.v1';
+const QUOTA_MESSAGE = 'Vent eitt minutt før nytt forsøk.';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-const messageOf = error => error instanceof Error ? error.message : String(error);
+const messageOf = error => typeof error?.message === 'string' ? error.message : String(error);
+const isQuota = error => ['RATE_LIMIT', 'RATE_LIMIT_EXCEEDED'].includes(error?.code) || /rate.?limit|too many BLE requests/i.test(messageOf(error));
 
 async function bounded(promise, milliseconds, message) {
    let timer;
@@ -20,7 +23,7 @@ async function bounded(promise, milliseconds, message) {
 export class PX10Printer extends EventTarget {
 
   constructor({ bluetooth = () => globalThis.navigator?.bluetooth,
-    storage = () => globalThis.localStorage, chunkSize = 20, delay = 8,
+    storage = () => globalThis.localStorage, chunkSize = 20, delay = 50,
     connectionTimeout = 25000, writeTimeout = 10000, pauseTimeout = 45000,
     retryDelay = 1000, maxJobAge = 90000 } = {}) {
     super();
@@ -39,6 +42,9 @@ export class PX10Printer extends EventTarget {
     this.active = false; this.disposed = false; this.busy = false;
     this.choiceDismissed = false; this.choosing = false;
     this.paused = false; this.version = 0; this.failures = 0;
+    this.cooldownUntil = 0; this.lastError = '';
+    try { this.cooldownUntil = Number(this.storage()?.getItem(COOLDOWN_KEY)) || 0; } catch {}
+    if (this.coolingDown) this.lastError = QUOTA_MESSAGE;
      this.connecting = null;
      this.restoring = null;
      this.retryTimer = null;
@@ -48,7 +54,7 @@ export class PX10Printer extends EventTarget {
     this.decoder = new PacketDecoder();
     this.onDisconnect = () => {
       this.version++; this.clearChannel();
-      this.emit('reconnecting'); this.scheduleReconnect();
+      if (this.active) { this.emit('reconnecting'); this.scheduleReconnect(); }
     };
 
     this.onNotification = event => {
@@ -66,12 +72,25 @@ export class PX10Printer extends EventTarget {
 
   get supported() { return typeof this.bluetooth()?.requestDevice === 'function'; }
   get ready() { return !!this.writer && !!this.device?.gatt?.connected; }
+  get coolingDown() { return Date.now() < this.cooldownUntil; }
   get needsChoice() {
     return this.supported && !this.device && !this.choosing && !this.choiceDismissed && !this.disposed;
   }
 
   emit(state, detail = {}) {
+    if (state === 'failed' && detail.message) this.lastError = detail.message;
+    if (state === 'connected') this.lastError = '';
     if (!this.disposed) this.dispatchEvent(new CustomEvent('status', { detail: { state, ...detail } }));
+  }
+  quota(error, detail = {}) {
+    if (!isQuota(error)) return false;
+    if (this.coolingDown) return true;
+    this.cooldownUntil = Date.now() + 60000;
+    try { this.storage()?.setItem(COOLDOWN_KEY, String(this.cooldownUntil)); } catch {}
+    this.suspend(); this.queue.length = 0; this.version++; this.clearChannel();
+    if (this.device?.gatt?.connected) this.device.gatt.disconnect();
+    this.emit('failed', { ...detail, message: QUOTA_MESSAGE });
+    return true;
   }
   savedId() { try { return this.storage()?.getItem(STORAGE_KEY) || ''; } catch { return ''; } }
 
@@ -101,7 +120,7 @@ export class PX10Printer extends EventTarget {
   }
 
   start() {
-    if (this.disposed) return Promise.resolve(false);
+    if (this.disposed || this.coolingDown) return Promise.resolve(false);
     this.active = true;
     if (this.device) return this.link().then(() => { void this.drain(); return true; }).catch(() => false);
     if (this.restoring) return this.restoring;
@@ -119,7 +138,7 @@ export class PX10Printer extends EventTarget {
         this.attach(device);
         if (this.active) await this.link();
         void this.drain(); return true;
-      } catch { return false; }
+      } catch (error) { this.quota(error); return false; }
       finally { this.restoring = null; }
     })();
     return this.restoring;
@@ -127,7 +146,7 @@ export class PX10Printer extends EventTarget {
 
   choose() {
     const bluetooth = this.bluetooth();
-    if (this.disposed || typeof bluetooth?.requestDevice !== 'function' || this.choosing) return Promise.resolve(false);
+    if (this.disposed || this.coolingDown || typeof bluetooth?.requestDevice !== 'function' || this.choosing) return Promise.resolve(false);
     if (this.device) return this.start();
     this.active = true; this.choosing = true; this.choiceDismissed = false;
     this.emit('choosing');
@@ -145,6 +164,7 @@ export class PX10Printer extends EventTarget {
         if (this.disposed) return false;
         this.attach(device); await this.link(); void this.drain(); return true;
       } catch (error) {
+        if (this.quota(error)) return false;
         const cancelled = error instanceof Error && ['NotFoundError', 'AbortError'].includes(error.name);
         if (!this.device) this.choiceDismissed = cancelled;
         this.emit(cancelled ? 'cancelled' : 'failed', { message: messageOf(error) });
@@ -154,7 +174,7 @@ export class PX10Printer extends EventTarget {
   }
 
   link() {
-    if (this.disposed || !this.active || !this.device) return Promise.resolve(false);
+    if (this.disposed || this.coolingDown || !this.active || !this.device) return Promise.resolve(false);
     if (this.ready) return Promise.resolve(true);
     if (this.connecting) return this.connecting;
     clearTimeout(this.retryTimer ?? undefined); this.retryTimer = null;
@@ -172,7 +192,7 @@ export class PX10Printer extends EventTarget {
         const channels = await bounded((async () => {
           let service, writeID = 'ae01', notifyID = 'ae02';
           try { service = await server.getPrimaryService(UUID('ae30')); }
-          catch { service = await server.getPrimaryService(UUID('ae3a')); writeID = 'ae3b'; notifyID = 'ae3c'; }
+          catch (error) { if (isQuota(error)) throw error; service = await server.getPrimaryService(UUID('ae3a')); writeID = 'ae3b'; notifyID = 'ae3c'; }
           return { writer: await service.getCharacteristic(UUID(writeID)), notifier: await service.getCharacteristic(UUID(notifyID)) };
         })(), 10000, 'PX10 svarte ikkje under tilkoplinga.');
         const { writer, notifier } = channels;
@@ -185,7 +205,7 @@ export class PX10Printer extends EventTarget {
         this.writer = writer; this.failures = 0; this.remember(device); this.emit('connected');
         return true;
       } catch (error) {
-        if (current()) {
+        if (current() && !this.quota(error)) {
           this.version++; this.clearChannel(); this.failures++;
           if (device.gatt.connected) device.gatt.disconnect();
           const missingGrant = error instanceof Error && ['NotAllowedError', 'SecurityError', 'NotFoundError'].includes(error.name);
@@ -214,7 +234,7 @@ export class PX10Printer extends EventTarget {
   suspend() { this.active = false; clearTimeout(this.retryTimer ?? undefined); this.retryTimer = null; }
 
   enqueue(id, bytes) {
-    if (this.disposed || !this.device || this.seen.has(id) || this.queue.length >= 4) return false;
+    if (this.disposed || this.coolingDown || !this.device || this.seen.has(id) || this.queue.length >= 4) return false;
     if (!(bytes instanceof Uint8Array) || !bytes.length) throw new Error('Utskriftsdata manglar.');
     this.seen.add(id); this.queue.push({ id, bytes: bytes.slice(), created: Date.now() });
     void this.drain(); return true;
@@ -236,6 +256,7 @@ export class PX10Printer extends EventTarget {
   }
 
   async send(id, bytes) {
+    if (this.coolingDown) throw new Error(this.lastError);
     if (this.disposed || this.busy || !this.ready || !this.writer) throw new Error('PX10 er ikkje klar.');
     if (this.attempted.has(id)) throw new Error('Biletet er alt forsøkt sendt.');
     if (!(bytes instanceof Uint8Array) || !bytes.length) throw new Error('Utskriftsdata manglar.');
@@ -263,6 +284,7 @@ export class PX10Printer extends EventTarget {
       this.emit('sent', { bytes: sent, physicalPrintVerified: false });
       return { bytes: sent, physicalPrintVerified: false };
     } catch (error) {
+      if (this.quota(error, { bytes: sent })) throw error;
       this.emit('failed', { message: messageOf(error), bytes: sent });
       this.version++; this.clearChannel();
       if (this.device?.gatt?.connected) this.device.gatt.disconnect();

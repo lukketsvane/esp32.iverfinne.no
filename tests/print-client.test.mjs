@@ -13,7 +13,7 @@ function harness({printer,buildJob=()=>new Uint8Array([1,2,3]),blocked=false}={}
   const context=vm.createContext({WeakSet,Uint8Array,Uint8ClampedArray,crypto:webcrypto,window:{open:(url,name)=>{opened.push({url,name});popup.closed=false;return blocked?null:popup},addEventListener:(name,listener)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(listener)},removeEventListener:(name,listener)=>listeners.get(name)?.delete(listener)},setTimeout:(callback,delay)=>{timeouts.set(delay,callback);return delay},clearTimeout:id=>timeouts.delete(id),setInterval:(callback,delay)=>{polls.set(delay,callback);return delay},clearInterval:id=>polls.delete(id)});
   vm.runInContext(source,context);const client=context.createPrintClient({printer,buildJob,report:message=>reports.push(message)});
   async function emit(data,details={}){for(const listener of [...listeners.get('message')??[]])listener({data,source:popup,origin:'https://esp32.iverfinne.no',...details});await flush()}
-  return {client,popup,opened,messages,reports,emit,hide:async()=>{for(const listener of [...listeners.get('pagehide')??[]])listener();await flush()},poll:async()=>{for(const callback of [...polls.values()])callback();await flush()},get session(){return opened.at(-1)?.url.split('#')[1]},get closed(){return closed}};
+  return {client,popup,opened,messages,reports,emit,expire:async delay=>{timeouts.get(delay)?.();await flush()},hide:async()=>{for(const listener of [...listeners.get('pagehide')??[]])listener();await flush()},poll:async()=>{for(const callback of [...polls.values()])callback();await flush()},get session(){return opened.at(-1)?.url.split('#')[1]},get closed(){return closed}};
 }
 function directPrinter(choose=async()=>true){
   const jobs=[];let choices=0,disposed=false;
@@ -35,6 +35,11 @@ test('cancelled pairing can be retried, while stale and disposed results cannot 
   const late=app.client.print(snapshot);app.client.dispose();release(true);assert.equal(await late,false);assert.equal(device.jobs.length,0);
 });
 
+test('a connection quota failure retains the short retry guidance without queuing an image',async()=>{
+  const device=directPrinter(async()=>false);device.printer.lastError='Vent eitt minutt før nytt forsøk.';
+  const app=harness({printer:device.printer});assert.equal(await app.client.print(image()),false);assert.equal(device.jobs.length,0);assert.deepEqual(app.reports,[device.printer.lastError]);app.client.dispose();
+});
+
 test('HTTP camera opens a session-bound HTTPS printer synchronously and authenticates every message',async()=>{
   const app=harness(),snapshot=image(),printing=app.client.print(snapshot);assert.equal(app.opened.length,1);assert.match(app.session,/^[a-f0-9]{32}$/);
   const ready={type:'entropi-print-ready',session:app.session};
@@ -50,6 +55,13 @@ test('an attempted partial print cannot be replayed by retrying the same snapsho
   const app=harness(),snapshot=image(),printing=app.client.print(snapshot),session=app.session;
   await app.emit({type:'entropi-print-ready',session});await app.emit({type:'entropi-print-started',session});await app.emit({type:'entropi-print-result',session,ok:false,message:'Radio lost'});
   assert.equal(await printing,false);assert.equal(await app.client.print(snapshot),false);assert.equal(app.opened.length,1);
+});
+
+test('a paced helper transfer can finish after two minutes and an unresponsive helper still times out',async()=>{
+  const app=harness(),snapshot={width:384,height:1024,data:new Uint8ClampedArray(384*1024*4)},printing=app.client.print(snapshot),session=app.session;
+  await app.emit({type:'entropi-print-ready',session});await app.emit({type:'entropi-print-started',session});await app.expire(120000);assert.equal(app.closed,false);
+  await app.emit({type:'entropi-print-result',session,ok:true});assert.equal(await printing,true);assert.equal(app.closed,false);app.client.dispose();
+  const stalled=harness(),pending=stalled.client.print(image());await stalled.expire(300000);assert.equal(await pending,false);assert.equal(stalled.closed,true);assert.match(stalled.reports.at(-1),/svara ikkje/);stalled.client.dispose();
 });
 
 test('concurrent gestures, stale results, closed popups and disposal never send another image',async()=>{
