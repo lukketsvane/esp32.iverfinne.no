@@ -33,11 +33,11 @@ function state(next,message='',sceneFailure=false){
 function stopCamera(){stream?.getTracks().forEach(track=>track.stop());stream=null;video.pause();video.srcObject=null}
 function clearScene(){task?.abort();task=null;scene?.dispose();scene=null;$('scene').replaceChildren()}
 function clearPhoto(){if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=null;photoBlob=null;photoReady=false;photo.removeAttribute('src');$('thumbnail').removeAttribute('src')}
-function progress(update){if(studioControls.image!==1||mode==='camera'||capturing)return;const known=Number.isFinite(update.percent);$('progress').classList.toggle('indeterminate',!known);$('progress').firstElementChild.style.width=known?Math.max(0,Math.min(100,update.percent))+'%':'';$('status').textContent=update.phase.startsWith('loading')?'Klargjer splats'+(known?' · '+Math.round(update.percent)+' %':' …'):'Lagar splats …'}
+function progress(update){if(studioControls.image!==1||mode==='camera'||capturing)return;const known=Number.isFinite(update.percent);$('progress').classList.toggle('indeterminate',!known);$('progress').firstElementChild.style.width=known?Math.max(0,Math.min(100,update.percent))+'%':'';$('status').textContent=''}
 
 async function startCamera(){
   if(openingCamera||stream||mode!=='camera')return;
-  const current=generation;openingCamera=true;$('studio').classList.add('opening');$('status').textContent='Opnar kameraet …';
+  const current=generation;openingCamera=true;$('studio').classList.add('opening');$('status').textContent='';
   try{
     if(!navigator.mediaDevices?.getUserMedia)throw new Error('Kamera krev ein trygg HTTPS-nettlesar.');
     const media=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
@@ -52,7 +52,7 @@ async function startCamera(){
 async function makeScene(){
   if(!photoReady||studioControls.image!==1||mode==='camera')return;
   if(scene){state('done');scene.refresh?.();return}
-  state('working','Lagar splats …');if(task)return;
+  state('working');if(task)return;
   const current=generation,blob=photoBlob,processing=task=new AbortController();progress({phase:'reading'});
   try{
     const result=await createDepthScene($('scene'),blob,update=>{if(current===generation)progress(update)},processing.signal);
@@ -65,7 +65,7 @@ async function makeScene(){
 async function acceptPhoto(blob,name='entropi.jpg'){
   if(!(blob instanceof Blob)||!blob.type.startsWith('image/')||!blob.size||blob.size>40*1024*1024){state('error','Kamerafotoet kunne ikkje lesast.');return}
   const current=++generation;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
-  state('working','Les foto.');
+  state('working');
   try{await photo.decode();if(current!==generation)return;photoView.setSource();photoReady=true;photoGestures.reset();state('done');if(studioControls.image===1)await makeScene()}
   catch(error){if(current===generation)state('error',error.message||'Fotoet kunne ikkje lesast.')}
 }
@@ -75,7 +75,7 @@ async function capture(){
   if(!stream){await startCamera();return}
   if(!video.videoWidth||video.readyState<2)return;
   const current=generation,captureId=++captureGeneration,frame=document.createElement('canvas');frame.width=video.videoWidth;frame.height=video.videoHeight;
-  capturing=true;state('working','Tek foto …');
+  capturing=true;state('working');
   try{
     const context=frame.getContext('2d');if(!context)throw new Error('Fotoet kunne ikkje takast.');context.drawImage(video,0,0);
     const blob=await new Promise(resolve=>frame.toBlob(resolve,'image/jpeg',.94));

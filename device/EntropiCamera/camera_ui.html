@@ -61,7 +61,7 @@ const sourceContext=source.getContext('2d');
 finder.source=source;
 const live=new Image();live.crossOrigin='anonymous';
 const streamUrl=new URL('/stream',location.href);streamUrl.port='81';
-let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',parentReady=false,parentPort=null,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,sceneError='',sceneMessage='',captureAfter=0,captureTask=null,captureFailed=false,printBusy=false,printTimer=0;
+let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',parentReady=false,parentPort=null,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,sceneError='',captureAfter=0,captureTask=null,captureFailed=false,printBusy=false,printTimer=0;
 let reviewDown=null,reviewTap=null,photoGestures=null,photoPose={scale:1,x:0,y:0,grain:1,contrast:1};
 const photoView=createPhotoView($('photo'));
 const studioControls=attachStudioControls([studio,photoDialog],(kind,level)=>{reviewDown=reviewTap=null;if(kind==='primitive')sceneViewer?.setPrimitiveLevel(level);else if(kind==='photo')photoView.setStyle(level);else if(kind==='image'){refreshReview();if(photoDialog.open&&level===1)void makeScene()}},()=>!onboarding.open,()=>{reviewDown=reviewTap=null});
@@ -126,7 +126,7 @@ function renderOnboarding(){
   $('onboarding-feedback').textContent=(modelNeeded?phoneError:'')||(!phoneWorking&&!connected?healthMessage(deviceStatus):'');
 }
 function showOnboarding(){renderOnboarding();if(!onboarding.open)onboarding.showModal()}
-function closeOnboarding(){phoneTask?.abort();phoneTask=null;phoneWorking=false;if(!sceneTask)sceneMessage='';onboarding.close();controls();refreshReview()}
+function closeOnboarding(){phoneTask?.abort();phoneTask=null;phoneWorking=false;onboarding.close();controls();refreshReview()}
 async function setupPhone(source=null){
   if(phoneWorking)return;
   const task=new AbortController();phoneTask?.abort();phoneTask=task;phoneWorking=true;phoneError='';showOnboarding();controls();
@@ -138,13 +138,13 @@ async function setupPhone(source=null){
 }
 async function checkPhone(){
   if(phoneTask)return;
-  const task=new AbortController();phoneTask=task;phoneReady=false;phoneWorking=false;sceneMessage='Kontrollerer 3D …';controls();refreshReview();
+  const task=new AbortController();phoneTask=task;phoneReady=false;phoneWorking=false;controls();refreshReview();
   try{
-    const ready=await phoneModelsReady(task.signal);task.signal.throwIfAborted();phoneReady=ready;sceneMessage='';
+    const ready=await phoneModelsReady(task.signal);task.signal.throwIfAborted();phoneReady=ready;
     if(phoneReady){needsSetup=false;phoneError='';if(onboarding.open&&connected)onboarding.close();if(photoDialog.open&&studioControls.image===1)void makeScene()}
     else{needsSetup=true;if(studioControls.image===1){if(entry.has('connect')&&window.opener){phoneTask=null;void setupPhone(window.opener)}else showOnboarding()}}
-  }catch(error){if(!task.signal.aborted){phoneError=error.message;needsSetup=true;sceneMessage='';if(studioControls.image===1)showOnboarding()}}
-  finally{if(phoneTask===task)phoneTask=null;if(task.signal.aborted&&!sceneTask)sceneMessage='';controls();refreshReview()}
+  }catch(error){if(!task.signal.aborted){phoneError=error.message;needsSetup=true;if(studioControls.image===1)showOnboarding()}}
+  finally{if(phoneTask===task)phoneTask=null;controls();refreshReview()}
 }
 async function connect(){
   if(connecting||busy||document.hidden||reviewing())return;
@@ -190,7 +190,7 @@ async function takePhoto(){
 function clearScene(){
   photoDialog.classList.remove('working','error');$('scene-progress').hidden=true;$('retry-scene').hidden=true;
   ++sceneGeneration;sceneTask?.abort();sceneTask=null;sceneViewer?.dispose();sceneViewer=null;
-  sceneVisible=false;needsSetup=false;sceneError=sceneMessage='';
+  sceneVisible=false;needsSetup=false;sceneError='';
   $('scene').replaceChildren();$('scene').hidden=true;$('photo').hidden=false;$('scene-status').textContent='';
 }
 function refreshReview(){
@@ -205,7 +205,7 @@ function refreshReview(){
   if(open&&!splats)photoGestures.refresh?.();
   $('scene-progress').hidden=!open||!splats||!pending;$('retry-scene').hidden=!open||!splats||pending||!failed;
   $('retry-scene').setAttribute('aria-label',needsSetup?'Klargjer telefonen':'Prøv 3D på nytt');
-  $('scene-status').textContent=open&&splats?(sceneError||sceneMessage):'';$('scene-status').hidden=!$('scene-status').textContent;
+  $('scene-status').textContent=open&&splats?(sceneError):'';$('scene-status').hidden=!$('scene-status').textContent;
   $('print-photo').disabled=printBusy||!photoBlob||splats&&(!sceneViewer||!!sceneError);
   updateRecenter();
 }
@@ -219,17 +219,17 @@ async function makeScene(){
   if(!photoBlob||!photoDialog.open||studioControls.image!==1)return;
   if(sceneViewer||sceneTask){refreshReview();return}
   if(!phoneReady){if(!phoneTask)void checkPhone();refreshReview();return}
-  const generation=sceneGeneration,task=new AbortController();sceneTask=task;needsSetup=false;sceneError='';sceneMessage='Lagar 3D på telefonen …';refreshReview();
-  const report=update=>{if(generation===sceneGeneration){$('scene-progress').classList.toggle('indeterminate',update.percent===undefined);$('scene-progress-bar').style.width=(update.percent??26)+'%';sceneMessage=update.phase==='preparing'?'Klargjer telefonen …':update.phase.startsWith('loading')?'Lastar modell på telefonen …':'Reknar djupn på telefonen …';refreshReview()}};
+  const generation=sceneGeneration,task=new AbortController();sceneTask=task;needsSetup=false;sceneError='';refreshReview();
+  const report=update=>{if(generation===sceneGeneration){$('scene-progress').classList.toggle('indeterminate',update.percent===undefined);$('scene-progress-bar').style.width=(update.percent??26)+'%';refreshReview()}};
   try{
     task.signal.throwIfAborted();
     const result=await createDepthScene($('scene'),photoBlob,report,task.signal,2);
     if(generation!==sceneGeneration){result.dispose();return}
-    sceneViewer=result;sceneViewer.onError=error=>{if(sceneViewer===result){sceneError=error.message||'3D-visinga vart avbroten. Prøv igjen.';refreshReview()}};sceneViewer.setPrimitiveLevel(studioControls.primitive);sceneMessage='';
+    sceneViewer=result;sceneViewer.onError=error=>{if(sceneViewer===result){sceneError=error.message||'3D-visinga vart avbroten. Prøv igjen.';refreshReview()}};sceneViewer.setPrimitiveLevel(studioControls.primitive);
   }catch(error){
     if(task.signal.aborted||generation!==sceneGeneration)return;
     needsSetup=error.code==='PHONE_SETUP_REQUIRED';
-    sceneMessage='';if(needsSetup){phoneReady=false;controls();if(photoDialog.open&&studioControls.image===1)showOnboarding()}
+    if(needsSetup){phoneReady=false;controls();if(photoDialog.open&&studioControls.image===1)showOnboarding()}
     else sceneError=error.message||'Kunne ikkje lage 3D. Prøv igjen.';
   }finally{if(sceneTask===task){sceneTask=null;refreshReview()}}
 }

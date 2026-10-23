@@ -676,11 +676,11 @@ test('a stale GPU error cannot hide a newly captured scene',async()=>{
   assert.equal(app.get('scene').hidden,false);assert.equal(app.get('retry-scene').hidden,true);assert.equal(app.get('scene-status').hidden,true);assert.equal(app.sceneCalls.length,2);
 });
 
-test('working status, progress and an actionable retry are visible only while needed',async()=>{
+test('loading uses only progress while failures retain an actionable retry',async()=>{
   const pending=deferred();let starts=0;
   const app=await connectedCamera({splats:true,scene:async(host,blob,report)=>{if(++starts===1){report({phase:'estimating',percent:42});return pending.promise}return {dispose(){}}}});
   await app.get('capture-plane').emit('click');await app.tick(0);
-  assert.equal(app.get('scene-status').hidden,false);assert.match(app.get('scene-status').textContent,/Reknar djupn/);
+  assert.equal(app.get('scene-status').hidden,true);assert.equal(app.get('scene-status').textContent,'');assert.equal(app.get('scene-progress').hidden,false);
   assert.equal(app.get('scene-progress-bar').style.width,'42%');assert.equal(app.get('print-photo').disabled,true);
   pending.reject(new Error('Berekninga vart avbroten.'));await app.tick(0);
   assert.equal(app.get('scene-status').hidden,false);assert.match(app.get('scene-status').textContent,/Berekninga/);
