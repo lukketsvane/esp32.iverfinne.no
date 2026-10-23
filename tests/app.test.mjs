@@ -5,14 +5,14 @@ import vm from 'node:vm';
 
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 const application=(await readFile(new URL('../app.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
-const photoSource=(await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
+const photoModule=await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8'),photoSource=photoModule.slice(photoModule.indexOf('export function photoSnapshot')).replace(/^export /gm,'');
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
 
 function harness(options={}){
   let now=1000,nextTimer=0,nextUrl=0,mediaRequests=0,stopped=0;
-  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),downloads=[],sceneCalls=[],messages=[],studioBindings=[],printCalls=[],revoked=[];
-  const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)};let printDisposed=false;
+  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),saves=[],encodedSnapshots=[],sceneCalls=[],messages=[],studioBindings=[],printCalls=[],revoked=[];
+  const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)},nativeSnapshot={width:640,height:960,data:new Uint8ClampedArray(640*960*4)};let printDisposed=false;
   const studioControls={image:options.image??0,primitive:0,dispose(){}};
   const opener={postMessage:(data,origin)=>messages.push({data,origin})};
   class Element{
@@ -28,12 +28,12 @@ function harness(options={}){
     replaceChildren(...children){this.children=children}
     appendChild(child){this.children.push(child);return child}
     async emit(name,details={}){for(const callback of this.listeners.get(name)??[])callback({type:name,target:this,currentTarget:this,isPrimary:true,pointerId:1,clientX:100,clientY:100,preventDefault(){},...details});await flush()}
-    click(){if(this.tagName==='A')downloads.push({href:this.href,name:this.download});else void this.emit('click')}
+    click(){void this.emit('click')}
     async decode(){if(options.decode)await options.decode()}
   }
   for(const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g)){
     const element=new Element(match[2],match[1].toUpperCase());element.hidden=/\bhidden\b/.test(match[0]);
-    if(element.tagName==='IMG'){element.naturalWidth=1600;element.naturalHeight=1200}
+    if(element.tagName==='IMG'){element.naturalWidth=16;element.naturalHeight=12}
     element.className=match[0].match(/\bclass="([^"]+)"/)?.[1]??'';
     for(const name of match[0].match(/\bclass="([^"]+)"/)?.[1].split(/\s+/)??[])element.classes.add(name);
     elements.set(element.id,element);
@@ -54,9 +54,11 @@ function harness(options={}){
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
     Viewfinder:class{clear(){}dispose(){}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
+    attachPhotoGestures:()=>({state:{scale:1,x:0,y:0,width:390,height:844},reset(){this.state.scale=1;this.state.x=this.state.y=0},dispose(){}}),
+    snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
     PX10Printer:class{},cloudPrintJob:()=>new Uint8Array(),
     createPrintClient:()=>({print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return Promise.resolve(true)},dispose(){printDisposed=true}}),
-    createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});return options.scene?{setPrimitiveLevel(){},snapshot:()=>snapshot,...await options.scene(host,blob,progress,signal,quality)}:{dispose(){},setPrimitiveLevel(){},snapshot:()=>snapshot}},
+    createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});return options.scene?{setPrimitiveLevel(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,progress,signal,quality)}:{dispose(){},setPrimitiveLevel(){},snapshot:native=>native?nativeSnapshot:snapshot}},
     performance:{now:()=>now},Date:class extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}},
     setTimeout:(callback,delay=0)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)
   });
@@ -65,7 +67,7 @@ function harness(options={}){
   async function emit(name,details={}){for(const callback of events.get(name)??[])callback({type:name,...details});await flush()}
   function changeStudio(kind,level){studioControls[kind]=level;for(const binding of studioBindings)binding.onChange(kind,level)}
   function gestureStudio(){for(const binding of studioBindings)binding.onGesture?.()}
-  return {get:id=>elements.get(id),opener,sceneCalls,studioControls,changeStudio,gestureStudio,messages,urls,revoked,downloads,printCalls,snapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
+  return {get:id=>elements.get(id),opener,sceneCalls,studioControls,changeStudio,gestureStudio,messages,urls,revoked,saves,encodedSnapshots,printCalls,snapshot,nativeSnapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
 }
 
 async function photoFromDevice(app,blob=new Blob(['camera-jpeg'],{type:'image/jpeg'})){
@@ -108,13 +110,11 @@ test('only the known camera window and origin can deliver an image',async()=>{
   assert.equal(app.sceneCalls[0].blob,blob);
 });
 
-test('the result saves the original JPEG and never exposes a 3D download',async()=>{
+test('the result saves the displayed monochrome PNG and retains its source JPEG',async()=>{
   const app=harness(),blob=await photoFromDevice(app);
   assert.equal(app.get('studio').className,'studio done');
   await app.get('save').emit('click');
-  assert.equal(app.downloads.length,1);
-  assert.equal(app.downloads[0].name,'entropi.jpg');
-  assert.equal(app.urls.get(app.downloads[0].href),blob);
+  assert.equal(app.saves.length,1);assert.equal(app.saves[0].name,'entropi.png');assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.encodedSnapshots[0].photo,true);assert.equal(app.encodedSnapshots[0].width,16);assert.equal(app.encodedSnapshots[0].height,12);assert.equal(app.urls.get(app.get('photo').src),blob);
   assert.equal([...app.urls.values()].some(value=>value.type==='application/octet-stream'),false);
 });
 
@@ -134,14 +134,13 @@ test('dragging out and back or adding another finger cancels a hold instead of p
   assert.equal(app.printCalls.length,0);assert.equal(app.get('studio').className,'studio done');
 });
 
-test('model failure keeps the original JPEG available for saving',async()=>{
+test('model failure keeps the displayed photo available as a monochrome PNG',async()=>{
   const app=harness({image:1,scene:async()=>{throw new Error('Djupnemodellen manglar.')}}),blob=await photoFromDevice(app);
   assert.equal(app.get('studio').className,'studio error');
   assert.match(app.get('status').textContent,/Djupnemodellen manglar/);
   assert.equal(app.get('save').hidden,false);
   await app.get('save').emit('click');
-  assert.equal(app.urls.get(app.downloads[0].href),blob);
-  assert.equal(app.downloads[0].name,'entropi.jpg');
+  assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].name,'entropi.png');assert.equal(app.encodedSnapshots[0].photo,true);assert.equal(app.urls.get(app.get('photo').src),blob);
 });
 
 test('returning to the camera keeps pending splats without letting a late result reopen review',async()=>{
@@ -211,7 +210,7 @@ test('photo and splats reuse one JPEG and one cached scene while styles remain i
   app.changeStudio('primitive',2);assert.equal(styles.at(-1),2);
   app.changeStudio('image',0);await app.tick(0);assert.equal(app.get('photo').src,url);assert.equal(app.get('scene').classList.contains('hidden'),true);
   app.changeStudio('image',1);await app.tick(0);assert.equal(app.sceneCalls.length,1);assert.equal(app.get('scene').classList.contains('hidden'),false);
-  await app.get('save').emit('click');assert.equal(app.urls.get(app.downloads[0].href),blob);
+  await app.get('save').emit('click');assert.equal(app.encodedSnapshots[0],app.nativeSnapshot);assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.urls.get(app.get('photo').src),blob);
 });
 
 test('a pending splat can finish behind the photo without taking over the chosen image type',async()=>{
@@ -312,4 +311,9 @@ test('a failed new capture retries the camera rather than reprocessing the retai
   await app.get('reset').emit('click');await app.get('capture-plane').emit('click');await app.get('capture-plane').emit('click');assert.equal(app.get('studio').className,'studio error');
   await app.get('retry').emit('click');assert.equal(app.get('studio').className,'studio camera');assert.equal(app.sceneCalls.length,1);assert.equal(app.get('photo').src,url);
   await app.get('last-photo').emit('click');assert.equal(app.get('studio').className,'studio done');assert.equal(app.sceneCalls.length,1);
+});
+
+test('a scene save requests native rendered pixels and a pending save becomes stale after a new photo',async()=>{
+  const flags=[],native={width:20,height:30,data:new Uint8ClampedArray(20*30*4)},app=harness({image:1,scene:async()=>({dispose(){},snapshot:flag=>{flags.push(flag);return native}})});await photoFromDevice(app);await app.get('save').emit('click');assert.deepEqual(flags,[true]);assert.equal(app.encodedSnapshots[0],native);assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].isCurrent(),true);
+  await app.get('reset').emit('click');assert.equal(app.saves[0].isCurrent(),false);await photoFromDevice(app,new Blob(['replacement'],{type:'image/jpeg'}));assert.equal(app.saves[0].isCurrent(),false);
 });

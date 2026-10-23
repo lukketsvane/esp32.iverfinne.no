@@ -23,6 +23,7 @@
 #include "camera_ui.h"
 #include "camera_assets.h"
 #include "board_config.h"
+#include "jpeg_frame.h"
 
 static httpd_handle_t cameraHttpd = nullptr;
 static httpd_handle_t streamHttpd = nullptr;
@@ -98,7 +99,16 @@ static bool photoAllowed(int value) {
 static bool frameMatches(camera_fb_t *frame, framesize_t size) {
   unsigned width = size == FRAMESIZE_UXGA ? 1600 : size == FRAMESIZE_VGA ? 640 : 320;
   unsigned height = size == FRAMESIZE_UXGA ? 1200 : size == FRAMESIZE_VGA ? 480 : 240;
-  return frame->format == PIXFORMAT_JPEG && frame->width == width && frame->height == height && frame->len > 0;
+  unsigned actualWidth, actualHeight;
+  return frame->format == PIXFORMAT_JPEG && jpegDimensions(frame->buf, frame->len, actualWidth, actualHeight) && actualWidth == width && actualHeight == height;
+}
+
+static camera_fb_t *waitForFrame(int64_t deadline) {
+  while (esp_timer_get_time() < deadline) {
+    if (esp_camera_available_frames()) return esp_camera_fb_get();
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  return nullptr;
 }
 
 static bool copyFrame(camera_fb_t *frame, PhotoFrame &photo) {
@@ -274,10 +284,10 @@ static bool capturePhoto(PhotoFrame &photo) {
   setLed(true);
   vTaskDelay(pdMS_TO_TICKS(150));
   int64_t cutoff = esp_timer_get_time();
+  int64_t deadline = cutoff + 3000000;
   if (configured) {
     for (unsigned attempt = 0; attempt < 4; attempt++) {
-      if (esp_timer_get_time() - cutoff > 3000000) break;
-      camera_fb_t *frame = esp_camera_fb_get();
+      camera_fb_t *frame = waitForFrame(deadline);
       if (!frame) break;
       int64_t timestamp = int64_t(frame->timestamp.tv_sec) * 1000000 + frame->timestamp.tv_usec;
       bool fresh = timestamp >= cutoff && frameMatches(frame, photoSize);
@@ -335,7 +345,7 @@ static esp_err_t streamHandler(httpd_req_t *request) {
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
     }
-    camera_fb_t *frame = cameraReady ? esp_camera_fb_get() : nullptr;
+    camera_fb_t *frame = cameraReady ? waitForFrame(esp_timer_get_time() + 1000000) : nullptr;
     bool stale = frame && !frameMatches(frame, previewSize);
     bool success = frame && !stale && copyFrame(frame, photo);
     if (frame) esp_camera_fb_return(frame);

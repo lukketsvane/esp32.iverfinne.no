@@ -3,7 +3,8 @@ import { loadAsset, loadCachedAsset } from '/pointcloud/assets.mjs';
 const status=document.getElementById('status'),bar=document.getElementById('progress'),next=document.getElementById('ready'),retry=document.getElementById('retry'),openCamera=document.getElementById('open-camera'),transfer=new URL(location.href).searchParams.has('transfer');
 const allowed=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 const cameraName='entropi-camera-'+crypto.randomUUID();
-let peer=null,peerOrigin=null,manifest,ready=false,prepared=false,downloading=false,photoFlow=false,session=null,pending=null,closed=false,preparation=0,delivery=0,task=null,cameraConnected=false,launchFailed=false,launchTimer=0,cameraPort=null;
+const scopePath=/^\/start(?:\/|$)/.test(new URL(location.href).pathname)?'/start/':'/prepare/',workerURL=new URL(scopePath+'sw.js',location.href).href;
+let peer=null,peerOrigin=null,manifest,ready=false,prepared=false,downloading=false,photoFlow=false,session=null,pending=null,closed=false,preparation=0,delivery=0,task=null,cameraConnected=false,launchFailed=false,launchTimer=0,cameraPort=null,resumeDownload=false,pendingUpdate=false;
 if(transfer)try{const origin=new URL(document.referrer).origin;if(window.opener&&allowed.has(origin)){peer=window.opener;peerOrigin=origin}}catch{}
 const send=data=>{if(peer&&peerOrigin)peer.postMessage(data,peerOrigin)};
 function show(phase,message){
@@ -11,7 +12,9 @@ function show(phase,message){
   retry.hidden=transfer?phase!=='error':prepared||downloading;retry.disabled=phase==='working'||phase==='launching'||!!launchTimer||session!==null;retry.textContent=phase==='error'?'Prøv 3D igjen':'Klargjer 3D';
   const network=document.getElementById('network');network.hidden=cameraConnected||!prepared&&!photoFlow&&(phase==='working'||phase==='launching'||downloading);document.getElementById('connection-hint').hidden=cameraConnected;
   openCamera.disabled=transfer||phase==='launching'||!!launchTimer||session!==null;openCamera.textContent=cameraConnected?'Tilbake til kameraet':launchFailed?'Prøv igjen':!prepared&&network.hidden?'Berre foto':'Opne kameraet ↗';document.documentElement.dataset.ready=String(prepared);
+  applyUpdate();
 }
+function applyUpdate(){if(pendingUpdate&&!transfer&&!closed&&!downloading&&session===null&&(!peer||peer.closed)&&!document.hidden){pendingUpdate=false;location.reload()}}
 function cancelDelivery(){delivery++;session=null;const waiting=pending;pending=null;waiting?.reject(new DOMException('Avbrote.','AbortError'))}
 function stopLaunch(){clearTimeout(launchTimer);launchTimer=0}
 function closeCameraPort(){if(cameraPort){cameraPort.onmessage=null;cameraPort.close();cameraPort=null}}
@@ -20,18 +23,18 @@ function fail(error,keepPrepared=false){if(keepPrepared){launchFailed=true;show(
 
 async function controlled(){
   if(!navigator.serviceWorker)throw new Error('Opne klargjeringa i nettlesaren med internett.');
-  const expected=new URL('/prepare/sw.js',location.href).href,scope=new URL('/prepare/',location.href).href;let timer,changed;
+  let timer,changed;
   try{await Promise.race([
     (async()=>{
-      const registration=await navigator.serviceWorker.getRegistration('/prepare/');if(registration?.scope!==scope||registration?.active?.scriptURL!==expected)await navigator.serviceWorker.register('/prepare/sw.js',{scope:'/prepare/'});await navigator.serviceWorker.ready;
-      if(navigator.serviceWorker.controller?.scriptURL!==expected)await new Promise(resolve=>{changed=()=>{if(navigator.serviceWorker.controller?.scriptURL===expected)resolve()};navigator.serviceWorker.addEventListener('controllerchange',changed);changed()});
+      await navigator.serviceWorker.register(scopePath+'sw.js',{scope:scopePath,updateViaCache:'none'});await navigator.serviceWorker.ready;
+      if(navigator.serviceWorker.controller?.scriptURL!==workerURL)await new Promise(resolve=>{changed=()=>{if(navigator.serviceWorker.controller?.scriptURL===workerURL)resolve()};navigator.serviceWorker.addEventListener('controllerchange',changed);changed()});
     })(),
     new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Klargjeringa kunne ikkje lagrast. Opne sida i nettlesaren med internett og prøv igjen.')),15000)})
   ])}finally{clearTimeout(timer);if(changed)navigator.serviceWorker.removeEventListener('controllerchange',changed)}
 }
 
 async function prepare(download=false,preserveCamera=false){
-  const generation=++preparation;task?.abort();const currentTask=task=new AbortController();cancelDelivery();if(!download&&!preserveCamera){closeCameraPort();cameraConnected=false}prepared=false;ready=false;downloading=download;bar.removeAttribute('value');show('working','Klargjer …');
+  const generation=++preparation;task?.abort();const currentTask=task=new AbortController();let stallTimer;const watch=()=>{clearTimeout(stallTimer);stallTimer=setTimeout(()=>currentTask.abort(new Error('Nedlastinga stoppa. Prøv igjen med internett.')),30000)};cancelDelivery();if(!download&&!preserveCamera){closeCameraPort();cameraConnected=false}prepared=false;ready=false;downloading=download;bar.removeAttribute('value');show('working','Klargjer …');
   try{
     if(transfer&&!peer)throw new Error('Opne klargjeringa frå kameraet i nettlesaren.');
     await controlled();if(closed||generation!==preparation)return;const response=await fetch('/pointcloud/models/manifest.json',{signal:currentTask.signal});if(!response.ok)throw new Error('Modellmanifestet manglar.');manifest=await response.json();
@@ -39,12 +42,13 @@ async function prepare(download=false,preserveCamera=false){
     ready=true;if(transfer){show('waiting','Koplar til kameraet …');send({type:'entropi-models-ready'});return}
     const total=manifest.asset.bytes+manifest.runtime.bytes;let completed=0;
     for(const key of ['asset','runtime']){
-      if(download)await loadAsset(manifest[key],percent=>{if(generation===preparation)bar.value=(completed+manifest[key].bytes*percent/100)/total*100},currentTask.signal);
+      if(download){watch();await loadAsset(manifest[key],percent=>{if(generation===preparation){watch();bar.value=(completed+manifest[key].bytes*percent/100)/total*100}},currentTask.signal);clearTimeout(stallTimer)}
       await loadCachedAsset(manifest[key]);if(closed||generation!==preparation)return;completed+=manifest[key].bytes;
     }
     await navigator.storage?.persist?.().catch(()=>false);
     if(closed||generation!==preparation)return;downloading=false;prepared=true;show('ready','');
   }catch(error){if(!closed&&generation===preparation){downloading=false;if(!download&&!transfer&&error.code==='PHONE_SETUP_REQUIRED')show('photo','3D krev internett første gong.');else fail(error)}}
+  finally{clearTimeout(stallTimer)}
 }
 
 async function deliver(requestedSession){
@@ -59,7 +63,7 @@ async function deliver(requestedSession){
       });
       if(closed||generation!==delivery)return;bar.value=(index+1)/2*100;
     }
-    if(closed||generation!==delivery)return;prepared=true;send({type:'entropi-models-complete',session});if(transfer){show('waiting','Klar.');setTimeout(()=>window.close(),150)}else waitForCamera();
+    if(closed||generation!==delivery)return;prepared=true;send({type:'entropi-models-complete',session});if(transfer){show('waiting','Klar.');setTimeout(()=>window.close(),150)}else if(cameraConnected)show('ready','Kameraet er klart.');else waitForCamera();
   }catch(error){if(!closed&&generation===delivery)fail(error,!transfer&&prepared&&error.code!=='PHONE_SETUP_REQUIRED')}
   finally{if(generation===delivery){session=null;pending=null;if(!launchTimer){openCamera.disabled=transfer;retry.disabled=false}}}
 }
@@ -83,13 +87,15 @@ window.addEventListener('message',event=>{
       port.onmessage=message=>{if(closed||cameraPort!==port||message.data?.type!=='entropi-camera-left')return;closeCameraPort();stopLaunch();cameraConnected=false;peerOrigin=null;cancelDelivery();show('ready',prepared?'':'3D krev internett første gong.')};port.start();
       stopLaunch();peerOrigin=event.origin;cameraConnected=true;launchFailed=false;show('ready','Kameraet er klart.');return;
     }
-    if(data?.type==='entropi-models-connect'){stopLaunch();peerOrigin=event.origin;cameraConnected=false;bar.removeAttribute('value');show('working','Klargjer kameraet …');send({type:'entropi-models-ready'});return}
+    if(data?.type==='entropi-models-connect'){stopLaunch();peerOrigin=event.origin;bar.removeAttribute('value');show('working','Klargjer kameraet …');send({type:'entropi-models-ready'});return}
   }
   if(transfer&&!ready||event.origin!==peerOrigin)return;
   if(data?.type==='entropi-models-request'&&session===null&&typeof data.session==='string'&&data.session.length>0&&data.session.length<=128){if(!transfer&&!prepared){send({type:'entropi-models-error',session:data.session,code:'PHONE_SETUP_REQUIRED',message:'Klargjer 3D på telefonen med internett først.'});if(!downloading)show('error','Klargjer 3D på telefonen med internett først.')}else void deliver(data.session)}
   else if(data?.type==='entropi-model-ack'&&data.session===session&&pending&&data.key===pending.key)pending.resolve();
   else if(data?.type==='entropi-models-cancel'&&session!==null&&data.session===session){stopLaunch();cancelDelivery();show(prepared?'ready':'waiting',prepared?'':'Koplar til kameraet …')}
 });
-window.addEventListener('pagehide',event=>{closed=true;preparation++;task?.abort();stopLaunch();if(!event.persisted){closeCameraPort();cameraConnected=false}cancelDelivery();prepared=ready=downloading=false;document.documentElement.dataset.ready='false'});
-window.addEventListener('pageshow',event=>{if(event.persisted){closed=false;void prepare(false,true)}});
+navigator.serviceWorker?.addEventListener('message',event=>{if(event.source!==navigator.serviceWorker.controller||event.source?.scriptURL!==workerURL||event.origin!==location.origin||event.data?.type!=='entropi-update-ready')return;pendingUpdate=true;applyUpdate()});
+document.addEventListener('visibilitychange',applyUpdate);
+window.addEventListener('pagehide',event=>{resumeDownload=downloading;closed=true;preparation++;task?.abort();stopLaunch();if(!event.persisted){closeCameraPort();cameraConnected=false}cancelDelivery();prepared=ready=downloading=false;document.documentElement.dataset.ready='false'});
+window.addEventListener('pageshow',event=>{if(event.persisted){closed=false;const download=resumeDownload;resumeDownload=false;void prepare(download,true)}});
 void prepare(!transfer&&!new URL(location.href).searchParams.has('camera'));

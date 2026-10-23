@@ -74,7 +74,7 @@ function checkAsset(asset) {
   if (!Number.isSafeInteger(asset?.bytes) || asset.bytes <= 0 || !/^[a-f0-9]{64}$/.test(asset.sha256)) throw new Error('Ugyldig modellmanifest.');
 }
 
-function setupRequired(message = 'Djupnemodellen manglar på telefonen. Opne esp32.iverfinne.no/prepare/ med internett først.') {
+function setupRequired(message = 'Djupnemodellen manglar på telefonen. Opne esp32.iverfinne.no/start/ med internett først.') {
   const error = new Error(message);error.code = 'PHONE_SETUP_REQUIRED';return error;
 }
 

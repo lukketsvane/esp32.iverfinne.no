@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
 const source=(await readFile(new URL('../prepare/print.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
+const html=await readFile(new URL('../prepare/print.html',import.meta.url),'utf8');
 const session='1234567890abcdef1234567890abcdef',origin='http://192.168.4.1';
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 function harness(options={}){
@@ -37,6 +38,13 @@ test('one explicit helper tap opens the chooser synchronously and cannot queue t
   await app.elements.get('print').click();assert.equal(app.jobs.length,1);assert.equal(app.messages.some(message=>message.data.type==='entropi-print-result'),false);
   app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'sent',physicalPrintVerified:false}}));assert.equal(app.messages.at(-1).data.ok,true);
   assert.equal(app.disposed,false);await app.elements.get('print').click();assert.equal(app.focused,1);assert.equal(app.jobs.length,1);assert.equal(app.disposed,false);
+});
+
+test('the helper uses an unframed icon and clears successful status text',async()=>{
+  assert.match(html,/button\{[^}]*border:0;outline:0;background:transparent/);assert.doesNotMatch(html,/button[^}]*border:1px|button:focus-visible\{[^}]*outline:/);
+  const app=harness();await app.emit(app.image());assert.equal(app.elements.get('status').textContent,'');await app.elements.get('print').click();
+  assert.equal(app.elements.get('status').textContent,'Sender …');assert.equal(app.classes.has('working'),true);
+  app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'sent'}}));assert.equal(app.elements.get('status').textContent,'');assert.equal(app.classes.has('working'),false);assert.equal(app.elements.get('print').disabled,false);
 });
 
 test('cancelled pairing permits a deliberate retry while disposal prevents late enqueue',async()=>{

@@ -1,6 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
+  "rewrites": [
+    { "source": "/start", "destination": "/prepare/index.html" },
+    { "source": "/start/", "destination": "/prepare/index.html" },
+    { "source": "/start/index.html", "destination": "/prepare/index.html" },
+    { "source": "/start/sw.js", "destination": "/prepare/sw.js" }
+  ],
   "headers": [
     { "source": "/pointcloud/vendor/(.*).wasm", "headers": [{ "key": "Content-Type", "value": "application/wasm" }] },
     { "source": "/(.*)", "headers": [{ "key": "X-Content-Type-Options", "value": "nosniff" }, { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }] }

@@ -13,18 +13,18 @@ const flush=async()=>{for(let i=0;i<40;i++)await Promise.resolve()};
 function deferred(){let resolve;const promise=new Promise(yes=>{resolve=yes});return {promise,resolve}}
 
 function harness(options={}){
-  const elements=new Map(),events=new Map(),timers=new Map(),messages=[],opened=[],reads={asset:0,runtime:0},downloads=[];let timerId=0,closed=0,focused=0;
+  const elements=new Map(),events=new Map(),workerEvents=new Map(),timers=new Map(),messages=[],opened=[],reads={asset:0,runtime:0},downloads=[],registrations=[];let timerId=0,closed=0,focused=0,reloads=0;
   for(const match of html.matchAll(/<\w+\b[^>]*\bid="([^"]+)"[^>]*>/g))elements.set(match[1],{hidden:/\bhidden\b/.test(match[0]),textContent:'',listeners:new Map(),addEventListener(name,listener){this.listeners.set(name,listener)},removeAttribute(name){delete this[name]},async click(event={}){this.listeners.get('click')?.(event);await flush()}});
   const addEventListener=(name,listener)=>{if(!events.has(name))events.set(name,[]);events.get(name).push(listener)};
   const peer={closed:false,photo:null,focus(){focused++},postMessage:(data,target)=>messages.push({data,target})};
-  const document={documentElement:{dataset:{}},referrer:options.referrer??origin+'/',getElementById:id=>elements.get(id)};
-  const expected=secure+'/prepare/sw.js',registration={scope:secure+'/prepare/',active:{scriptURL:expected}};
+  const document={hidden:false,addEventListener,documentElement:{dataset:{}},referrer:options.referrer??origin+'/',getElementById:id=>elements.get(id)};
+  const scope=options.start?'/start/':'/prepare/',expected=secure+scope+'sw.js',registration={scope:secure+scope,active:{scriptURL:expected}},controller={scriptURL:expected};
   const context=vm.createContext({
-    document,location:{origin:secure,href:secure+'/prepare/'+(options.transfer?'?transfer':options.camera?'?camera':'')},history:options.history,URL,AbortController,DOMException,Uint8Array,ArrayBuffer,crypto:webcrypto,
+    document,location:{origin:secure,href:secure+scope+(options.transfer?'?transfer':options.camera?'?camera':''),reload(){reloads++}},history:options.history,URL,AbortController,DOMException,Uint8Array,ArrayBuffer,crypto:webcrypto,
     window:{opener:options.transfer?peer:null,addEventListener,open(url,target){opened.push({url,target});if(options.popupBlocked)return null;peer.closed=false;peer.photo=null;return peer},close(){closed++}},
-    navigator:{serviceWorker:{controller:{scriptURL:expected},ready:Promise.resolve(registration),getRegistration:async()=>registration,addEventListener(){},removeEventListener(){}},storage:{persist:async()=>true}},
+    navigator:{serviceWorker:{controller,ready:Promise.resolve(registration),register:async(...args)=>{registrations.push(args);return registration},addEventListener(name,listener){if(!workerEvents.has(name))workerEvents.set(name,[]);workerEvents.get(name).push(listener)},removeEventListener(name,listener){workerEvents.set(name,(workerEvents.get(name)||[]).filter(value=>value!==listener))}},storage:{persist:async()=>true}},
     fetch:async()=>({ok:true,json:async()=>manifest}),
-    loadAsset:async(asset,progress)=>{downloads.push(asset.key);await options.load?.(asset.key);progress(100);return bytes[asset.key].slice()},
+    loadAsset:async(asset,progress,signal)=>{downloads.push(asset.key);await options.load?.(asset.key,{progress,signal});signal.throwIfAborted();progress(100);return bytes[asset.key].slice()},
     loadCachedAsset:async asset=>{const count=++reads[asset.key];if(options.read)await options.read(asset.key,count);return bytes[asset.key].slice()},
     setTimeout:(callback,delay)=>{const id=++timerId;timers.set(id,{callback,delay});return id},clearTimeout:id=>timers.delete(id)
   });
@@ -35,7 +35,8 @@ function harness(options={}){
   async function cameraReady(details={}){const port={closed:false,onmessage:null,start(){},close(){this.closed=true},async emit(data){this.onmessage?.({data});await flush()}};await emit({type:'entropi-camera-ready'},{ports:[port],...details});return port}
   async function complete(session){await emit({type:'entropi-model-ack',session,key:'asset'});await emit({type:'entropi-model-ack',session,key:'runtime'})}
   async function expire(delay){for(const [id,timer]of [...timers])if(timer.delay===delay){timers.delete(id);timer.callback()}await flush()}
-  return {get:id=>elements.get(id),document,peer,messages,opened,reads,downloads,event,emit,connect,cameraReady,complete,expire,get closed(){return closed},get focused(){return focused}};
+  async function update(details={}){for(const listener of workerEvents.get('message')??[])listener({source:controller,origin:secure,data:{type:'entropi-update-ready'},...details});await flush()}
+  return {get:id=>elements.get(id),document,peer,messages,opened,reads,downloads,registrations,event,emit,connect,cameraReady,complete,expire,update,get closed(){return closed},get focused(){return focused},get reloads(){return reloads}};
 }
 
 test('QR preparation verifies both cached readbacks while photo opening stays available',async()=>{
@@ -210,6 +211,16 @@ test('optional model failure preserves an already connected photo and leaves ret
   await app.get('open-camera').click();assert.equal(app.focused,1);assert.equal(app.opened.length,1);assert.equal(app.peer.photo,'original-jpeg');
 });
 
+test('success or failure copying models preserves a camera that already owns a photo',async()=>{
+  for(const complete of[true,false]){
+    const app=harness();await flush();await app.get('open-camera').click();const port=await app.cameraReady();app.peer.photo='original-jpeg';
+    await app.emit({type:'entropi-models-connect'});await app.emit({type:'entropi-models-request',session:'copy'});
+    if(complete)await app.complete('copy');else await app.expire(60000);
+    await app.expire(10000);assert.equal(app.get('open-camera').textContent,'Tilbake til kameraet');assert.equal(app.get('open-camera').disabled,false);assert.equal(port.closed,false);
+    await app.get('open-camera').click();assert.equal(app.focused,1);assert.equal(app.opened.length,1);assert.equal(app.peer.photo,'original-jpeg');
+  }
+});
+
 test('BFCache restoration preserves the authenticated camera port and focuses its existing photo',async()=>{
   const restored=deferred(),app=harness({read:(key,count)=>key==='asset'&&count===2?restored.promise:undefined});await flush();
   await app.get('open-camera').click();const port=await app.cameraReady();app.peer.photo='original-jpeg';
@@ -222,4 +233,32 @@ test('BFCache restoration preserves the authenticated camera port and focuses it
 test('the back action restores the originating public camera history entry',async()=>{
   let backed=0,prevented=0;const app=harness({referrer:secure+'/',history:{length:2,back(){backed++}}});await flush();
   await app.get('back').click({preventDefault(){prevented++}});assert.equal(backed,1);assert.equal(prevented,1);assert.match(html,/<a id="back" href="\/" aria-label="Tilbake"/);
+});
+
+test('canonical QR entry registers its isolated worker scope without duplicating its app',async()=>{
+  for(const start of[false,true]){const app=harness({start});await flush();assert.equal(app.registrations[0][0],start?'/start/sw.js':'/prepare/sw.js');assert.deepEqual({...app.registrations[0][1]},{scope:start?'/start/':'/prepare/',updateViaCache:'none'});assert.equal(app.document.documentElement.dataset.ready,'true')}
+});
+
+test('stalled downloads fail with a retry while preserving camera opening',async()=>{
+  const app=harness({load:(_, {signal})=>new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason)))});await flush();await app.expire(30000);
+  assert.match(app.get('status').textContent,/Nedlastinga stoppa/);assert.equal(app.get('retry').hidden,false);assert.equal(app.get('open-camera').disabled,false);assert.equal(app.document.documentElement.dataset.ready,'false');assert.equal(app.get('network').hidden,false);
+});
+
+test('BFCache resumes interrupted automatic preparation but never restarts an explicit photo skip',async()=>{
+  for(const skip of[false,true]){
+    let attempts=0;const app=harness({load:(_, {signal})=>{if(attempts++===0)return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason)))},read:()=>{if(skip)throw Object.assign(new Error('Missing'),{code:'PHONE_SETUP_REQUIRED'})}});await flush();
+    if(skip)await app.get('open-camera').click();await app.event('pagehide',{persisted:true});await app.event('pageshow',{persisted:true});
+    assert.equal(app.document.documentElement.dataset.ready,skip?'false':'true');assert.equal(app.downloads.length,skip?1:3);
+  }
+});
+
+test('only its controlling worker may request an idle onboarding refresh',async()=>{
+  const app=harness({start:true});await flush();await app.update({source:{scriptURL:secure+'/start/sw.js'}});await app.update({origin:'https://untrusted.test'});assert.equal(app.reloads,0);
+  await app.update();assert.equal(app.reloads,1);
+});
+
+test('worker updates wait for downloads, remain deferred for live peers, and never reload a transfer helper',async()=>{
+  const loading=deferred(),downloading=harness({load:key=>key==='asset'?loading.promise:undefined});await flush();await downloading.update();assert.equal(downloading.reloads,0);loading.resolve();await flush();assert.equal(downloading.reloads,1);
+  const camera=harness();await flush();await camera.get('open-camera').click();await camera.cameraReady();camera.peer.photo='original-jpeg';await camera.update();await camera.event('visibilitychange');assert.equal(camera.reloads,0);assert.equal(camera.peer.photo,'original-jpeg');
+  const helper=harness({transfer:true});await flush();await helper.update();assert.equal(helper.reloads,0);
 });

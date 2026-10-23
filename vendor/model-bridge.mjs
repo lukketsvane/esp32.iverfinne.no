@@ -43,7 +43,7 @@ export function requestPhoneModels(signal,onProgress=()=>{},source=null){
         helper.postMessage({type:'entropi-model-ack',session,key:data.key},origin);
       }catch(error){finish(error)}
     };
-    let timer=setTimeout(()=>finish(new Error('Opne esp32.iverfinne.no/prepare/ med internett éin gong, og prøv igjen.')),10000);
+    let timer=setTimeout(()=>finish(new Error('Opne esp32.iverfinne.no/start/ med internett éin gong, og prøv igjen.')),10000);
     window.addEventListener('message',message);signal?.addEventListener('abort',abort,{once:true});
     if(signal?.aborted){abort();return}
     if(source)helper.postMessage({type:'entropi-models-connect'},origin);
