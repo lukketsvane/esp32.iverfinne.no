@@ -49,8 +49,8 @@ test('every photo style remains binary throughout the grain and contrast ranges'
   for(let style=0;style<4;style++)for(let grain=1;grain<=8;grain++)for(const contrast of [.5,1,3])binary(app.process(input,17,13,style,grain,contrast));
 });
 
-test('every style keeps black and white endpoints even below minimum contrast and preserves source alpha',()=>{
-  const app=harness();for(const value of [0,255])for(let style=0;style<4;style++)for(const grain of [1,8])for(const contrast of [.5,1,3]){
+test('every style keeps black and white endpoints throughout the contrast range and preserves source alpha',()=>{
+  const app=harness();for(const value of [0,255])for(let style=0;style<4;style++)for(const grain of [1,8])for(const contrast of [.5,.6,.75,.9,1,1.5,2,3]){
     const input=gray(9,7,value);input[3]=0;input[7]=128;const output=app.process(input,9,7,style,grain,contrast);
     for(let i=0;i<output.length;i++)assert.equal(output[i],i%4===3?input[i]:value);
   }
@@ -59,9 +59,15 @@ test('every style keeps black and white endpoints even below minimum contrast an
 test('grain creates larger uniform cells and contrast changes dither without introducing gray pixels',()=>{
   const app=harness(),input=gray(8,8),fine=app.process(input,8,8,1,1,1),coarse=app.process(input,8,8,1,4,1);binary(coarse);assert.notDeepEqual([...fine],[...coarse]);
   for(let y=0;y<8;y++)for(let x=0;x<8;x++)assert.equal(coarse[(y*8+x)*4],coarse[(Math.floor(y/4)*4*8+Math.floor(x/4)*4)*4]);
-  const tones=gray(16,8,x=>x<8?80:175),soft=app.process(tones,16,8,1,1,1),strong=app.process(tones,16,8,1,1,3);binary(soft);binary(strong);
+  const tones=gray(16,8,x=>x<8?80:175),soft=app.process(tones,16,8,1,1,.5),normal=app.process(tones,16,8,1,1,1),strong=app.process(tones,16,8,1,1,3);binary(soft);binary(normal);binary(strong);
   const whiteCount=(data,start)=>{let count=0;for(let y=0;y<8;y++)for(let x=start;x<start+8;x++)count+=data[(y*16+x)*4]===255;return count};
-  assert.ok(whiteCount(strong,0)<whiteCount(soft,0));assert.ok(whiteCount(strong,8)>whiteCount(soft,8));
+  assert.ok(whiteCount(strong,0)<whiteCount(normal,0));assert.ok(whiteCount(normal,0)<whiteCount(soft,0));assert.ok(whiteCount(strong,8)>whiteCount(normal,8));assert.ok(whiteCount(normal,8)>whiteCount(soft,8));
+});
+
+test('photo review restores soft contrast without lifting black margins or lowering white pixels',()=>{
+  const input=gray(32,8,x=>[0,80,175,255][Math.floor(x/8)]),app=harness(32,8,input);app.view.setSource();app.view.setStyle(1);app.flush();const normal=app.canvas().pixels.slice();
+  app.view.setTone({contrast:.5});app.flush();const soft=app.canvas().pixels;assert.notDeepEqual([...soft],[...normal]);assert.deepEqual([...soft],[...app.process(input,32,8,1,1,.5)]);
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){assert.equal(soft[(y*32+x)*4],0);assert.equal(soft[(y*32+x+24)*4],255)}
 });
 
 test('tone updates coalesce and zoom refresh never rereads or reprocesses photo pixels',()=>{

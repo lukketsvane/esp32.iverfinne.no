@@ -1,12 +1,13 @@
 import {photoSnapshot} from './photo.mjs';
 
 export function processPhoto(source,width,height,style,grain,contrast){
-  contrast=Math.max(1,contrast);
+  contrast=Math.max(.5,Math.min(3,contrast));
   const cols=Math.ceil(width/grain),rows=Math.ceil(height/grain),values=new Float32Array(cols*rows);
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
     let sum=0,count=0;
     for(let py=y*grain;py<Math.min(height,(y+1)*grain);py++)for(let px=x*grain;px<Math.min(width,(x+1)*grain);px++){sum+=source[(py*width+px)*4];count++}
-    values[y*cols+x]=Math.max(0,Math.min(255,(sum/count-127.5)*contrast+127.5));
+    const value=sum/count;
+    values[y*cols+x]=contrast<1?(value<127.5?127.5*(value/127.5)**contrast:255-127.5*((255-value)/127.5)**contrast):Math.max(0,Math.min(255,(value-127.5)*contrast+127.5));
   }
   const bayer=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
@@ -58,7 +59,7 @@ export function createPhotoView(image){
     dirty=true;render();refresh();
   }
   function setStyle(value){const next=Math.round(finite(value,0,3,0));if(style!==next){style=next;schedule()}}
-  function setTone(tone={}){const nextGrain=Math.round(finite(tone.grain??grain,1,8,grain)),nextContrast=finite(tone.contrast??contrast,1,3,contrast);if(grain!==nextGrain||contrast!==nextContrast){grain=nextGrain;contrast=nextContrast;schedule()}}
+  function setTone(tone={}){const nextGrain=Math.round(finite(tone.grain??grain,1,8,grain)),nextContrast=finite(tone.contrast??contrast,.5,3,contrast);if(grain!==nextGrain||contrast!==nextContrast){grain=nextGrain;contrast=nextContrast;schedule()}}
   function snapshot(pose,native=false){if(disposed||!source)throw new Error('Fotoet er ikkje klart.');render();return photoSnapshot(canvas,pose,native,true)}
   function dispose(){if(disposed)return;disposed=true;if(frame)cancelAnimationFrame(frame);source=null;image.style.opacity=opacity;canvas.remove()}
   return {setSource,setStyle,setTone,show,refresh,snapshot,dispose};

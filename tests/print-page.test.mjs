@@ -42,7 +42,7 @@ test('one explicit helper tap opens the chooser synchronously and cannot queue t
 });
 
 test('the helper uses an unframed icon and clears successful status text',async()=>{
-  assert.match(html,/button\{[^}]*border:0;outline:0;background:transparent/);assert.doesNotMatch(html,/button[^}]*border:1px|button:focus-visible\{[^}]*outline:/);
+  assert.match(html,/button\{[^}]*border:0;outline:0;background:transparent/);assert.doesNotMatch(html,/button[^}]*border:1px/);assert.match(html,/button:focus-visible\{[^}]*outline:2px solid/);
   assert.match(html,/\.error #status\{/);assert.doesNotMatch(html,/\.working #status/);assert.match(html,/\.working svg\{animation:/);assert.match(html,/prefers-reduced-motion:reduce/);
   const app=harness();await app.emit(app.image());assert.equal(app.elements.get('status').textContent,'');await app.elements.get('print').click();
   assert.equal(app.elements.get('status').textContent,'Sender …');assert.equal(app.classes.has('working'),true);

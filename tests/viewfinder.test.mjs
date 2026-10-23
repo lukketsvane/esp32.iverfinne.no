@@ -52,6 +52,13 @@ test('live photo tone controls cannot produce gray pixels at any style or grain 
   app.view.dispose();
 });
 
+test('the live finder accepts soft contrast while keeping its optical borders black',()=>{
+  const app=finder();app.canvas.getBoundingClientRect=()=>({width:24});app.view.source={width:320,height:240};app.view.setStyle(1);app.view.draw();const normal=app.painted.at(-1);
+  app.view.setTone({contrast:.5});app.view.draw();const soft=app.painted.at(-1);assert.equal(app.view.contrast,.5);assert.notDeepEqual([...soft],[...normal]);
+  for(const at of [0,(app.canvas.width-1)*4,(app.canvas.height-1)*app.canvas.width*4,(app.canvas.height*app.canvas.width-1)*4])assert.equal(soft[at],0);
+  app.view.dispose();
+});
+
 test('the animation samples at most twenty frames per second and skips inactive or hidden camera work',()=>{
   const app=finder();app.view.source={width:320,height:240};for(const time of [0,16,32,48,50,66,100])app.frame(time);assert.equal(app.draws.length,3);app.document.hidden=true;app.frame(150);assert.equal(app.draws.length,3);app.document.hidden=false;app.view.active=false;app.frame(200);assert.equal(app.draws.length,3);app.view.active=true;app.frame(250);assert.equal(app.draws.length,4);app.view.dispose();assert.equal(app.frames.size,0);assert.equal(app.view.source,null);
 });

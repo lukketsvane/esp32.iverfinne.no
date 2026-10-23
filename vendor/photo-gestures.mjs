@@ -13,7 +13,7 @@ export function attachPhotoGestures(image,{enabled=()=>true,onChange=()=>{}}={})
     point.x=event.clientX;point.y=event.clientY;const current=measure();
     if(previous&&start&&points.size===3){
       if(!axis&&Math.hypot(current.x-start.x,current.y-start.y)>=10)axis=Math.abs(current.x-start.x)>Math.abs(current.y-start.y)?'contrast':'grain';
-      if(axis==='contrast')state.contrast=Math.max(1,Math.min(3,state.contrast+(current.x-previous.x)*3.5/Math.max(1,state.width)));
+      if(axis==='contrast')state.contrast=Math.max(.5,Math.min(3,state.contrast+(current.x-previous.x)*3.5/Math.max(1,state.width)));
       else if(axis==='grain')state.grain=Math.max(1,Math.min(8,state.grain+(current.y-previous.y)*10/Math.max(1,state.height)));
     }
     previous=current;if(points.size<2||points.size>3)return;event.preventDefault();event.stopImmediatePropagation();if(points.size===3)draw();
