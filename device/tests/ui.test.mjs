@@ -186,7 +186,7 @@ function harness(options = {}) {
     },
     Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};this.captures=[];finders.push(this) }capture(source){const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;this.captures.push({source,url:source.src,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
-    readColorScheme:kind=>stored.get('entropi-color-'+kind+'-v1')??'signal',
+    readColorScheme:kind=>stored.get('entropi-color-'+kind+'-v1')??'original',
     saveColorScheme:(kind,id)=>stored.set('entropi-color-'+kind+'-v1',id),
     attachColorSchemeControls:(hosts,getKind,getSelection,onChoose,enabled)=>{
       colorBinding={hosts,getKind,getSelection,onChoose,enabled};return {refresh(){},dispose(){}};
@@ -1005,7 +1005,7 @@ test('live dithering and tone use the captured photo style without a three-finge
 test('photo and Gaussian palettes are independent and recolour existing scenes without rerunning depth', async()=>{
   const app=await connectedCamera({scene:async()=>({dispose(){}})});
   assert.equal(app.paletteKind(),'photo');
-  assert.equal(app.finders[0].palette,'signal');
+  assert.equal(app.finders[0].palette,'original');
   app.choosePalette('coral');
   assert.equal(app.photoViews[0].palette,'coral');
   assert.equal(app.finders[0].palette,'coral');
@@ -1013,8 +1013,8 @@ test('photo and Gaussian palettes are independent and recolour existing scenes w
   await app.get('capture-plane').emit('click');await app.tick(0);
   app.changeStudio('image',1);await app.tick(0);
   assert.equal(app.paletteKind(),'depth');
-  assert.equal(app.selectedPalette(),'signal');
-  assert.equal(app.viewers[0].palette,'signal');
+  assert.equal(app.selectedPalette(),'original');
+  assert.equal(app.viewers[0].palette,'original');
   const firstInferences=app.sceneCalls.length;
   app.choosePalette('ember');
   assert.equal(app.viewers[0].palette,'ember');
