@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { gaussianSplats } from '../pointcloud/math.mjs';
 import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, primitiveDimensions } from '../pointcloud/primitive.mjs';
 import { attachViewerGestures, progressiveIndices } from '../vendor/viewer-gestures.mjs';
+import {resolveColorScheme,gaussianInk} from '../vendor/color-schemes.mjs';
 
 const source=await readFile(new URL('../vendor/scene.mjs',import.meta.url),'utf8'),renderer=source.slice(source.indexOf('function renderScene('),source.indexOf('\nexport async function createDepthScene'));
 function harness(options={}){
@@ -29,7 +30,7 @@ function harness(options={}){
     const gl=new Proxy(target,{get(object,key){if(key in object)return object[key];if(/^[A-Z_0-9]+$/.test(key)){if(!values.has(key))values.set(key,constant++);return values.get(key)}if(key.startsWith('create'))return ()=>({});if(key==='checkFramebufferStatus')return ()=>gl.FRAMEBUFFER_COMPLETE;return ()=>{}}});return gl;
   }
   class Indices extends Uint32Array{sort(compare){sorts++;return super.sort(compare)}}
-  const context=vm.createContext({document:{createElement:()=>new Canvas()},Event,Float32Array,Uint32Array:Indices,DataView,Map,Math,performance:{now:()=>now},matchMedia:()=>({matches:options.reduced===true}),nearestC64,PRIMITIVE_MODES,PRIMITIVE_BAYER,normalizePrimitiveLevel,primitiveDimensions,attachViewerGestures,progressiveIndices,
+  const context=vm.createContext({document:{createElement:()=>new Canvas()},Event,Float32Array,Uint32Array:Indices,DataView,Map,Math,performance:{now:()=>now},matchMedia:()=>({matches:options.reduced===true}),nearestC64,resolveColorScheme,gaussianInk,PRIMITIVE_MODES,PRIMITIVE_BAYER,normalizePrimitiveLevel,primitiveDimensions,attachViewerGestures,progressiveIndices,
     requestAnimationFrame:callback=>{const id=++frameId;frames.set(id,callback);return id},cancelAnimationFrame:id=>frames.delete(id),ResizeObserver:class{observe(){}disconnect(){}}
   });vm.runInContext(renderer,context);
   const count=256,positions=new Float32Array(count*3),colors=new Uint8Array(count*3).fill(150);for(let i=0;i<count;i++){positions[i*3]=(i%16-8)/16;positions[i*3+1]=(Math.floor(i/16)-8)/16;positions[i*3+2]=Math.sin(i)*.1}
