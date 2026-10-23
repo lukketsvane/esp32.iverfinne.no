@@ -24,13 +24,12 @@ export function attachStudioControls(roots,onChange,enabled=()=>true,onGesture=(
   function update(){for(const {kind,rail,options} of rails){const selected=kind==='primitive'&&controls.image===0?'photo':kind;rail.classList.toggle('active',owner?.kind===kind);rail.setAttribute('aria-label',kind==='primitive'?'Historisk skjermprofil':'Bilettype');for(const {button,tick,level} of options){button.setAttribute('aria-label',kind==='primitive'?'Profil '+(level+1):labels.image[level]);button.setAttribute('aria-pressed',String(level===controls[selected]));tick.classList.toggle('chosen',level===controls[selected])}}}
   function change(kind,level){if(kind==='primitive'&&controls.image===0)kind='photo';const next=Math.max(0,Math.min(kind==='image'?1:8,Math.round(level)));if(!Number.isFinite(next)||controls[kind]===next)return;controls[kind]=next;if(kind==='image'&&next===0&&owner?.kind==='primitive')owner=null;update();onChange(kind,next)}
   const consume=event=>{event.preventDefault();event.stopImmediatePropagation()};
-  const auxiliary=event=>event.target.closest('.access-control,.studio-option,[data-adjustments]');
+  const auxiliary=event=>event.target.closest('.access-control,.studio-option');
   const band=()=>Math.max(24,window.innerWidth*.07);
   const select=event=>{const length=owner.kind==='image'?2:9,level=Math.min(length-1,Math.max(0,Math.floor(event.clientY/Math.max(1,window.innerHeight)*length)));change(owner.kind,level);if(owner.kind==='image')feedback();else feedbackProfile(level)};
   function down(event){
     if(event.pointerType!=='touch')return;
     if(!enabled()){cancel();return}
-    if(event.target.closest('[data-adjustments]'))return;
     if(touches.size){touches.add(event.pointerId);consume(event);return}
     if(!event.isPrimary||event.target.closest('[data-photo-save]'))return;
     if(event.target.closest('.studio-option')){owner={id:event.pointerId,native:true};touches.add(event.pointerId);return}
@@ -38,8 +37,8 @@ export function attachStudioControls(roots,onChange,enabled=()=>true,onGesture=(
     const kind=event.clientX>=0&&event.clientX<=band()?'primitive':event.clientX>=window.innerWidth-band()&&event.clientX<=window.innerWidth?'image':null;
     if(!kind)return;owner={kind,id:event.pointerId};touches.add(event.pointerId);ignoreClickUntil=Date.now()+1000;consume(event);onGesture();select(event);update();
   }
-  function move(event){if(!enabled()){cancel();return}if(event.target.closest('[data-adjustments]')||event.pointerType!=='touch'||!touches.size||owner?.native&&owner.id===event.pointerId)return;consume(event);if(owner?.id===event.pointerId)select(event)}
-  function up(event){if(!enabled()){cancel();return}if(event.target.closest('[data-adjustments]')||event.pointerType!=='touch'||!touches.size)return;const native=owner?.native&&owner.id===event.pointerId;touches.delete(event.pointerId);if(!native){consume(event);ignoreClickUntil=Date.now()+400}if(owner?.id===event.pointerId){owner=null;update()}}
+  function move(event){if(!enabled()){cancel();return}if(event.pointerType!=='touch'||!touches.size||owner?.native&&owner.id===event.pointerId)return;consume(event);if(owner?.id===event.pointerId)select(event)}
+  function up(event){if(!enabled()){cancel();return}if(event.pointerType!=='touch'||!touches.size)return;const native=owner?.native&&owner.id===event.pointerId;touches.delete(event.pointerId);if(!native){consume(event);ignoreClickUntil=Date.now()+400}if(owner?.id===event.pointerId){owner=null;update()}}
   function click(event){if(enabled()&&Date.now()<ignoreClickUntil&&!auxiliary(event)&&(event.clientX<=band()||event.clientX>=window.innerWidth-band()))consume(event)}
   function cancel(){touches.clear();owner=null;ignoreClickUntil=0;update()}
   const listeners=[['pointerdown',down],['pointermove',move],['pointerup',up],['pointercancel',up],['click',click],['blur',cancel]];

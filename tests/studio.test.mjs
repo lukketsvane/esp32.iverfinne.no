@@ -133,13 +133,11 @@ test('mouse, central touch, disabled context, and a photo-save dialog are not in
   assert.equal(app.emit('pointerdown',{clientX:4,target:image}).prevented,false);
 });
 
-test('adjustment descendants retain native input gestures even during an edge gesture',()=>{
-  const app=harness(),panel=new app.Element('SECTION'),input=new app.Element('INPUT');panel.setAttribute('data-adjustments','');panel.appendChild(input);
-  app.emit('pointerdown',{clientX:4,clientY:100});const before=app.changes.length;
-  for(const name of ['pointerdown','pointermove','pointerup','pointercancel','click']){
-    const event=app.emit(name,{clientX:4,clientY:800,target:input,pointerId:2,isPrimary:false});assert.equal(event.prevented,false,name);assert.equal(event.stopped,false,name);
-  }
-  assert.equal(app.changes.length,before);app.controls.cancel();assert.equal(app.emit('pointermove',{clientX:4,clientY:800}).prevented,false);assert.equal(app.emit('click',{clientX:4}).prevented,false);
+test('cancelling an edge gesture releases ownership before a direct image gesture',()=>{
+  const app=harness();app.emit('pointerdown',{clientX:4,clientY:100});const before=app.changes.length;
+  app.controls.cancel();
+  for(const name of ['pointermove','pointerup','pointercancel','click'])assert.equal(app.emit(name,{clientX:4,clientY:800}).prevented,false,name);
+  assert.equal(app.changes.length,before);
 });
 
 test('disabling controls mid-gesture cancels edge ownership and suppresses profile changes',()=>{

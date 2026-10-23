@@ -40,7 +40,7 @@ test('the offline shell contains its complete small module graph without models,
     if(path.endsWith('.mjs'))for(const match of (await read(relative)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm)){const dependency=new URL(match[1],origin+path).pathname;assert.ok(app.files.includes(dependency),path+' -> '+dependency)}
   }
   assert.ok(total<300000,total+' bytes');
-  for(const path of ['/vendor/image-adjustments.mjs','/vendor/adjustment-controls.mjs','/pointcloud/depth-worker.mjs','/pointcloud/vendor/ort.wasm.min.mjs','/pointcloud/vendor/ort-wasm-simd-threaded.mjs','/prepare/print.html'])assert.ok(app.files.includes(path));
+  for(const path of ['/vendor/image-adjustments.mjs','/vendor/adjustment-gestures.mjs','/pointcloud/depth-worker.mjs','/pointcloud/vendor/ort.wasm.min.mjs','/pointcloud/vendor/ort-wasm-simd-threaded.mjs','/prepare/print.html'])assert.ok(app.files.includes(path));
   await app.lifecycle('install');assert.deepEqual(app.installed,app.files);assert.equal(app.skipped,0);
 });
 
@@ -109,7 +109,7 @@ test('the fresh print module graph resolves canonical sources and stays availabl
   const destinations={'/print':'/prepare/print.html','/print/':'/prepare/print.html','/print/index.html':'/prepare/print.html','/print/app.mjs':'/prepare/print.mjs','/print/printer.mjs':'/vendor/print/printer.mjs','/print/px10-protocol.mjs':'/vendor/print/px10-protocol.mjs'};
   for(const [path,destination]of Object.entries(destinations)){assert.equal(rewrites.find(route=>route.source===path)?.destination,destination);await stat(new URL(destination.slice(1),root))}
   const html=await read('prepare/print.html'),module=await read('prepare/print.mjs'),printer=await read('vendor/print/printer.mjs');assert.match(html,/src="\/print\/app\.mjs"/);assert.match(module,/from '\/print\/printer\.mjs'/);assert.match(printer,/from '\.\/px10-protocol\.mjs'/);
-  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v27'],[prepare,'/prepare/sw.js','entropi-prepare-v21'],[prepare,'/start/sw.js','entropi-start-v15']]){
+  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v28'],[prepare,'/prepare/sw.js','entropi-prepare-v21'],[prepare,'/start/sw.js','entropi-start-v15']]){
     const app=serviceWorker(source,async()=>{throw new TypeError('Offline')},{scriptPath});await app.lifecycle('install');assert.equal(app.name,name);
     for(const path of printFiles){assert.ok(app.files.includes(path));assert.equal(await(await app.request(path)).text(),'cached:'+path);const file=destinations[path].slice(1);if(path.endsWith('.mjs'))for(const match of(await read(file)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm))assert.ok(app.files.includes(new URL(match[1],origin+path).pathname),path+' -> '+match[1])}
     for(const path of ['/print','/print/index.html'])assert.equal(await(await app.request(path)).text(),'cached:/print/');
