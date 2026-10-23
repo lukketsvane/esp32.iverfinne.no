@@ -316,7 +316,7 @@ void finish(bool success, const char *message = "") {
   free(finished);
   phase = Phase::IDLE;
   pendingLength = 0;
-  if (diagnostic) Serial.printf("Printer check: %s; no print data sent; BLE=%u connected=%u internal free=%u largest=%u\n", success ? "ready" : "failed", esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED, connected, static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+  if (diagnostic) Serial.printf("Printer check: %s; no print data sent; BLE=%u connected=%u internal free=%u largest=%u stack_min_free=%u\n", success ? "ready" : "failed", esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED, connected, static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
 }
 
 void searchServices() {
@@ -412,7 +412,7 @@ void initializeBle() {
     if (esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_UNINITIALIZED) good = esp_bluedroid_init() == ESP_OK;
     if (good && esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_INITIALIZED) good = esp_bluedroid_enable() == ESP_OK;
     heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
-    Serial.printf("Printer BLE host: %s internal=%u largest=%u psram=%u\n", good ? "ready" : "failed", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    Serial.printf("Printer BLE host: %s internal=%u largest=%u psram=%u stack_min_free=%u\n", good ? "ready" : "failed", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
   }
   if (good) good = esp_ble_gap_register_callback(gapCallback) == ESP_OK && esp_ble_gattc_register_callback(gattCallback) == ESP_OK && esp_ble_gatt_set_local_mtu(185) == ESP_OK;
   setPhase(Phase::REGISTER, 5000);
@@ -640,7 +640,7 @@ bool ensureWorker() {
   if (worker) return true;
   events = xQueueCreate(16, sizeof(Event));
   if (!events) return false;
-  if (xTaskCreate(printerWorker, "entropi-printer", 8192, nullptr, 2, &worker) == pdPASS) return true;
+  if (xTaskCreate(printerWorker, "entropi-printer", 4096, nullptr, 2, &worker) == pdPASS) return true;
   vQueueDelete(events);
   events = nullptr;
   return false;

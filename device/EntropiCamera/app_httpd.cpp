@@ -46,6 +46,7 @@ static volatile unsigned recoveryAttempts = 0;
 static uint32_t nextRecovery = 0;
 static char lastError[96] = "Camera is starting";
 static const char *serverError = "";
+static uint32_t streamStackFree = UINT32_MAX;
 struct PhotoFrame {
   uint8_t *data = nullptr;
   size_t length = 0;
@@ -60,6 +61,13 @@ static void cameraMessage(const char *error) {
 static void setServerError(const char *error) {
   portENTER_CRITICAL(&stateMux);
   serverError = error;
+  portEXIT_CRITICAL(&stateMux);
+}
+
+static void sampleStreamStack() {
+  uint32_t available = uxTaskGetStackHighWaterMark(nullptr);
+  portENTER_CRITICAL(&stateMux);
+  streamStackFree = available;
   portEXIT_CRITICAL(&stateMux);
 }
 
@@ -336,6 +344,7 @@ static esp_err_t assetHandler(httpd_req_t *request) {
 }
 
 static esp_err_t streamHandler(httpd_req_t *request) {
+  sampleStreamStack();
   if (printerBusy()) return unavailable(request, "Printer is busy");
   if (!cameraReady) return unavailable(request, "Camera is unavailable");
   httpd_resp_set_type(request, "multipart/x-mixed-replace;boundary=entropi-frame");
@@ -369,6 +378,7 @@ static esp_err_t streamHandler(httpd_req_t *request) {
     esp_err_t result = httpd_resp_send_chunk(request, header, length);
     if (result == ESP_OK) result = httpd_resp_send_chunk(request, reinterpret_cast<const char *>(photo.data), photo.length);
     free(photo.data);
+    sampleStreamStack();
     if (result != ESP_OK) return result;
     vTaskDelay(pdMS_TO_TICKS(1));
   }
@@ -421,7 +431,10 @@ static void deviceWorker(void *) {
         }
         unlockCamera();
       }
-      Serial.printf("Printer camera check: valid=%u fresh=%u jpeg=%ux%u bytes=%u SOI=%u EOI=%u internal=%u largest=%u psram=%u\n", valid, fresh, width, height, static_cast<unsigned>(length), soi, eoi, static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+      portENTER_CRITICAL(&stateMux);
+      int32_t streamFree = streamStackFree == UINT32_MAX ? -1 : static_cast<int32_t>(streamStackFree);
+      portEXIT_CRITICAL(&stateMux);
+      Serial.printf("Printer camera check: valid=%u fresh=%u jpeg=%ux%u bytes=%u SOI=%u EOI=%u internal=%u largest=%u psram=%u stream_stack_min_free=%ld\n", valid, fresh, width, height, static_cast<unsigned>(length), soi, eoi, static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)), static_cast<long>(streamFree));
     }
     vTaskDelay(pdMS_TO_TICKS(100));
   }
@@ -467,6 +480,7 @@ void startCameraServer() {
   }
   config.server_port++;
   config.ctrl_port++;
+  config.stack_size = 4096;
   if (httpd_start(&streamHttpd, &config) == ESP_OK) {
     if (!registerHandler(streamHttpd, "/stream", streamHandler)) {
       httpd_stop(streamHttpd);
