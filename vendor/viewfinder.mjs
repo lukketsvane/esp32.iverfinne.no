@@ -30,13 +30,14 @@ function paintFinderFrame(source,context,pixels,width,height,projection,time,mon
 
 export class Viewfinder {
   constructor(canvas){
-    this.canvas=canvas;this.active=true;this.disposed=false;this.source=null;this.style=0;this.grain=1;this.contrast=1;
+    this.canvas=canvas;this.active=true;this.disposed=false;this.source=null;this.style=0;this.palette='original';this.grain=1;this.contrast=1;
     this.context=canvas.getContext('2d');this.sampleCanvas=canvas.ownerDocument.createElement('canvas');this.sampleContext=this.sampleCanvas.getContext('2d',{willReadFrequently:true});
     this.fit();let previous=-Infinity;
     const frame=time=>{if(this.disposed)return;this.animation=requestAnimationFrame(frame);if(!this.active||document.hidden||time-previous<50)return;previous=time;this.draw(time)};
     this.animation=requestAnimationFrame(frame);
   }
   setStyle(level){this.style=Number.isFinite(level)?Math.max(0,Math.min(3,Math.round(level))):0}
+  setPalette(id){this.palette=id}
   setTone({grain=this.grain,contrast=this.contrast}={}){if(Number.isFinite(grain))this.grain=Math.max(1,Math.min(8,Math.round(grain)));if(Number.isFinite(contrast))this.contrast=Math.max(1,Math.min(3,contrast))}
   draw(time=0){
     const source=this.source;if(!source||!this.context||!this.sampleContext)return;
@@ -45,7 +46,7 @@ export class Viewfinder {
     this.fit();
     try{
       paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,true);this.time=time;
-      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast));this.context.putImageData(this.output,0,0);
+      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast,this.palette));this.context.putImageData(this.output,0,0);
     }catch{}
   }
   fit(){
