@@ -62,19 +62,19 @@ test('failed automatic GPU recovery reports the error and an explicit refresh ca
 });
 
 test('reveal advances over the native point buffer without repeated sorting or uploads and then stops',()=>{
-  const app=harness();assert.equal(app.gl.uniforms.uReveal,0);assert.equal(app.pendingFrames,1);app.flush(400);assert.equal(app.gl.uniforms.uReveal,.4);app.flush(600);
+  const app=harness();assert.equal(app.gl.uniforms.uReveal,1/256);assert.equal(app.pendingFrames,1);app.flush(800);assert.equal(app.gl.uniforms.uReveal,1/256+255/256*.2**6);app.flush(800);assert.equal(app.gl.uniforms.uReveal,1/256+255/256*.4**6);app.flush(1080);assert.equal(app.gl.uniforms.uReveal,1/256+255/256*.67**6);app.flush(1320);
   assert.equal(app.gl.uniforms.uReveal,1);assert.equal(app.pendingFrames,0);assert.equal(app.sorts,1);assert.equal(app.uploads,1);assert.ok(app.gl.draws.every(draw=>draw.mode!==app.gl.POINTS||draw.count===256));
   app.viewer.setPrimitiveLevel(1);app.viewer.resetView();app.flush(1000);assert.equal(app.gl.uniforms.uReveal,1);assert.equal(app.pendingFrames,0);app.viewer.dispose();
 });
 
 test('reduced motion skips reveal and hidden host dimensions pause it without a frame loop',()=>{
   const reduced=harness({reduced:true});assert.equal(reduced.gl.uniforms.uReveal,1);assert.equal(reduced.pendingFrames,0);reduced.viewer.dispose();
-  const app=harness();app.flush(250);assert.equal(app.gl.uniforms.uReveal,.25);app.host.clientWidth=0;app.flush(250);assert.equal(app.pendingFrames,0);
-  app.host.clientWidth=300;app.viewer.refresh();app.flush(5000);assert.equal(app.gl.uniforms.uReveal,.25);app.flush(750);assert.equal(app.gl.uniforms.uReveal,1);assert.equal(app.pendingFrames,0);app.viewer.dispose();
+  const app=harness();app.flush(1000);const before=app.gl.uniforms.uReveal;assert.equal(before,1/256+255/256*.25**6);app.host.clientWidth=0;app.flush(250);assert.equal(app.pendingFrames,0);
+  app.host.clientWidth=300;app.viewer.refresh();app.flush(5000);assert.equal(app.gl.uniforms.uReveal,before);app.flush(3000);assert.equal(app.gl.uniforms.uReveal,1);assert.equal(app.pendingFrames,0);app.viewer.dispose();
 });
 
 test('context recovery preserves reveal progress and snapshots permanently finish the existing scene',()=>{
-  const app=harness();app.flush(300);app.gl.getExtension().loseContext();app.flush(500);assert.equal(app.gl.uniforms.uReveal,.3);
+  const app=harness();app.flush(1200);const before=app.gl.uniforms.uReveal;app.gl.getExtension().loseContext();app.flush(500);assert.equal(app.gl.uniforms.uReveal,before);
   const image=app.viewer.snapshot(true);assert.equal(image.width,300);assert.equal(image.height,600);assert.equal(app.gl.uniforms.uReveal,1);assert.equal(app.pendingFrames,0);
   app.host.clientWidth=0;app.viewer.snapshot(true);assert.equal(app.canvas.width,300);app.host.clientWidth=300;app.gl.getExtension().loseContext();app.flush(1000);assert.equal(app.gl.uniforms.uReveal,1);assert.equal(app.pendingFrames,0);app.viewer.dispose();
 });

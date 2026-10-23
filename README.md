@@ -12,7 +12,7 @@ Oppsettet følgjer den opphavlege Entropi-sida: svart heilskjerm, ein liten opti
 
 Nettappen kan leggjast til på heimskjermen med same søkjarikon som favikonet. Han opnar utan nettlesarramme og held på fotoet ved mellombels bakgrunn og tilbakekomst. 3D-motoren blir gjenbrukt mellom opptak og frigitt etter 30 sekund utan arbeid eller når ein inaktiv motor går i bakgrunnen. Tap av grafikkonteksten byggjer opp att visinga frå ferdige punktdata. Appskalet blir mellomlagra for bruk utan internett; splats krev at modellfilene finst i den aktuelle appen si nettlesarlagring. På iPhone kan denne lagringa vere skild frå vanleg Safari. Wi-Fi-symbolet opnar tilkoplinga for ESP32-kameraet utan automatisk modellnedlasting. På nett utan internett brukar appen det lagra skalet innan 1,5 sekund dersom nettførespurnaden blir hengande.
 
-Nye splats kjem mjukt fram punktvis over om lag eitt sekund, utan lastetekst. Redusert rørsle hoppar over innfasinga; lagring og utskrift fullfører henne før biletet blir teke ut.
+Nye splats byrjar med nokre få punkt og blir gradvis tettare over om lag fire sekund, utan lastetekst. Redusert rørsle hoppar over innfasinga; lagring og utskrift fullfører henne før biletet blir teke ut.
 
 I 3D-visinga roterer éin finger resultatet; to fingrar flyttar og zoomar. Tre fingrar opp viser fleire punkt, ned færre; mot høgre blir punkta skarpare, mot venstre mjukare. Retninga blir låst etter ei lita startrørsle. Justeringa skjer direkte i visinga utan ny modellkøyring.
 
@@ -26,7 +26,7 @@ Trykk på printarsymbolet, eller hald inne resultatet i eit halvt sekund og slep
 
 Tilkoplinga krev inga PWA-installering. Den nye trykkfila peikar til `/start/`, som går utanom gamle klargjeringssider i mellomlageret. `/prepare/` fungerer vidare for eksisterande kodar og lokale overføringar. Direkte **http://192.168.4.1/** fungerer for foto utan klargjering.
 
-Klargjeringssida held på modellane ved tilkoplingsfeil og prøver igjen i same kamerafane. Avbroten klargjering held fram ved historikkretur; eit eksplisitt val av foto stoppar automatisk framhald. Lasting utan framdrift i 30 sekund gir nytt forsøk. Trygge oppdateringar ventar medan kamera, overføring eller lasting er i bruk. «Tilbake til kameraet» beheld fotoet som er ope. Kameraet brukar vanleg lokal HTTP utan DNS- eller portalomdirigering. Manglande modellar utløyser klargjering berre når du vel splats; foto fungerer vidare. Dersom nettlesardata blir sletta, klargjer telefonen på nytt for splats.
+Klargjeringssida held på modellane ved tilkoplingsfeil og prøver igjen i same kamerafane. Avbroten klargjering held fram ved historikkretur. Lasting utan framdrift i 30 sekund gir nytt forsøk. Trygge oppdateringar ventar medan kamera, overføring eller lasting er i bruk. «Tilbake til kameraet» beheld fotoet som er ope. Kameraet brukar vanleg lokal HTTP utan DNS- eller portalomdirigering. Manglande modellar utløyser klargjering berre når du vel splats; foto fungerer vidare. Dersom nettlesardata blir sletta, klargjer telefonen på nytt for splats.
 
 - Søkjar og foto har separate oppløysingar. Foto kan bruke 1600 × 1200 med PSRAM; utan PSRAM blir begge avgrensa til 320 × 240.
 - Opptak pausar kameratilgangen, hentar ei fersk ramme og gjenopprettar søkjaren. JPEG-formatet blir kontrollert frå sjølve JPEG-headeren ved byte av oppløysing. Sensor- og nettverksinnstillingar blir bevarte på kameraet.
