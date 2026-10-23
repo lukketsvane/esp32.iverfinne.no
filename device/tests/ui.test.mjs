@@ -343,9 +343,9 @@ test('the connection helper remains usable when optional browser storage is deni
   await app.get('connection').emit('click');
   assert.equal(app.get('onboarding').open, true);
   assert.equal(app.get('onboarding-title').textContent,'Kameraet er klart');
-  assert.equal(app.get('onboarding-next').textContent,'Tilbake til kameraet');
+  assert.equal(app.get('onboarding-next').hidden,true);
   assert.equal(app.get('onboarding-copy').hidden,true);
-  await app.get('onboarding-next').emit('click');
+  await app.get('close-onboarding').emit('click');
   assert.equal(app.get('onboarding').open, false);
   assert.equal(app.preparations.length,0);
   assert.equal(app.modelChecks.length,0);
@@ -792,8 +792,8 @@ test('the visible onboarding close button cancels preparation without a late tak
 
 test('phone setup identifies its actions and preserves progress and actionable errors',async()=>{
   const pending=deferred(),app=await connectedCamera({modelsReady:false,prepare:()=>pending.promise});await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
-  assert.equal(app.get('onboarding-title').textContent,'Klargjer 3D');assert.match(app.get('onboarding-copy').textContent,/internett éin gong/);assert.equal(app.get('onboarding-copy').hidden,false);assert.equal(app.get('onboarding-next').textContent,'Fullfør etter klargjering');assert.equal(app.get('close-onboarding').getAttribute('aria-label'),'Tilbake til biletet');assert.equal(app.get('onboarding-help').open,false);
-  await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-title').textContent,'Fullfører 3D');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
+  assert.equal(app.get('onboarding-title').textContent,'Klargjer 3D');assert.match(app.get('onboarding-copy').textContent,/internett éin gong/);assert.equal(app.get('onboarding-copy').hidden,false);assert.equal(app.get('onboarding-next').textContent,'Fullfør');assert.equal(app.get('close-onboarding').getAttribute('aria-label'),'Tilbake til biletet');assert.equal(app.get('onboarding-help').open,false);
+  await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-title').textContent,'Fullfører 3D');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title" class="sr">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
 });
 
 test('a suspended capture cannot reopen review or clear a newer capture while finishing late',async()=>{
