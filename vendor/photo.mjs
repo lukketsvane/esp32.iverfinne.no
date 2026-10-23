@@ -9,16 +9,16 @@ export async function savePhoto(blob,name='entropi.jpg',isCurrent=()=>true){
     if(!isCurrent()||document.querySelector('dialog[data-photo-save]'))return;
     const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Fotoet kunne ikkje opnast.'));reader.readAsDataURL(blob)});
     if(!isCurrent()||document.querySelector('dialog[data-photo-save]'))return;
-    const dialog=document.createElement('dialog'),image=document.createElement('img'),back=document.createElement('button'),hint=document.createElement('p'),focus=document.activeElement;
+    const dialog=document.createElement('dialog'),image=document.createElement('img'),back=document.createElement('button'),focus=document.activeElement;
     dialog.setAttribute('data-photo-save','');dialog.setAttribute('aria-label','Lagre foto');
     dialog.style.cssText='position:fixed;inset:0;margin:0;padding:0;border:0;width:100%;height:100%;max-width:none;max-height:none;background:#000;color:#aaa;overflow:hidden;touch-action:auto';
     image.src=data;image.alt='Fotoet ditt';image.style.cssText='display:block;width:100%;height:100%;object-fit:contain;filter:none;touch-action:auto;-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto';
+    image.setAttribute('aria-description','Hald inne for å lagre');
     back.type='button';back.setAttribute('aria-label','Tilbake til biletet');back.style.cssText='position:absolute;left:calc(12px + env(safe-area-inset-left));top:calc(12px + env(safe-area-inset-top));width:44px;height:44px;padding:0;border:0;outline:0;background:transparent;color:#aaa;box-shadow:none';
     back.innerHTML='<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="m14 5-7 7 7 7"/></svg>';
-    hint.textContent='Hald inne for å lagre';hint.style.cssText='position:absolute;bottom:calc(20px + env(safe-area-inset-bottom));left:0;width:100%;margin:0;text-align:center;font:12px -apple-system,BlinkMacSystemFont,sans-serif;pointer-events:none';
     back.addEventListener('click',()=>dialog.close());dialog.addEventListener('close',()=>{image.removeAttribute('src');dialog.remove();focus?.focus({preventScroll:true})},{once:true});
     dialog.addEventListener('keydown',event=>{if(event.key==='Escape')event.stopPropagation()});
-    dialog.append(image,back,hint);document.body.append(dialog);dialog.showModal();return;
+    dialog.append(image,back);document.body.append(dialog);dialog.showModal();return;
   }
   const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
