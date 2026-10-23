@@ -461,6 +461,7 @@ void startCameraServer() {
   setLed(false);
 #endif
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  config.max_open_sockets = 4;
   config.max_uri_handlers = 8;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
@@ -480,6 +481,7 @@ void startCameraServer() {
   }
   config.server_port++;
   config.ctrl_port++;
+  config.max_open_sockets = 1;
   config.stack_size = 4096;
   if (httpd_start(&streamHttpd, &config) == ESP_OK) {
     if (!registerHandler(streamHttpd, "/stream", streamHandler)) {

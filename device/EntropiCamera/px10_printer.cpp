@@ -58,6 +58,10 @@ uint32_t nextSequence = 1;
 bool uploading = false;
 bool checkPending = false;
 bool checking = false;
+bool cleaningUp = false;
+bool cleanupSuccess = false;
+bool cleanupDiagnostic = false;
+const char *cleanupMessage = "";
 unsigned cameraChecks = 0;
 int64_t cameraCheckCutoff = 0;
 uint8_t *jobData = nullptr;
@@ -299,24 +303,62 @@ void closeChannel() {
 }
 
 void finish(bool success, const char *message = "") {
-  if (!success) closeChannel();
-  updateState(success ? State::SENT : State::FAILED, message);
   lockJob();
+  if (cleaningUp) { unlockJob(); return; }
+  cleaningUp = true;
+  cleanupSuccess = success;
+  cleanupMessage = message;
+  cleanupDiagnostic = checking;
   uint8_t *finished = jobData;
-  bool diagnostic = checking;
   jobData = nullptr;
   jobLength = 0;
-  active = -1;
   checking = false;
-  if (diagnostic) {
-    cameraChecks = 3;
-    cameraCheckCutoff = esp_timer_get_time();
-  }
   unlockJob();
   free(finished);
   phase = Phase::IDLE;
   pendingLength = 0;
-  if (diagnostic) Serial.printf("Printer check: %s; no print data sent; BLE=%u connected=%u internal free=%u largest=%u stack_min_free=%u\n", success ? "ready" : "failed", esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED, connected, static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+  if (cleanupDiagnostic) Serial.printf("Printer check: %s; no print data sent; BLE=%u connected=%u internal free=%u largest=%u stack_min_free=%u\n", success ? "ready" : "failed", esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED, connected, static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+  closeChannel();
+  retireDeadline = millis() + 10000;
+  retireQuiet = millis() + 100;
+}
+
+void cleanupBle() {
+  if ((retiringScan || retiringOpen || retiringConnection != noConnection) && !expired(retireDeadline)) return;
+  if (retireQuiet && !expired(retireQuiet)) return;
+  bool good = true;
+  if (esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED) good = esp_bluedroid_disable() == ESP_OK;
+  if (good && esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_INITIALIZED) good = esp_bluedroid_deinit() == ESP_OK;
+  if (good && esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) good = esp_bt_controller_disable() == ESP_OK;
+  if (good && esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_INITED) good = esp_bt_controller_deinit() == ESP_OK;
+  good = good && esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_UNINITIALIZED && esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE;
+  initializationFailed = !good;
+  if (good) {
+    client = ESP_GATT_IF_NONE;
+    primaryStart = primaryEnd = secondaryStart = secondaryEnd = 0;
+    writeSize = 20;
+    retiringScan = retiringOpen = scanActive = openPending = false;
+    retiringConnection = noConnection;
+    retireQuiet = 0;
+    xQueueReset(events);
+    portENTER_CRITICAL(&callbackMux);
+    eventOverflow = false;
+    portEXIT_CRITICAL(&callbackMux);
+  }
+  lockJob();
+  if (active >= 0) {
+    records[active].state = cleanupSuccess ? State::SENT : State::FAILED;
+    records[active].bytes = offset;
+    records[active].message = cleanupMessage;
+  }
+  if (cleanupDiagnostic) {
+    cameraChecks = 3;
+    cameraCheckCutoff = esp_timer_get_time();
+  }
+  active = -1;
+  cleaningUp = false;
+  unlockJob();
+  Serial.printf("Printer BLE cleanup: %s BLE=%u controller=%u internal free=%u largest=%u stack_min_free=%u\n", good ? "ready" : "restart required", esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED, static_cast<unsigned>(esp_bt_controller_get_status()), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
 }
 
 void searchServices() {
@@ -462,6 +504,10 @@ void handleEvent(const Event &event) {
     retireQuiet = millis() + 100;
     return;
   }
+  if (cleaningUp) {
+    if (event.kind == Kind::OPEN && event.status == ESP_GATT_OK) esp_ble_gattc_close(event.interface, event.connection);
+    return;
+  }
   if (event.kind == Kind::REGISTER) {
     if (phase != Phase::REGISTER) return;
     if (event.status != ESP_GATT_OK) {
@@ -569,6 +615,8 @@ void handleEvent(const Event &event) {
 
 void tick() {
   lockJob();
+  bool cleanup = cleaningUp;
+  if (cleanup) { unlockJob(); cleanupBle(); return; }
   if (checkPending && !jobData && !checking) { checkPending = false; checking = true; }
   bool running = jobData || checking;
   unlockJob();
@@ -690,7 +738,7 @@ void startPrinterBridge() {
 bool printerBusy() {
   if (!jobMutex) return false;
   lockJob();
-  bool busy = uploading || jobData || checking || checkPending;
+  bool busy = uploading || jobData || checking || checkPending || cleaningUp;
   unlockJob();
   return busy;
 }
@@ -698,7 +746,7 @@ bool printerBusy() {
 void requestPrinterCheck() {
   if (!jobMutex) { Serial.println("Printer check: unavailable"); return; }
   lockJob();
-  bool busy = uploading || jobData || checking || checkPending;
+  bool busy = uploading || jobData || checking || checkPending || cleaningUp;
   bool available = !busy && ensureWorker();
   if (available) checkPending = true;
   unlockJob();
@@ -750,7 +798,7 @@ esp_err_t printerUploadHandler(httpd_req_t *request) {
     unlockJob();
     return reject(request, retired ? "409 Conflict" : "400 Bad Request", retired ? "Print ID is retired" : "Invalid print sequence", true);
   }
-  if (uploading || jobData || checking || checkPending) {
+  if (uploading || jobData || checking || checkPending || cleaningUp) {
     unlockJob();
     return reject(request, "409 Conflict", "Printer is busy", true);
   }
