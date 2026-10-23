@@ -9,9 +9,9 @@ if(transfer)try{const origin=new URL(document.referrer).origin;if(window.opener&
 const send=data=>{if(peer&&peerOrigin)peer.postMessage(data,peerOrigin)};
 function show(phase){
   status.textContent=cameraError||modelError;bar.hidden=transfer?phase!=='working'&&phase!=='launching'&&!downloading:!downloading&&!launchTimer&&session===null;next.hidden=transfer;
-  retry.hidden=transfer?phase!=='error':prepared||downloading||!modelMissing;retry.disabled=downloading||session!==null;retry.textContent=modelError?'Prøv 3D igjen':'Klargjer 3D';
+  retry.hidden=transfer?phase!=='error':prepared||downloading||!modelMissing;retry.disabled=downloading||session!==null;retry.setAttribute('aria-label',modelError?'Prøv 3D igjen':'Klargjer 3D');
   const network=document.getElementById('network');network.hidden=transfer||cameraConnected;document.getElementById('connection-hint').hidden=cameraConnected;if(launchFailed)document.getElementById('connection-help').open=true;
-  openCamera.disabled=transfer||closed||!!launchTimer||session!==null&&!cameraConnected;openCamera.setAttribute('aria-disabled',String(openCamera.disabled));openCamera.textContent=cameraConnected?'Tilbake til kameraet':launchFailed?'Prøv igjen':'Opne kameraet ↗';document.documentElement.dataset.ready=String(prepared);
+  openCamera.disabled=transfer||closed||!!launchTimer||session!==null&&!cameraConnected;openCamera.setAttribute('aria-disabled',String(openCamera.disabled));openCamera.setAttribute('aria-label',cameraConnected?'Tilbake til kameraet':launchFailed?'Prøv igjen':'Opne kameraet');document.documentElement.dataset.ready=String(prepared);
   applyUpdate();
 }
 function applyUpdate(){if(pendingUpdate&&!transfer&&!closed&&!downloading&&session===null&&(!peer||peer.closed)&&!document.hidden){pendingUpdate=false;location.reload()}}
