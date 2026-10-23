@@ -8,6 +8,7 @@ sketch = root / "EntropiCamera"
 shared = root.parent
 source = (sketch / "camera_ui.html").read_text(encoding="utf-8")
 renderer = (shared / "vendor/viewfinder.mjs").read_text(encoding="utf-8").replace("export class Viewfinder", "class Viewfinder", 1)
+renderer = re.sub(r"^import .*?;\s*", "", renderer, flags=re.MULTILINE)
 scene = (shared / "vendor/scene.mjs").read_text(encoding="utf-8").replace("export async function", "async function")
 scene = re.sub(r"^import .*?;\s*", "", scene, flags=re.MULTILINE)
 math = (shared / "pointcloud/math.mjs").read_text(encoding="utf-8").replace("export ", "")

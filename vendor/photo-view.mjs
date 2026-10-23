@@ -1,6 +1,6 @@
 import {photoSnapshot} from './photo.mjs';
 
-function processPhoto(source,width,height,style,grain,contrast){
+export function processPhoto(source,width,height,style,grain,contrast){
   const cols=Math.ceil(width/grain),rows=Math.ceil(height/grain),values=new Float32Array(cols*rows);
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
     let sum=0,count=0;

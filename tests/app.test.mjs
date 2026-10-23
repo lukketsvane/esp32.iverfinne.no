@@ -13,8 +13,8 @@ function harness(options={}){
   let now=1000,nextTimer=0,nextUrl=0,mediaRequests=0,stopped=0;
   const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),saves=[],encodedSnapshots=[],sceneCalls=[],messages=[],studioBindings=[],printCalls=[],revoked=[],photoViews=[];
   const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)},nativeSnapshot={width:640,height:960,data:new Uint8ClampedArray(640*960*4)};let printDisposed=false;
-  const studioControls={image:options.image??0,primitive:0,photo:0,dispose(){}};
-  const photoGestureState={scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1};let photoGestureBinding;
+  const studioControls={image:options.image??0,primitive:0,photo:1,dispose(){}},finders=[];
+  const photoGestureState={scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1},liveGestureState={...photoGestureState};let photoGestureBinding,liveGestureBinding;
   const opener={postMessage:(data,origin)=>messages.push({data,origin})};
   class Element{
     constructor(id='',tagName='DIV'){
@@ -53,9 +53,9 @@ function harness(options={}){
     File:class extends Blob{constructor(parts,name,properties){super(parts,properties);this.name=name}},
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
-    Viewfinder:class{clear(){}dispose(){}},
+    Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};finders.push(this)}setStyle(level){this.style=level}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
-    attachPhotoGestures:(image,binding)=>{photoGestureBinding=binding;return {state:photoGestureState,reset(){Object.assign(photoGestureState,{scale:1,x:0,y:0});binding.onChange(photoGestureState)},refresh(){binding.onChange(photoGestureState)},dispose(){}}},
+    attachPhotoGestures:(image,binding)=>{const state=binding.toneOnly?liveGestureState:photoGestureState;if(binding.toneOnly)liveGestureBinding=binding;else photoGestureBinding=binding;return {state,reset(){Object.assign(state,{scale:1,x:0,y:0});binding.onChange(state)},refresh(){binding.onChange(state)},dispose(){}}},
     createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
     PX10Printer:class{},cloudPrintJob:()=>new Uint8Array(),
@@ -70,7 +70,8 @@ function harness(options={}){
   function changeStudio(kind,level){studioControls[kind]=level;for(const binding of studioBindings)binding.onChange(kind,level)}
   function gestureStudio(){for(const binding of studioBindings)binding.onGesture?.()}
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
-  return {get:id=>elements.get(id),opener,sceneCalls,studioControls,changeStudio,gestureStudio,gesturePhoto,photoGestureState,photoViews,messages,urls,revoked,saves,encodedSnapshots,printCalls,snapshot,nativeSnapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
+  function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
+  return {get:id=>elements.get(id),opener,sceneCalls,studioControls,changeStudio,gestureStudio,gesturePhoto,gestureLive,photoGestureState,liveGestureState,finders,photoViews,messages,urls,revoked,saves,encodedSnapshots,printCalls,snapshot,nativeSnapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
 }
 
 async function photoFromDevice(app,blob=new Blob(['camera-jpeg'],{type:'image/jpeg'})){
@@ -220,6 +221,10 @@ test('photo gestures and style changes feed the same rendered view to save and p
   const app=harness(),blob=await photoFromDevice(app),view=app.photoViews[0],url=app.get('photo').src;assert.equal(view.source,app.get('photo'));assert.equal(view.shown,true);app.changeStudio('photo',2);const refreshes=view.refreshes;assert.equal(app.gesturePhoto({grain:5,contrast:2.2,scale:2,x:8,y:-4}),true);assert.deepEqual(view.tone,{grain:5,contrast:2.2});assert.ok(view.refreshes>refreshes);
   await app.get('save').emit('click');await app.get('print').emit('click');for(const output of [app.encodedSnapshots[0],app.printCalls[0].image]){assert.equal(output.style,2);assert.deepEqual(output.tone,{grain:5,contrast:2.2});assert.equal(output.photo,true)}assert.deepEqual(view.snapshots.map(call=>call.native),[true,false]);assert.equal(view.snapshots[0].pose.scale,2);assert.equal(app.sceneCalls.length,0);assert.equal(app.urls.get(url),blob);assert.equal(app.get('photo').src,url);
   await app.get('reset').emit('click');assert.equal(view.shown,false);await app.get('last-photo').emit('click');assert.equal(view.shown,true);assert.equal(view.sources.length,1);await app.emit('pagehide');assert.equal(view.disposed,true);
+});
+
+test('live Bayer and three-finger tone carry into the capture while suppressing gesture fallthrough',async()=>{
+  const app=harness(),finder=app.finders[0],view=app.photoViews[0];assert.equal(finder.style,1);assert.equal(view.style,1);await app.get('capture-plane').emit('click');app.changeStudio('photo',3);assert.equal(finder.style,3);assert.equal(app.gestureLive({grain:4,contrast:1.8}),true);assert.deepEqual(finder.tone,{grain:4,contrast:1.8});await app.get('capture-plane').emit('click');assert.equal(view.sources.length,0);assert.equal(app.get('studio').className,'studio camera');await app.tick(401);await app.get('capture-plane').emit('click');assert.equal(view.sources.length,1);assert.equal(view.style,3);assert.deepEqual(view.tone,{grain:4,contrast:1.8});assert.equal(app.photoGestureState.grain,4);assert.equal(app.gestureLive({grain:1}),false);app.gesturePhoto({grain:2,contrast:2});assert.deepEqual(finder.tone,{grain:2,contrast:2});assert.equal(app.liveGestureState.grain,2);assert.equal(app.sceneCalls.length,0);
 });
 
 test('a pending splat can finish behind the photo without taking over the chosen image type',async()=>{

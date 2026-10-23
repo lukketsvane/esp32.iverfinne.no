@@ -3,16 +3,20 @@ import { cloudPrintJob } from '/vendor/print/cloud-raster.mjs';
 
 const button=document.getElementById('print'),status=document.getElementById('status'),session=location.hash.slice(1),opener=window.opener;
 const allowed=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
-let origin=null,image=null,busy=false,started=false,complete=false,closed=false;
+let origin=null,image=null,busy=false,started=false,complete=false,closed=false,attempt=0,lastProgress=0,progress=0;
 try{const candidate=new URL(document.referrer).origin;if(opener&&allowed.has(candidate)&&/^[a-f0-9]{32}$/.test(session))origin=candidate}catch{}
 const send=data=>{if(!closed&&origin)opener.postMessage({...data,session},origin)};
-const fail=message=>{document.body.classList.remove('working');document.body.classList.add('error');status.textContent=message;button.setAttribute('aria-busy','false');button.disabled=started||!image};
+const fail=message=>{document.body.classList.remove('working');document.body.classList.add('error');status.textContent=/rate.?limit|too many BLE requests/i.test(String(message))?'Prøv igjen.':message;button.setAttribute('aria-busy','false');button.disabled=closed||!image};
 const printer=new PX10Printer();
 printer.addEventListener('status',event=>{
   if(closed)return;
   const data=event.detail;
   if(data.state==='sent'&&started){complete=true;document.body.classList.remove('working');status.textContent='';button.disabled=false;button.setAttribute('aria-busy','false');button.setAttribute('aria-label','Tilbake til kameraet');button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 5-7 7 7 7M3 12h18"/></svg>';send({type:'entropi-print-result',ok:true})}
-  else if(data.state==='failed'&&started){fail(data.message||'Skrivaren svara ikkje.');send({type:'entropi-print-result',ok:false,message:status.textContent})}
+  else if(data.state==='failed'&&started){started=false;fail('Prøv igjen.');send({type:'entropi-print-progress',progress,recovering:true})}
+  else if(started&&(data.state==='sending'||data.state==='recovering')){
+    if(Number.isFinite(data.progress))progress=data.progress;
+    const now=Date.now();if(data.state==='recovering'||progress===1||now-lastProgress>=1000){lastProgress=now;send({type:'entropi-print-progress',progress})}
+  }
 });
 window.addEventListener('message',event=>{
   const data=event.data;
@@ -28,10 +32,10 @@ button.addEventListener('click',async()=>{
     const connecting=printer.device?printer.start():printer.choose();
     if(!await connecting||!printer.ready){if(!closed)fail(printer.lastError||(printer.supported?'Skrivaren er ikkje tilkopla.':'Bluetooth er ikkje tilgjengeleg i denne nettlesaren.'));return}
     if(closed)return;
-    const job=cloudPrintJob(image);started=true;send({type:'entropi-print-started'});
-    if(!printer.enqueue('entropi-'+session,job)){fail('Utskrifta er alt forsøkt.');send({type:'entropi-print-result',ok:false,message:status.textContent})}
+    const job=cloudPrintJob(image);started=true;progress=0;send({type:'entropi-print-started'});
+    if(!printer.enqueue('entropi-'+session+'-'+(++attempt),job)){started=false;fail('Prøv igjen.');send({type:'entropi-print-progress',progress,recovering:true})}
     else status.textContent='Sender …';
-  }catch(error){if(!closed){fail(error.message||'Kunne ikkje skrive ut.');send({type:'entropi-print-result',ok:false,message:status.textContent})}}
+  }catch{if(!closed){started=false;fail('Prøv igjen.');send({type:'entropi-print-progress',progress,recovering:true})}}
   finally{busy=false;if(!started&&!closed){document.body.classList.remove('working');button.setAttribute('aria-busy','false');button.disabled=false}}
 });
 window.addEventListener('pagehide',event=>{if(event.persisted||closed)return;closed=true;printer.dispose()});

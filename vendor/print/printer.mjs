@@ -2,13 +2,13 @@ import { PRINTER_NAME, PacketDecoder } from './px10-protocol.mjs';
 
 const UUID = short => `0000${short}-0000-1000-8000-00805f9b34fb`;
 const STORAGE_KEY = 'entropi.px10.device.v1';
-const COOLDOWN_KEY = 'entropi.px10.cooldown.v1';
-const QUOTA_MESSAGE = 'Vent eitt minutt før nytt forsøk.';
+const RETRY_MESSAGE = 'Nådde ikkje skrivaren. Prøv igjen.';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-const messageOf = error => typeof error?.message === 'string' ? error.message : String(error);
-const isQuota = error => ['RATE_LIMIT', 'RATE_LIMIT_EXCEEDED'].includes(error?.code) || /rate.?limit|too many BLE requests/i.test(messageOf(error));
+const rawMessage = error => typeof error?.message === 'string' ? error.message : String(error);
+const isQuota = error => ['RATE_LIMIT', 'RATE_LIMIT_EXCEEDED'].includes(error?.code) || /rate.?limit|too many BLE requests/i.test(rawMessage(error));
+const messageOf = error => isQuota(error) ? RETRY_MESSAGE : rawMessage(error);
 
 async function bounded(promise, milliseconds, message) {
    let timer;
@@ -42,9 +42,7 @@ export class PX10Printer extends EventTarget {
     this.active = false; this.disposed = false; this.busy = false;
     this.choiceDismissed = false; this.choosing = false;
     this.paused = false; this.version = 0; this.failures = 0;
-    this.cooldownUntil = 0; this.lastError = '';
-    try { this.cooldownUntil = Number(this.storage()?.getItem(COOLDOWN_KEY)) || 0; } catch {}
-    if (this.coolingDown) this.lastError = QUOTA_MESSAGE;
+    this.lastError = '';
      this.connecting = null;
      this.restoring = null;
      this.retryTimer = null;
@@ -72,7 +70,6 @@ export class PX10Printer extends EventTarget {
 
   get supported() { return typeof this.bluetooth()?.requestDevice === 'function'; }
   get ready() { return !!this.writer && !!this.device?.gatt?.connected; }
-  get coolingDown() { return Date.now() < this.cooldownUntil; }
   get needsChoice() {
     return this.supported && !this.device && !this.choosing && !this.choiceDismissed && !this.disposed;
   }
@@ -82,15 +79,23 @@ export class PX10Printer extends EventTarget {
     if (state === 'connected') this.lastError = '';
     if (!this.disposed) this.dispatchEvent(new CustomEvent('status', { detail: { state, ...detail } }));
   }
-  quota(error, detail = {}) {
-    if (!isQuota(error)) return false;
-    if (this.coolingDown) return true;
-    this.cooldownUntil = Date.now() + 60000;
-    try { this.storage()?.setItem(COOLDOWN_KEY, String(this.cooldownUntil)); } catch {}
-    this.suspend(); this.queue.length = 0; this.version++; this.clearChannel();
-    if (this.device?.gatt?.connected) this.device.gatt.disconnect();
-    this.emit('failed', { ...detail, message: QUOTA_MESSAGE });
-    return true;
+  async retry(operation, timeout, message) {
+    const version = this.version, delays = [250, 500, 1000, 2000, 4000, 8000, 16000, 30000];
+    const check = () => { if (this.disposed || !this.active || version !== this.version) throw new Error('Tilkoplinga vart broten.'); };
+    for (let attempt = 0; ; attempt++) {
+      check();
+      try { const result = await bounded(operation(), timeout, message); check(); return result; }
+      catch (error) {
+        if (!isQuota(error)) throw error;
+        check();
+        if (attempt === delays.length) {
+          this.suspend(); this.queue.length = 0;
+          throw Object.assign(new Error(RETRY_MESSAGE), { code: 'RECOVERY_EXHAUSTED' });
+        }
+        this.emit('recovering', { message: '' });
+        await sleep(delays[attempt]); check();
+      }
+    }
   }
   savedId() { try { return this.storage()?.getItem(STORAGE_KEY) || ''; } catch { return ''; } }
 
@@ -120,7 +125,7 @@ export class PX10Printer extends EventTarget {
   }
 
   start() {
-    if (this.disposed || this.coolingDown) return Promise.resolve(false);
+    if (this.disposed) return Promise.resolve(false);
     this.active = true;
     if (this.device) return this.link().then(() => { void this.drain(); return true; }).catch(() => false);
     if (this.restoring) return this.restoring;
@@ -129,7 +134,7 @@ export class PX10Printer extends EventTarget {
     if (typeof getDevices !== 'function') return Promise.resolve(false);
     this.restoring = (async () => {
       try {
-        const devices = await bounded(getDevices(), 5000, 'Kunne ikkje hente skrivaren.');
+        const devices = await this.retry(getDevices, 5000, 'Kunne ikkje hente skrivaren.');
         if (this.disposed || this.choosing || this.device) return false;
         const remembered = this.savedId();
         const device = devices.find(device => device.id === remembered && device.name === PRINTER_NAME)
@@ -138,7 +143,7 @@ export class PX10Printer extends EventTarget {
         this.attach(device);
         if (this.active) await this.link();
         void this.drain(); return true;
-      } catch (error) { this.quota(error); return false; }
+      } catch (error) { this.emit('failed', { message: messageOf(error) }); return false; }
       finally { this.restoring = null; }
     })();
     return this.restoring;
@@ -146,7 +151,7 @@ export class PX10Printer extends EventTarget {
 
   choose() {
     const bluetooth = this.bluetooth();
-    if (this.disposed || this.coolingDown || typeof bluetooth?.requestDevice !== 'function' || this.choosing) return Promise.resolve(false);
+    if (this.disposed || typeof bluetooth?.requestDevice !== 'function' || this.choosing) return Promise.resolve(false);
     if (this.device) return this.start();
     this.active = true; this.choosing = true; this.choiceDismissed = false;
     this.emit('choosing');
@@ -164,7 +169,6 @@ export class PX10Printer extends EventTarget {
         if (this.disposed) return false;
         this.attach(device); await this.link(); void this.drain(); return true;
       } catch (error) {
-        if (this.quota(error)) return false;
         const cancelled = error instanceof Error && ['NotFoundError', 'AbortError'].includes(error.name);
         if (!this.device) this.choiceDismissed = cancelled;
         this.emit(cancelled ? 'cancelled' : 'failed', { message: messageOf(error) });
@@ -174,7 +178,7 @@ export class PX10Printer extends EventTarget {
   }
 
   link() {
-    if (this.disposed || this.coolingDown || !this.active || !this.device) return Promise.resolve(false);
+    if (this.disposed || !this.active || !this.device) return Promise.resolve(false);
     if (this.ready) return Promise.resolve(true);
     if (this.connecting) return this.connecting;
     clearTimeout(this.retryTimer ?? undefined); this.retryTimer = null;
@@ -183,45 +187,46 @@ export class PX10Printer extends EventTarget {
     const current = () => !this.disposed && version === this.version && device === this.device;
     const task = (async () => {
       try {
-        const pending = device.gatt.connect().then(server => {
+        const server = await this.retry(() => device.gatt.connect().then(server => {
           if (this.disposed && device.gatt.connected) device.gatt.disconnect();
           return server;
-        });
-        const server = await bounded(pending, this.connectionTimeout, 'PX10 svarte ikkje.');
+        }), this.connectionTimeout, 'PX10 svarte ikkje.');
         if (!current()) throw new Error('Tilkoplinga vart avbroten.');
         let limit;
         try {
-          limit = await bounded((async () => {
-            const limits = await server.getWriteLimits?.();
-            if (Number.isInteger(limits?.withoutResponse) && limits.withoutResponse > 0) return limits.withoutResponse;
-            const mtu = limits?.mtu ?? await server.getMtu?.();
-            return Number.isInteger(mtu) && mtu > 3 ? mtu - 3 : this.chunkSize;
-          })(), 1000, 'Skrivegrensa er ukjend.');
-        } catch (error) { if (isQuota(error)) throw error; }
+          const limits = server.getWriteLimits && await this.retry(() => server.getWriteLimits(), 1000, 'Skrivegrensa er ukjend.');
+          if (Number.isInteger(limits?.withoutResponse) && limits.withoutResponse > 0) limit = limits.withoutResponse;
+          else {
+            const mtu = limits?.mtu ?? (server.getMtu && await this.retry(() => server.getMtu(), 1000, 'Skrivegrensa er ukjend.'));
+            limit = Number.isInteger(mtu) && mtu > 3 ? mtu - 3 : this.chunkSize;
+          }
+        } catch (error) { if (error?.code === 'RECOVERY_EXHAUSTED' || !current()) throw error; }
         if (!current()) throw new Error('Tilkoplinga vart avbroten.');
         this.writeSize = Math.min(512, limit || this.chunkSize);
-        const channels = await bounded((async () => {
-          let service, writeID = 'ae01', notifyID = 'ae02';
-          try { service = await server.getPrimaryService(UUID('ae30')); }
-          catch (error) { if (isQuota(error)) throw error; service = await server.getPrimaryService(UUID('ae3a')); writeID = 'ae3b'; notifyID = 'ae3c'; }
-          return { writer: await service.getCharacteristic(UUID(writeID)), notifier: await service.getCharacteristic(UUID(notifyID)) };
-        })(), 10000, 'PX10 svarte ikkje under tilkoplinga.');
-        const { writer, notifier } = channels;
+        let service, writeID = 'ae01', notifyID = 'ae02';
+        try { service = await this.retry(() => server.getPrimaryService(UUID('ae30')), 10000, 'PX10 svarte ikkje under tilkoplinga.'); }
+        catch (error) {
+          if (error?.code === 'RECOVERY_EXHAUSTED' || !current()) throw error;
+          service = await this.retry(() => server.getPrimaryService(UUID('ae3a')), 10000, 'PX10 svarte ikkje under tilkoplinga.');
+          writeID = 'ae3b'; notifyID = 'ae3c';
+        }
+        const writer = await this.retry(() => service.getCharacteristic(UUID(writeID)), 10000, 'PX10 svarte ikkje under tilkoplinga.');
+        const notifier = await this.retry(() => service.getCharacteristic(UUID(notifyID)), 10000, 'PX10 svarte ikkje under tilkoplinga.');
         if (!current()) throw new Error('Tilkoplinga vart avbroten.');
         if (!writer.properties?.writeWithoutResponse) throw new Error('PX10 manglar skrivekanalen.');
         this.notifier = notifier;
         notifier.addEventListener('characteristicvaluechanged', this.onNotification);
-        await bounded(notifier.startNotifications(), 10000, 'PX10 svarte ikkje.');
+        await this.retry(() => notifier.startNotifications(), 10000, 'PX10 svarte ikkje.');
         if (!current()) throw new Error('Tilkoplinga vart avbroten.');
         this.writer = writer; this.failures = 0; this.remember(device); this.emit('connected');
         return true;
       } catch (error) {
-        if (current() && !this.quota(error)) {
+        if (current()) {
           this.version++; this.clearChannel(); this.failures++;
           if (device.gatt.connected) device.gatt.disconnect();
           const missingGrant = error instanceof Error && ['NotAllowedError', 'SecurityError', 'NotFoundError'].includes(error.name);
           if (missingGrant) { this.release(); this.choiceDismissed = false; }
-          this.emit(missingGrant ? 'failed' : 'reconnecting', { message: messageOf(error) });
+          this.emit(missingGrant || error?.code === 'RECOVERY_EXHAUSTED' ? 'failed' : 'reconnecting', { message: messageOf(error) });
         }
         throw error;
       }
@@ -245,7 +250,7 @@ export class PX10Printer extends EventTarget {
   suspend() { this.active = false; clearTimeout(this.retryTimer ?? undefined); this.retryTimer = null; }
 
   enqueue(id, bytes) {
-    if (this.disposed || this.coolingDown || !this.device || this.seen.has(id) || this.queue.length >= 4) return false;
+    if (this.disposed || !this.device || this.seen.has(id) || this.queue.length >= 4) return false;
     if (!(bytes instanceof Uint8Array) || !bytes.length) throw new Error('Utskriftsdata manglar.');
     this.seen.add(id); this.queue.push({ id, bytes: bytes.slice(), created: Date.now() });
     void this.drain(); return true;
@@ -267,40 +272,48 @@ export class PX10Printer extends EventTarget {
   }
 
   async send(id, bytes) {
-    if (this.coolingDown) throw new Error(this.lastError);
     if (this.disposed || this.busy || !this.ready || !this.writer) throw new Error('PX10 er ikkje klar.');
     if (this.attempted.has(id)) throw new Error('Biletet er alt forsøkt sendt.');
     if (!(bytes instanceof Uint8Array) || !bytes.length) throw new Error('Utskriftsdata manglar.');
     this.busy = true; this.attempted.add(id);
     const version = this.version, writer = this.writer;
-    let sent = 0; this.emit('sending', { progress: 0 });
+    let sent = 0, probes = 0; this.emit('sending', { progress: 0 });
     try {
       const step = this.writeSize;
-      for (let offset = 0; offset < bytes.length; offset += step) {
+      for (let offset = 0; offset < bytes.length;) {
+        let probe = false;
         const pausedAt = Date.now();
         while (this.paused) {
-          if (this.disposed || !this.ready || version !== this.version) throw new Error('Tilkoplinga vart broten.');
-          if (Date.now() - pausedAt > this.pauseTimeout) throw new Error('PX10 har stoppa.');
+          if (this.disposed || !this.active || !this.ready || version !== this.version) throw new Error('Tilkoplinga vart broten.');
+          if (Date.now() - pausedAt >= Math.min(5000, this.pauseTimeout)) {
+            if (probes++ === 3) { this.suspend(); this.queue.length = 0; throw new Error(RETRY_MESSAGE); }
+            this.paused = false; probe = true; this.emit('recovering', { message: '' }); break;
+          }
           await sleep(20);
         }
         if (this.disposed || !this.ready || version !== this.version) throw new Error('Tilkoplinga vart broten.');
-        const chunk = bytes.slice(offset, offset + step);
+        const chunk = bytes.slice(offset, offset + (probe ? Math.min(20, step) : step));
         const method = writer.writeValueWithoutResponse || writer.writeValue;
         if (typeof method !== 'function') throw new Error('Skrivekanalen manglar.');
-        await bounded(method.call(writer, chunk), this.writeTimeout, 'PX10 svarte ikkje under sendinga.');
+        await this.retry(() => method.call(writer, chunk), this.writeTimeout, 'PX10 svarte ikkje under sendinga.');
         if (this.disposed || !this.ready || version !== this.version) throw new Error('Tilkoplinga vart broten.');
-        sent += chunk.length;
+        sent += chunk.length; offset += chunk.length;
         this.emit('sending', { progress: sent / bytes.length });
-        if (this.delay > 0 && offset + step < bytes.length) await sleep(this.delay);
+        if (probe) {
+          await sleep(100);
+          if (this.disposed || !this.active || !this.ready || version !== this.version) throw new Error('Tilkoplinga vart broten.');
+        } else if (this.delay > 0 && offset < bytes.length) await sleep(this.delay);
       }
       this.emit('sent', { bytes: sent, physicalPrintVerified: false });
       return { bytes: sent, physicalPrintVerified: false };
     } catch (error) {
-      if (this.quota(error, { bytes: sent })) throw error;
       this.emit('failed', { message: messageOf(error), bytes: sent });
-      this.version++; this.clearChannel();
-      if (this.device?.gatt?.connected) this.device.gatt.disconnect();
-      this.scheduleReconnect(); throw error;
+      if (version === this.version && writer === this.writer) {
+        this.version++; this.clearChannel();
+        if (this.device?.gatt?.connected) this.device.gatt.disconnect();
+        this.scheduleReconnect();
+      }
+      throw error;
     } finally { this.busy = false; }
   }
 

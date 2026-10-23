@@ -11,6 +11,8 @@ const waitFor = async predicate => {
   const until = Date.now() + 1000;
   while (!predicate()) { if (Date.now() > until) throw new Error('Timed out'); await new Promise(resolve => setTimeout(resolve, 2)); }
 };
+const flush = async () => { for (let i = 0; i < 32; i++) await Promise.resolve(); };
+const advance = async (t, milliseconds) => { t.mock.timers.tick(milliseconds); await flush(); };
 function fakeBLE({ name = PRINTER_NAME, legacy = false, secondary = false, write = async () => {} } = {}) {
   const writes = [], requested = [], services = [], saved = new Map();
   const notifier = new EventTarget();
@@ -180,9 +182,10 @@ test('disconnect discards a previously negotiated size before reconnecting witho
   const fake=fakeBLE();fake.device.gatt.getWriteLimits=async()=>({withoutResponse:182});const printer=printerFor(fake);t.after(()=>printer.dispose());await printer.choose();await printer.send('first',new Uint8Array(200));assert.deepEqual(fake.writes.map(chunk=>chunk.length),[182,18]);printer.suspend();delete fake.device.gatt.getWriteLimits;fake.device.gatt.disconnect();assert.equal(await printer.start(),true);const before=fake.writes.length;await printer.send('second',new Uint8Array(45));assert.deepEqual(fake.writes.slice(before).map(chunk=>chunk.length),[20,20,5]);
 });
 
-test('metadata quota stops service discovery and writing until an explicit retry after cooldown',async t=>{
+test('metadata rejection recovers automatically before discovery without losing the reported size',async t=>{
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});
   for(const method of ['getWriteLimits','getMtu']){
-    const fake=fakeBLE();let calls=0;fake.device.gatt[method]=async()=>{calls++;throw {code:'RATE_LIMIT_EXCEEDED'}};const printer=printerFor(fake);t.after(()=>printer.dispose());t.mock.timers.enable({apis:['Date'],now:10000});assert.equal(await printer.choose(),false);assert.equal(calls,1);assert.deepEqual(fake.services,[]);assert.deepEqual(fake.writes,[]);assert.equal(printer.lastError,'Vent eitt minutt før nytt forsøk.');assert.equal(printer.retryTimer,null);assert.equal(await printer.start(),false);assert.equal(await printer.choose(),false);assert.equal(fake.connections(),1);assert.equal(fake.choices(),1);t.mock.timers.reset();
+    const fake=fakeBLE();let calls=0;fake.device.gatt[method]=async()=>{if(++calls===1)throw {code:'RATE_LIMIT_EXCEEDED'};return method==='getMtu'?185:{withoutResponse:182}};const printer=printerFor(fake);t.after(()=>printer.dispose());const choosing=printer.choose();await flush();assert.equal(calls,1);assert.deepEqual(fake.services,[]);await advance(t,250);assert.equal(await choosing,true);assert.equal(calls,2);assert.equal(printer.writeSize,182);assert.equal(fake.connections(),1);assert.equal(fake.choices(),1);assert.equal(printer.lastError,'');
   }
 });
 
@@ -194,88 +197,126 @@ test('a fragmented pause received mid-job still stops immediate writes until the
   const fake=fakeBLE({write:async(_,index,notifier)=>{if(index===0){const pause=packet(0xae,[0x10]);pause[3]=1;notifier.notify(pause.slice(0,4));notifier.notify(pause.slice(4))}}}),printer=printerFor(fake);t.after(()=>printer.dispose());await printer.choose();t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});const bytes=Uint8Array.from({length:60},(_,i)=>i),sending=printer.send('pause-midway',bytes);for(let i=0;i<20;i++)await Promise.resolve();assert.equal(printer.paused,true);assert.equal(fake.writes.length,1);t.mock.timers.tick(20);for(let i=0;i<10;i++)await Promise.resolve();assert.equal(fake.writes.length,1);const resume=packet(0xae,[0]);resume[3]=1;fake.notifier.notify(resume);t.mock.timers.tick(20);await sending;assert.deepEqual(fake.writes.map(chunk=>chunk.length),[20,20,20]);assert.deepEqual(joinBytes(fake.writes),bytes);
 });
 
-test('discovery quota stops alternate discovery and all connection requests until explicit retry after a minute', async t => {
+test('discovery rejection retries the same service without switching channels or reconnecting', async t => {
   const fake = fakeBLE(), printer = printerFor(fake); t.after(() => printer.dispose());
   const discover = fake.device.gatt.getPrimaryService, events = [];
   printer.addEventListener('status', event => events.push(event.detail));
+  let calls = 0;
   fake.device.gatt.getPrimaryService = async id => {
-    fake.services.push(id); throw Object.assign(new Error('Native quota'), { code: 'RATE_LIMIT' });
+    if (++calls === 1) { fake.services.push(id); throw Object.assign(new Error('Too many BLE requests'), { code: 'RATE_LIMIT' }); }
+    return discover(id);
   };
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
-  assert.equal(await printer.choose(), false);
-  assert.deepEqual(fake.services, [UUID('ae30')]); assert.equal(fake.connections(), 1);
-  assert.equal(printer.lastError, 'Vent eitt minutt før nytt forsøk.');
-  assert.equal(events.at(-1).state, 'failed'); assert.equal(events.filter(event => event.state === 'failed').length, 1);
-  assert.equal(printer.active, false); assert.equal(printer.retryTimer, null);
-  t.mock.timers.tick(59999);
-  assert.equal(await printer.start(), false); assert.equal(await printer.choose(), false); assert.equal(await printer.link(), false);
-  assert.equal(fake.connections(), 1); assert.equal(fake.choices(), 1);
-  fake.device.gatt.getPrimaryService = discover;
-  t.mock.timers.tick(1); await Promise.resolve(); assert.equal(fake.connections(), 1);
-  assert.equal(await printer.start(), true); assert.equal(printer.ready, true); assert.equal(printer.lastError, '');
-  assert.equal(fake.connections(), 2); assert.equal(fake.writes.length, 0);
+  const choosing = printer.choose(); await flush(); assert.equal(calls, 1);
+  await advance(t, 249); assert.equal(calls, 1); await advance(t, 1);
+  assert.equal(await choosing, true); assert.equal(printer.ready, true); assert.equal(printer.lastError, '');
+  assert.deepEqual(fake.services, [UUID('ae30'), UUID('ae30')]); assert.equal(fake.connections(), 1); assert.equal(fake.choices(), 1);
+  assert.equal(events.some(event => event.state === 'recovering'), true); assert.equal(events.some(event => /rate.?limit|too many/i.test(event.message || '')), false);
 });
 
-test('restore and chooser quotas are exposed without repeated native requests', async t => {
+test('restore retries automatically while the chooser stays synchronous and is never automatically reopened', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
-  for (const [method, error] of [
-    ['getDevices', { code: 'RATE_LIMIT_EXCEEDED', message: 'Native quota' }],
-    ['requestDevice', new Error('Too many BLE requests')]
-  ]) {
-    const fake = fakeBLE(), printer = printerFor(fake); t.after(() => printer.dispose());
-    let calls = 0; fake.bluetooth[method] = () => { calls++; return Promise.reject(error); };
-    assert.equal(await printer[method === 'getDevices' ? 'start' : 'choose'](), false);
-    assert.equal(printer.lastError, 'Vent eitt minutt før nytt forsøk.');
-    assert.equal(await printer.start(), false); assert.equal(await printer.choose(), false);
-    t.mock.timers.tick(60000); await Promise.resolve();
-    assert.equal(calls, 1); assert.equal(fake.connections(), 0); assert.equal(printer.retryTimer, null);
-  }
+  const fake = fakeBLE(), printer = printerFor(fake); t.after(() => printer.dispose());
+  let restores = 0; fake.bluetooth.getDevices = async () => { if (++restores === 1) throw {code:'RATE_LIMIT_EXCEEDED'}; return [fake.device]; };
+  const restoring = printer.start(); await flush(); assert.equal(restores, 1);
+  await advance(t, 250); assert.equal(await restoring, true); assert.equal(restores, 2); assert.equal(fake.choices(), 0);
+  const firstTime = fakeBLE(), chooser = printerFor(firstTime); t.after(() => chooser.dispose());
+  let choices = 0; firstTime.bluetooth.requestDevice = () => { choices++; return Promise.reject(new Error('Too many BLE requests')); };
+  const choosing = chooser.choose(); assert.equal(choices, 1); assert.equal(await choosing, false);
+  assert.equal(chooser.lastError, 'Nådde ikkje skrivaren. Prøv igjen.'); await advance(t, 120000); assert.equal(choices, 1);
 });
 
-test('partial write quota clears queued jobs, blocks retries and never replays after cooldown', async t => {
-  let release, limited = true;
+test('rejected writes back off at the same byte offset and never replay accepted data or overlap requests', async t => {
+  let failures = 2, active = 0, maxActive = 0;
+  const requested = [];
   const fake = fakeBLE({ write: async (_, index) => {
-    if (index === 0) await new Promise(resolve => { release = resolve; });
-    if (limited && index === 1) throw new Error('Rate limit exceeded — too many BLE requests');
+    requested.push(index); maxActive = Math.max(maxActive, ++active);
+    await Promise.resolve(); active--;
+    if (index === 1 && failures-- > 0) throw new Error('Rate limit exceeded — too many BLE requests');
   } });
   const printer = printerFor(fake); t.after(() => printer.dispose()); await printer.choose();
   const events = []; printer.addEventListener('status', event => events.push(event.detail));
-  t.mock.timers.enable({ apis: ['Date'], now: 10000 });
-  const sending = printer.send('partial-quota', new Uint8Array(60));
-  assert.equal(printer.enqueue('queued', new Uint8Array(20)), true); release();
-  await assert.rejects(sending, /Rate limit/);
-  assert.equal(fake.writes.length, 1); assert.equal(printer.queue.length, 0); assert.equal(printer.retryTimer, null);
-  assert.equal(events.at(-1).message, 'Vent eitt minutt før nytt forsøk.'); assert.equal(events.at(-1).bytes, 20);
-  assert.equal(events.some(event => event.state === 'sent' || event.state === 'reconnecting'), false);
-  assert.equal(printer.enqueue('blocked', new Uint8Array(20)), false);
-  assert.equal(await printer.start(), false); assert.equal(await printer.choose(), false); assert.equal(await printer.link(), false);
-  await assert.rejects(printer.send('blocked', new Uint8Array(20)), /Vent eitt minutt/);
-  assert.equal(fake.connections(), 1); assert.equal(fake.choices(), 1);
-  t.mock.timers.tick(60000); await Promise.resolve(); assert.equal(fake.connections(), 1);
-  limited = false; assert.equal(await printer.start(), true); assert.equal(printer.lastError, '');
-  await assert.rejects(printer.send('partial-quota', new Uint8Array(60)), /alt forsøkt/);
-  assert.equal(printer.enqueue('queued', new Uint8Array(20)), false); assert.equal(fake.writes.length, 1);
-  await printer.send('fresh', new Uint8Array(20)); assert.equal(fake.writes.length, 2);
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
+  const bytes = Uint8Array.from({length:60}, (_,i) => i), sending = printer.send('recover', bytes);
+  await flush(); assert.deepEqual(requested, [0,1]); assert.equal(printer.busy, true);
+  await advance(t, 250); assert.deepEqual(requested, [0,1,1]);
+  await advance(t, 499); assert.equal(requested.length, 3); await advance(t, 1); await sending;
+  assert.deepEqual(requested, [0,1,1,1,2]); assert.deepEqual(joinBytes(fake.writes), bytes); assert.equal(maxActive, 1);
+  assert.equal(fake.connections(), 1); assert.equal(fake.choices(), 1); assert.equal(events.at(-1).state, 'sent');
+  assert.equal(events.some(event => /rate.?limit|too many|eitt minutt/i.test(event.message || '')), false);
+  await assert.rejects(printer.send('recover', bytes), /alt forsøkt/);
 });
 
-test('quota cooldown survives helper replacement and storage failure still blocks the current instance', async t => {
+test('persistent rejection has bounded attempts, a short final error and no queued replay', async t => {
+  let requests = 0;
+  const fake = fakeBLE({write:async()=>{requests++;throw {code:'RATE_LIMIT'}}}), printer = printerFor(fake);
+  t.after(() => printer.dispose()); await printer.choose();
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 10000 });
-  const fake = fakeBLE(); let requests = 0;
-  const getDevices = fake.bluetooth.getDevices;
-  fake.bluetooth.getDevices = () => { requests++; return Promise.reject({ code: 'RATE_LIMIT' }); };
-  const first = printerFor(fake); assert.equal(await first.start(), false); first.dispose();
-  const reloaded = printerFor(fake); t.after(() => reloaded.dispose());
-  assert.equal(reloaded.lastError, 'Vent eitt minutt før nytt forsøk.');
-  assert.equal(await reloaded.start(), false); assert.equal(await reloaded.choose(), false);
-  assert.equal(requests, 1); assert.equal(fake.choices(), 0); assert.equal(fake.connections(), 0);
-  t.mock.timers.tick(60000); await Promise.resolve(); assert.equal(requests, 1);
-  fake.bluetooth.getDevices = getDevices; fake.grant();
-  assert.equal(await reloaded.start(), true); assert.equal(reloaded.lastError, ''); assert.equal(fake.connections(), 1);
-  const denied = printerFor(fake, { storage: () => { throw new Error('Storage denied'); } });
-  t.after(() => denied.dispose());
-  fake.bluetooth.getDevices = () => { requests++; return Promise.reject(new Error('Rate-limit exceeded')); };
-  assert.equal(await denied.start(), false); assert.equal(await denied.start(), false); assert.equal(await denied.choose(), false);
-  assert.equal(denied.lastError, 'Vent eitt minutt før nytt forsøk.'); assert.equal(requests, 2); assert.equal(fake.choices(), 0);
+  const sending = printer.send('exhausted', new Uint8Array(60)), failed = assert.rejects(sending,/^Error: Nådde ikkje skrivaren\. Prøv igjen\.$/);
+  assert.equal(printer.enqueue('waiting', new Uint8Array(20)), true); await flush();
+  for (const delay of [250,500,1000,2000,4000,8000,16000,30000]) await advance(t,delay);
+  await failed; assert.equal(requests,9); assert.equal(printer.active,false); assert.equal(printer.queue.length,0); assert.equal(printer.retryTimer,null);
+  await advance(t,120000); assert.equal(requests,9); assert.equal(fake.connections(),1); assert.equal(fake.writes.length,0);
+  await printer.start(); await assert.rejects(printer.send('exhausted',new Uint8Array(60)),/alt forsøkt/);assert.equal(requests,9);
+});
+
+test('old persisted cooldown is ignored and disposal cancels pending recovery without another request', async t => {
+  const fake=fakeBLE();fake.saved.set('entropi.px10.cooldown.v1',String(Date.now()+60000));
+  const printer=printerFor(fake);t.after(()=>printer.dispose());assert.equal(await printer.choose(),true);
+  let requests=0;fake.device.gatt.connect=async()=>{requests++;throw new Error('Too many BLE requests')};
+  printer.suspend();fake.device.gatt.disconnect();
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});
+  const starting=printer.start();await flush();assert.equal(requests,1);printer.dispose();await advance(t,250);
+  assert.equal(await starting,false);assert.equal(requests,1);assert.equal(printer.retryTimer,null);assert.equal(fake.choices(),1);
+});
+
+test('connection, characteristic and notification setup recover only the rejected operation', async t => {
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});
+  for(const phase of ['connect','characteristic','notifications']){
+    const fake=fakeBLE();let calls=0,rejected=false;
+    const limited=operation=>function(...args){calls++;if(!rejected){rejected=true;return Promise.reject({code:'RATE_LIMIT'})}return operation.apply(this,args)};
+    if(phase==='connect')fake.device.gatt.connect=limited(fake.device.gatt.connect);
+    else if(phase==='notifications')fake.notifier.startNotifications=limited(fake.notifier.startNotifications);
+    else{const discover=fake.device.gatt.getPrimaryService;fake.device.gatt.getPrimaryService=async id=>{const service=await discover(id);service.getCharacteristic=limited(service.getCharacteristic);return service}}
+    const printer=printerFor(fake);t.after(()=>printer.dispose());const choosing=printer.choose();await flush();assert.equal(calls,1);assert.equal(printer.ready,false);
+    await advance(t,250);assert.equal(await choosing,true);assert.equal(calls,phase==='characteristic'?3:2);assert.equal(fake.connections(),1);assert.equal(fake.choices(),1);assert.equal(fake.writes.length,0);
+  }
+});
+
+test('a stale pause probes twenty unsent bytes, settles, then restores fast negotiated writes', async t => {
+  const fake=fakeBLE();fake.device.gatt.getWriteLimits=async()=>({withoutResponse:182});
+  const printer=printerFor(fake);t.after(()=>printer.dispose());await printer.choose();
+  const pause=packet(0xae,[0x10]);pause[3]=1;fake.notifier.notify(pause);
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});
+  const bytes=Uint8Array.from({length:400},(_,i)=>i),sending=printer.send('probe',bytes);
+  await advance(t,4999);assert.equal(fake.writes.length,0);await advance(t,21);
+  assert.deepEqual(fake.writes.map(chunk=>chunk.length),[20]);assert.equal(printer.busy,true);
+  await advance(t,99);assert.equal(fake.writes.length,1);await advance(t,1);await sending;
+  assert.deepEqual(fake.writes.map(chunk=>chunk.length),[20,182,182,16]);assert.deepEqual(joinBytes(fake.writes),bytes);
+  assert.equal(fake.connections(),1);assert.equal(fake.choices(),1);
+});
+
+test('fresh printer pauses are respected after probes and three unsuccessful probes end the job', async t => {
+  const pause=packet(0xae,[0x10]);pause[3]=1;
+  const fake=fakeBLE({write:async(_,__,notifier)=>notifier.notify(pause)}),printer=printerFor(fake);
+  t.after(()=>printer.dispose());await printer.choose();fake.notifier.notify(pause);
+  const states=[];printer.addEventListener('status',event=>states.push(event.detail.state));
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});
+  const bytes=Uint8Array.from({length:100},(_,i)=>i),sending=printer.send('stuck',bytes),failed=assert.rejects(sending,/Nådde ikkje skrivaren/);
+  assert.equal(printer.enqueue('waiting',new Uint8Array(20)),true);
+  for(let i=1;i<=3;i++){await advance(t,5000);assert.equal(fake.writes.length,i);assert.equal(printer.paused,true);await advance(t,100);assert.equal(fake.writes.length,i)}
+  await advance(t,5000);await failed;assert.deepEqual(joinBytes(fake.writes),bytes.slice(0,60));
+  assert.equal(printer.active,false);assert.equal(printer.queue.length,0);assert.equal(printer.retryTimer,null);assert.equal(states.includes('sent'),false);
+  await advance(t,120000);assert.equal(fake.writes.length,3);assert.equal(fake.connections(),1);
+});
+
+test('disposal during probe settling cannot write the rest of the job', async t => {
+  const fake=fakeBLE(),printer=printerFor(fake);t.after(()=>printer.dispose());await printer.choose();
+  const pause=packet(0xae,[0x10]);pause[3]=1;fake.notifier.notify(pause);
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});
+  const sending=printer.send('dispose-probe',new Uint8Array(60)),failed=assert.rejects(sending,/broten/);
+  await advance(t,5000);assert.equal(fake.writes.length,1);printer.dispose();await advance(t,100);await failed;
+  assert.equal(fake.writes.length,1);assert.equal(fake.connections(),1);assert.equal(printer.retryTimer,null);
 });
 
 test('a pending write survives twenty seconds in the background without duplicate requests', async t => {
@@ -313,6 +354,20 @@ test('the default forty-second write timeout cannot succeed late or replay the j
   assert.equal(printer.ready, true); assert.equal(fake.writes.length, 1); assert.equal(requests, 1); assert.equal(states.includes('sent'), false);
   await assert.rejects(printer.send('default-timeout', new Uint8Array(60)), /alt forsøkt/);
   assert.equal(requests, 1); assert.equal(fake.connections(), 2); assert.equal(fake.choices(), 1);
+});
+
+test('a stale write completion cannot disconnect a newly restored channel', async t => {
+  let release, calls=0;
+  const fake=fakeBLE({write:async()=>{if(++calls===1)await new Promise(resolve=>{release=resolve})}}),printer=printerFor(fake);
+  t.after(()=>printer.dispose());await printer.choose();t.mock.timers.enable({apis:['Date','setTimeout'],now:10000});
+  const states=[];printer.addEventListener('status',event=>states.push(event.detail.state));
+  const sending=printer.send('old-channel',new Uint8Array(60)),failed=assert.rejects(sending,/broten/);
+  fake.device.gatt.disconnect();await advance(t,2);assert.equal(printer.ready,true);assert.equal(fake.connections(),2);
+  const version=printer.version,writer=printer.writer;release();await failed;
+  assert.equal(printer.ready,true);assert.equal(printer.version,version);assert.equal(printer.writer,writer);assert.equal(printer.retryTimer,null);
+  assert.equal(calls,1);assert.equal(states.includes('sent'),false);await advance(t,10000);assert.equal(fake.connections(),2);
+  await assert.rejects(printer.send('old-channel',new Uint8Array(60)),/alt forsøkt/);assert.equal(calls,1);
+  await printer.send('new-channel',new Uint8Array(20));assert.equal(calls,2);assert.equal(fake.connections(),2);assert.equal(fake.choices(),1);
 });
 
 test('an unresolved write is retired, and late completion cannot report a successful print', async t => {

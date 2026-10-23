@@ -34,12 +34,12 @@ function harness(options={}){
 }
 
 test('photo starts with two image buttons and four accessible photo styles',()=>{
-  const app=harness();assert.equal(app.controls.image,0);assert.equal(app.controls.primitive,0);assert.equal(app.controls.photo,0);assert.equal('quality'in app.controls,false);
+  const app=harness();assert.equal(app.controls.image,0);assert.equal(app.controls.primitive,0);assert.equal(app.controls.photo,1);assert.equal('quality'in app.controls,false);
   for(let i=0;i<2;i++){
     const image=app.rail('image',i),primitive=app.rail('primitive',i);assert.equal(image.children.length,2);assert.equal(primitive.children.length,4);
     assert.equal(image.getAttribute('aria-label'),'Bilettype');assert.deepEqual(image.children.map(button=>button.getAttribute('aria-label')),['Svart-kvittfoto','Splats']);assert.deepEqual(image.children.map(button=>button.getAttribute('aria-pressed')),['true','false']);
     assert.equal(image.children[0].children[0].tagName,'I');assert.notEqual(primitive.hidden,true);assert.ok(primitive.children.every(button=>!button.disabled));assert.equal(app.roots[i].children.some(element=>element.tagName==='INPUT'),false);
-    assert.equal(primitive.getAttribute('aria-label'),'Svartkvitt-stil');assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-label')),['Atkinson','Floyd–Steinberg','Bayer','Gråtonar']);assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-pressed')),['false','false','false','true']);
+    assert.equal(primitive.getAttribute('aria-label'),'Svartkvitt-stil');assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-label')),['Atkinson','Floyd–Steinberg','Bayer','Gråtonar']);assert.deepEqual(primitive.children.map(button=>button.getAttribute('aria-pressed')),['false','false','true','false']);
   }
 });
 
@@ -56,7 +56,7 @@ test('photo and splat styles keep independent selections and mode-specific label
   for(let i=0;i<2;i++){const rail=app.rail('primitive',i);assert.equal(rail.getAttribute('aria-label'),'Pikselstil');assert.deepEqual(rail.children.map(button=>button.getAttribute('aria-label')),['Grøn fosfor','CGA: fire fargar','EGA: seksten fargar','C64-fargar']);assert.equal(rail.children[1].getAttribute('aria-pressed'),'true')}
   app.click('image',0);for(let i=0;i<2;i++){const rail=app.rail('primitive',i);assert.equal(rail.getAttribute('aria-label'),'Svartkvitt-stil');assert.equal(rail.children[2].getAttribute('aria-pressed'),'true');assert.ok(rail.children.every(button=>!button.disabled))}
   app.click('primitive',0);app.click('image',1);assert.equal(app.controls.photo,3);assert.equal(app.controls.primitive,2);assert.equal(app.rail('primitive').children[1].getAttribute('aria-pressed'),'true');
-  assert.deepEqual(app.changes,[['photo',1],['image',1],['primitive',2],['image',0],['photo',3],['image',1]]);
+  assert.deepEqual(app.changes,[['image',1],['primitive',2],['image',0],['photo',3],['image',1]]);
 });
 
 test('left-edge photo scrubbing selects each dither without changing the splat style',()=>{

@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachPhotoGestures } from '../vendor/photo-gestures.mjs';
 
-function harness(){
+function harness(options={}){
   const events=new Map(),captured=new Set(),changes=[],rect={left:0,top:0,width:390,height:844};let enabled=true;
   const image={naturalWidth:1920,naturalHeight:1080,style:{},parentElement:{getBoundingClientRect:()=>rect},addEventListener:(name,handler)=>events.set(name,handler),removeEventListener:name=>events.delete(name),setPointerCapture:id=>captured.add(id),hasPointerCapture:id=>captured.has(id),releasePointerCapture:id=>captured.delete(id)};
-  const control=attachPhotoGestures(image,{enabled:()=>enabled,onChange:state=>changes.push({...state})});
+  const control=attachPhotoGestures(image,{enabled:()=>enabled,onChange:state=>changes.push({...state}),...options});
   function emit(name,id,x,y,details={}){const event={pointerType:'touch',pointerId:id,clientX:x,clientY:y,prevented:false,stopped:false,preventDefault(){this.prevented=true},stopImmediatePropagation(){this.stopped=true},...details};events.get(name)?.(event);if(['pointerup','pointercancel','lostpointercapture'].includes(name))captured.delete(id);return event}
   const pinch=()=>{emit('pointerdown',1,100,422);emit('pointerdown',2,200,422);emit('pointermove',1,0,422);emit('pointermove',2,300,422)};
   const three=()=>{for(const [id,x,y]of [[1,100,422],[2,200,422],[3,150,500]])emit('pointerdown',id,x,y)};
@@ -60,4 +60,8 @@ test('a fourth finger and disabled or mouse input cannot mutate photo framing or
 test('hidden layout cannot erase retained pan and reopening remeasures the viewport',()=>{
   const app=harness();app.pinch();const before={...app.control.state};app.rect.width=app.rect.height=0;app.control.refresh();assert.deepEqual(app.control.state,before);
   app.rect.width=390;app.rect.height=700;app.control.refresh();assert.equal(app.control.state.height,700);assert.equal(app.control.state.x,before.x);app.control.dispose();
+});
+
+test('live tone gestures leave one- and two-finger input untransformed and require three fingers to adjust',()=>{
+  const app=harness({toneOnly:true});app.image.style.transform='unchanged';app.emit('pointerdown',1,100,422);assert.equal(app.emit('pointermove',1,150,422).prevented,false);app.emit('pointerdown',2,200,422);app.emit('pointermove',2,350,422);assert.equal(app.control.state.scale,1);assert.equal(app.changes.length,0);app.release();app.three();assert.equal(app.changes.length,1);app.moveThree(50,0);assert.ok(app.control.state.contrast>1);assert.equal(app.control.state.grain,1);assert.equal(app.image.style.transform,'unchanged');app.emit('pointerup',3,200,500);app.emit('pointermove',2,500,422);assert.equal(app.control.state.scale,1);assert.equal(app.image.style.transform,'unchanged');app.control.dispose();assert.equal(app.image.style.transform,'unchanged');assert.equal(app.captured.size,0);
 });

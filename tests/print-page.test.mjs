@@ -13,7 +13,7 @@ function harness(options={}){
   const elements=new Map(['print','status'].map(id=>[id,{disabled:true,textContent:'',listeners:new Map(),setAttribute(){},addEventListener(name,callback){this.listeners.set(name,callback)},click(){return this.listeners.get('click')?.()}}]));
   class Printer extends EventTarget{
     constructor(){super();printer=this;this.ready=false;this.supported=options.supported!==false;this.device=null}
-    async choose(){choices++;const connected=options.choose?await options.choose():true;this.ready=connected;return connected}
+    async choose(){choices++;const connected=options.choose?await options.choose():true;this.ready=connected;if(connected)this.device={};return connected}
     async start(){return this.ready}
     enqueue(id,bytes){jobs.push({id,bytes});return true}
     dispose(){disposed=true}
@@ -35,7 +35,7 @@ test('the printer helper accepts one bounded image only from its exact opener, o
 
 test('one explicit helper tap opens the chooser synchronously and cannot queue the snapshot twice',async()=>{
   const app=harness();await app.emit(app.image());const clicking=app.elements.get('print').click();assert.equal(app.choices,1);await clicking;
-  assert.equal(app.jobs.length,1);assert.equal(app.jobs[0].id,'entropi-'+session);assert.equal(app.messages.at(-1).data.type,'entropi-print-started');
+  assert.equal(app.jobs.length,1);assert.equal(app.jobs[0].id,'entropi-'+session+'-1');assert.equal(app.messages.at(-1).data.type,'entropi-print-started');
   await app.elements.get('print').click();assert.equal(app.jobs.length,1);assert.equal(app.messages.some(message=>message.data.type==='entropi-print-result'),false);
   app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'sent',physicalPrintVerified:false}}));assert.equal(app.messages.at(-1).data.ok,true);
   assert.equal(app.disposed,false);await app.elements.get('print').click();assert.equal(app.focused,1);assert.equal(app.jobs.length,1);assert.equal(app.disposed,false);
@@ -70,6 +70,15 @@ test('real unload after BFCache still disposes and blocks a late native pairing 
 test('a connection quota failure shows the short guidance and permits a later explicit tap',async()=>{
   const app=harness({choose:async()=>false});app.printer.lastError='Vent eitt minutt før nytt forsøk.';await app.emit(app.image());await app.elements.get('print').click();
   assert.equal(app.elements.get('status').textContent,app.printer.lastError);assert.equal(app.elements.get('print').disabled,false);assert.equal(app.jobs.length,0);assert.equal(app.choices,1);
+});
+
+test('a failed transfer keeps the icon usable for one explicit fresh attempt without another pairing',async()=>{
+  const app=harness();await app.emit(app.image());await app.elements.get('print').click();app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'failed',message:'Too many BLE requests'}}));assert.equal(app.elements.get('status').textContent,'Prøv igjen.');assert.equal(app.elements.get('print').disabled,false);assert.equal(app.messages.some(message=>message.data.type==='entropi-print-result'),false);
+  await app.elements.get('print').click();assert.equal(app.jobs.length,2);assert.notEqual(app.jobs[0].id,app.jobs[1].id);assert.equal(app.choices,1);app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'sent'}}));assert.equal(app.messages.filter(message=>message.data.type==='entropi-print-result').length,1);assert.equal(app.messages.at(-1).data.ok,true);
+});
+
+test('progress and recovery keep the helper active without showing native error text',async()=>{
+  const app=harness();await app.emit(app.image());await app.elements.get('print').click();app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'sending',progress:.2}}));app.printer.dispatchEvent(new CustomEvent('status',{detail:{state:'recovering'}}));assert.ok(app.messages.some(message=>message.data.type==='entropi-print-progress'&&message.data.progress===.2));assert.equal(app.elements.get('print').disabled,true);assert.equal(app.elements.get('status').textContent,'Sender …');assert.equal(app.jobs.length,1);
 });
 
 test('untrusted entry and missing Bluetooth produce an actionable error without printing',async()=>{
