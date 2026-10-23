@@ -4,10 +4,10 @@ import { COLOR_SCHEMES, resolveColorScheme, gaussianInk, readColorScheme, saveCo
 import { processPhoto } from '../vendor/photo-view.mjs';
 
 test('every profile names a documented historical display and uses valid RGB tones',()=>{
-  assert.deepEqual(COLOR_SCHEMES.map(scheme=>scheme.id),['macintosh','ibm5151','ibmcga','gameboy','bluecrt']);
+  assert.deepEqual(COLOR_SCHEMES.map(scheme=>scheme.id),['macintosh','ibm5151','ibmcga','gameboy','bluecrt','amber','appleii','c64','zx']);
   for(const scheme of COLOR_SCHEMES){
-    assert.match(scheme.label,/(19\d\d|P11)/);
-    assert.equal(scheme.colors.length,4);
+    assert.match(scheme.label,/(19\d\d|P11|P3)/);
+    assert.equal(scheme.colors.length,scheme.mode==='c64'?16:scheme.mode==='zx'?15:scheme.mode==='appleii'?6:4);
     assert.ok([2,4].includes(scheme.tones));
     for(const rgb of scheme.colors){assert.equal(rgb.length,3);for(const value of rgb)assert.ok(Number.isInteger(value)&&value>=0&&value<=255)}
     assert.equal(resolveColorScheme(scheme.id),scheme);

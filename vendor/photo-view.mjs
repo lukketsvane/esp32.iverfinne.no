@@ -1,13 +1,15 @@
 import {photoSnapshot} from './photo.mjs';
 import {resolveColorScheme} from './color-schemes.mjs';
+import {renderRetroPixels} from './retro-modes.mjs';
 
 export function processPhoto(source,width,height,style,grain,contrast,schemeId='original'){
   contrast=Math.max(1,contrast);
   const scheme=resolveColorScheme(schemeId);
+  if(scheme.mode)return renderRetroPixels(source,width,height,schemeId,contrast);
   const cols=Math.ceil(width/grain),rows=Math.ceil(height/grain),values=new Float32Array(cols*rows);
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
     let sum=0,count=0;
-    for(let py=y*grain;py<Math.min(height,(y+1)*grain);py++)for(let px=x*grain;px<Math.min(width,(x+1)*grain);px++){sum+=source[(py*width+px)*4];count++}
+    for(let py=y*grain;py<Math.min(height,(y+1)*grain);py++)for(let px=x*grain;px<Math.min(width,(x+1)*grain);px++){const at=(py*width+px)*4;sum+=source[at]*.2126+source[at+1]*.7152+source[at+2]*.0722;count++}
     values[y*cols+x]=Math.max(0,Math.min(255,(sum/count-127.5)*contrast+127.5));
   }
   const bayer=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
@@ -60,7 +62,6 @@ export function createPhotoView(image){
     if(!width||!height)throw new Error('Fotoet er ikkje klart.');
     const scale=Math.min(1,2048/Math.max(width,height));canvas.width=Math.max(1,Math.round(width*scale));canvas.height=Math.max(1,Math.round(height*scale));
     context.drawImage(decoded,0,0,canvas.width,canvas.height);source=context.getImageData(0,0,canvas.width,canvas.height).data;
-    for(let i=0;i<source.length;i+=4){const value=Math.round(source[i]*.2126+source[i+1]*.7152+source[i+2]*.0722);source[i]=source[i+1]=source[i+2]=value}
     dirty=true;render();refresh();
   }
   function setStyle(value){const next=Math.round(finite(value,0,3,0));if(style!==next){style=next;schedule()}}

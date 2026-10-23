@@ -8,6 +8,8 @@ sketch = root / "EntropiCamera"
 shared = root.parent
 source = (sketch / "camera_ui.html").read_text(encoding="utf-8")
 palettes = (shared / "vendor/color-schemes.mjs").read_text(encoding="utf-8").replace("export ", "")
+retro = (shared / "vendor/retro-modes.mjs").read_text(encoding="utf-8").replace("export ", "")
+palettes += "\n" + re.sub(r"^import .*?;\s*", "", retro, flags=re.MULTILINE)
 renderer = (shared / "vendor/viewfinder.mjs").read_text(encoding="utf-8").replace("export class Viewfinder", "class Viewfinder", 1)
 renderer = re.sub(r"^import .*?;\s*", "", renderer, flags=re.MULTILINE)
 scene = (shared / "vendor/scene.mjs").read_text(encoding="utf-8").replace("export async function", "async function")

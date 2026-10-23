@@ -43,6 +43,5 @@ export function photoSnapshot(image,pose,native=false,nearest=false){
   const context=canvas.getContext('2d');if(!context)throw new Error('Kunne ikkje lese fotoet.');
   context.imageSmoothingEnabled=!nearest;context.drawImage(image,x,y,w,h,0,0,canvas.width,canvas.height);
   const data=context.getImageData(0,0,canvas.width,canvas.height).data;
-  for(let i=0;i<data.length;i+=4){const value=Math.round(data[i]*.2126+data[i+1]*.7152+data[i+2]*.0722);data[i]=data[i+1]=data[i+2]=value}
   return {width:canvas.width,height:canvas.height,data,photo:true};
 }

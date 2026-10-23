@@ -40,7 +40,7 @@ export function imageToPointCloud({ rgba, width, height, depth, depthWidth, dept
   const low = sorted[Math.floor((sorted.length - 1) * .02)], high = sorted[Math.floor((sorted.length - 1) * .98)];
   const span = high - low;
   const count = Math.ceil(width / stride) * Math.ceil(height / stride);
-  const positions = new Float32Array(count * 3), colors = new Uint8Array(count * 3);
+  const positions = new Float32Array(count * 3), colors = new Uint8Array(count * 3), pixelOffsets = new Uint32Array(count);
   const focal = focalEstimate ?? Math.max(width, height) * .95;
   if (!Number.isFinite(focal) || focal <= 0) throw new Error('Ugyldig kamerageometri.');
   let used = 0, min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
@@ -50,6 +50,7 @@ export function imageToPointCloud({ rgba, width, height, depth, depthWidth, dept
     const value = bilinear(depth, depthWidth, depthHeight, (x + .5) * depthWidth / width - .5, (y + .5) * depthHeight / height - .5);
     if (!Number.isFinite(value)) continue;
     const inverse = span > 1e-6 ? Math.max(0, Math.min(1, (value - low) / span)) : .5;
+    pixelOffsets[used] = pixel;
     const distance = 1 / (.5 + inverse * 1.1);
     const point = [(x + .5 - width / 2) / focal * distance, -(y + .5 - height / 2) / focal * distance, -distance];
     for (let c = 0; c < 3; c++) {
@@ -62,7 +63,7 @@ export function imageToPointCloud({ rgba, width, height, depth, depthWidth, dept
   if (!used) throw new Error('Ingen punkt kunne lagast.');
   const center = min.map((v, c) => (v + max[c]) / 2);
   for (let i = 0; i < used; i++) for (let c = 0; c < 3; c++) positions[i * 3 + c] -= center[c];
-  return { positions: positions.subarray(0, used * 3), colors: colors.subarray(0, used * 3), count: used, sourceWidth: width, sourceHeight: height,
+  return { positions: positions.subarray(0, used * 3), colors: colors.subarray(0, used * 3), pixelOffsets: pixelOffsets.subarray(0, used), count: used, sourceWidth: width, sourceHeight: height,
     radius: Math.hypot(...max.map((v, c) => (v - min[c]) / 2)), estimated: true, units: 'relative', focalEstimate: focal, center, stride };
 }
 

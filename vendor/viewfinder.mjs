@@ -47,7 +47,7 @@ export class Viewfinder {
     const width=video?source.videoWidth:source.naturalWidth||source.width,height=video?source.videoHeight:source.naturalHeight||source.height;if(!width||!height)return;
     this.fit();
     try{
-      paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,true);this.time=time;
+      paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,false);this.time=time;
       this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast,this.palette));maskFinderFrame(this.output.data,this.projection);this.context.putImageData(this.output,0,0);
     }catch{}
   }

@@ -9,7 +9,7 @@ function harness(options={}){
   let now=1000,gestures=0,nextTimer=0;
   const events=new Map(),changes=[],timers=new Map();
   class Element{
-    constructor(tag='DIV'){this.tagName=tag.toUpperCase();this.className='';this.children=[];this.attributes=new Map();this.listeners=new Map();this.classes=new Set();this.classList={add:name=>this.classes.add(name),remove:name=>this.classes.delete(name),toggle:(name,active)=>{if(active??!this.classes.has(name))this.classes.add(name);else this.classes.delete(name)},contains:name=>this.classes.has(name)}}
+    constructor(tag='DIV'){this.tagName=tag.toUpperCase();this.className='';this.style={};this.children=[];this.attributes=new Map();this.listeners=new Map();this.classes=new Set();this.classList={add:name=>this.classes.add(name),remove:name=>this.classes.delete(name),toggle:(name,active)=>{if(active??!this.classes.has(name))this.classes.add(name);else this.classes.delete(name)},contains:name=>this.classes.has(name)}}
     setAttribute(name,value){this.attributes.set(name,String(value))}
     getAttribute(name){return this.attributes.get(name)??null}
     appendChild(child){child.parent=this;this.children.push(child);return child}
@@ -33,7 +33,7 @@ function harness(options={}){
   return {roots,controls,changes,document,window,emit,rail,click,advance,Element,get timers(){return timers.size},get gestures(){return gestures}};
 }
 
-test('two image modes and four historical display profiles share the existing edge marks',()=>{
+test('two image modes and nine historical display profiles share the existing edge marks',()=>{
   const app=harness();
   assert.equal(app.controls.image,0);
   assert.equal(app.controls.photo,0);
@@ -41,10 +41,10 @@ test('two image modes and four historical display profiles share the existing ed
   for(let i=0;i<2;i++){
     const image=app.rail('image',i),profiles=app.rail('primitive',i);
     assert.equal(image.children.length,2);
-    assert.equal(profiles.children.length,5);
+    assert.equal(profiles.children.length,9);
     assert.equal(profiles.getAttribute('aria-label'),'Historisk skjermprofil');
-    assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-label')),['Macintosh 128K · 1984','IBM 5151 · 1981','IBM CGA · 1981','Game Boy DMG-01 · 1989','Blå CRT · P11-fosfor']);
-    assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-pressed')),['true','false','false','false','false']);
+    assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-label')),Array.from({length:9},(_,index)=>'Profil '+(index+1)));
+    assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-pressed')),['true',...Array(8).fill('false')]);
     assert.equal(app.roots[i].children.some(element=>element.tagName==='INPUT'),false);
   }
 });
@@ -60,7 +60,7 @@ test('native buttons select historical profiles for photo and depth independentl
   app.click('image',0);
   assert.equal(app.controls.photo,2);
   assert.deepEqual(app.changes,[['photo',2],['image',1],['primitive',1],['image',0]]);
-  assert.deepEqual(app.rail('primitive').children.map(button=>button.getAttribute('aria-pressed')),['false','false','true','false','false']);
+  assert.deepEqual(app.rail('primitive').children.map(button=>button.getAttribute('aria-pressed')),['false','false','true',...Array(6).fill('false')]);
 });
 
 test('the left edge scrubs profiles in top-to-bottom order without changing the image type',()=>{
@@ -69,7 +69,7 @@ test('the left edge scrubs profiles in top-to-bottom order without changing the 
   assert.equal(down.prevented,true);
   for(const clientY of [300,500,800])app.emit('pointermove',{clientX:4,clientY});
   app.emit('pointerup',{clientX:4});
-  assert.deepEqual(app.changes,[['photo',1],['photo',2],['photo',4]]);
+  assert.deepEqual(app.changes,[['photo',1],['photo',3],['photo',5],['photo',8]]);
   assert.equal(app.controls.primitive,0);
   assert.equal(app.controls.image,0);
 });
@@ -85,15 +85,14 @@ test('the right edge changes image type and preserves independently selected pro
   assert.equal(app.controls.primitive,3);
 });
 
-test('choosing a profile briefly names the historic screen without mounting color circles',()=>{
+test('profile selections have no visible labels or colored circles',()=>{
   const app=harness();
-  app.click('primitive',1);
+  for(const i of [1,4,6,7,8])app.click('primitive',i);
   const hints=app.roots.map(root=>root.children.find(element=>element.tagName==='SPAN'));
-  assert.ok(hints.every(hint=>hint.textContent.includes('IBM 5151')));
-  assert.ok(hints.every(hint=>hint.classList.contains('shown')));
-  assert.equal(app.document.head.children.length,1);
-  app.advance(1301);
   assert.ok(hints.every(hint=>!hint.classList.contains('shown')));
+  assert.ok(hints.every(hint=>!hint.textContent));
+  assert.equal(app.document.head.children.length,1);
+  assert.equal(app.timers,0);
   app.click('image',1);
   assert.ok(hints.every(hint=>hint.innerHTML.includes('<svg')));
 });
@@ -103,7 +102,7 @@ test('profile controls support keyboard focus without changing the selected valu
   button.listeners.get('focus')();
   assert.equal(app.controls.photo,0);
   const hint=app.roots[0].children.find(element=>element.tagName==='SPAN');
-  assert.match(hint.textContent,/Game Boy/);
+  assert.ok(!hint.textContent);
   app.click('primitive',3,{detail:0});
   assert.equal(app.controls.photo,3);
 });
@@ -134,10 +133,10 @@ test('mouse, central touch, disabled context, and a photo-save dialog are not in
   assert.equal(app.emit('pointerdown',{clientX:4,target:image}).prevented,false);
 });
 
-test('disposal clears the transient label, rails, timers and event ownership',()=>{
+test('disposal clears the silent rails and event ownership',()=>{
   const app=harness();
   app.click('primitive',2);
-  assert.equal(app.timers,1);
+  assert.equal(app.timers,0);
   app.controls.dispose();
   assert.equal(app.timers,0);
   assert.equal(app.document.head.children.length,0);

@@ -8,7 +8,7 @@ export const PRIMITIVE_MODES=[
 ];
 export const PRIMITIVE_BAYER=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
 export const normalizePrimitiveLevel=level=>Number.isFinite(level)?Math.max(0,Math.min(3,Math.round(level))):0;
-export const qualityPointBudget=(level=2)=>[4500,10000,22000,42000][Number.isFinite(level)?normalizePrimitiveLevel(level):2];
+export const qualityPointBudget=(level=2)=>[4500,10000,70000,95000][Number.isFinite(level)?normalizePrimitiveLevel(level):2];
 const tones=C64_PALETTE.map(color=>({color,chroma:Math.max(...color)-Math.min(...color),u:color[0]-(color[1]+color[2])/2,v:(color[1]-color[2])*Math.sqrt(3)/2}));
 
 export function nearestC64(red,green,blue){

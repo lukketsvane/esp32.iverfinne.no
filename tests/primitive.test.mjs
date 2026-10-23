@@ -12,14 +12,14 @@ test('the original sixteen C64 colours retain their exact RGB swatches',()=>{
   for(let value=0;value<256;value+=17)assert.equal(palette.has(key(nearestC64(value,255-value,value*.6))),true);
 });
 
-test('the four point budgets bound processing and increase detail without changing inference dimensions',()=>{
+test('the four point budgets bound high-resolution reconstruction without changing inference dimensions',()=>{
   const counts=[];
-  for(const [level,budget]of [4500,10000,22000,42000].entries()){
+  for(const [level,budget]of [4500,10000,70000,95000].entries()){
     assert.equal(qualityPointBudget(level),budget);
-    const stride=pointStride(420,322,budget),count=Math.ceil(420/stride)*Math.ceil(322/stride);assert.ok(count<=budget);counts.push(count);
+    const stride=pointStride(1000,800,budget),count=Math.ceil(1000/stride)*Math.ceil(800/stride);assert.ok(count<=budget);counts.push(count);
   }
   assert.ok(counts.every((count,i)=>!i||count>counts[i-1]));
-  assert.equal(qualityPointBudget(),22000);assert.equal(qualityPointBudget(NaN),22000);assert.equal(qualityPointBudget(-9),4500);assert.equal(qualityPointBudget(9),42000);
+  assert.equal(qualityPointBudget(),70000);assert.equal(qualityPointBudget(NaN),70000);assert.equal(qualityPointBudget(-9),4500);assert.equal(qualityPointBudget(9),95000);
 });
 
 test('legacy grids fit the screen with the original EGA and CGA pixel proportions',()=>{
