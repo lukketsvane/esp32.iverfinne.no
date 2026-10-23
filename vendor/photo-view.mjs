@@ -1,7 +1,9 @@
 import {photoSnapshot} from './photo.mjs';
+import {resolveColorScheme,ditherInk} from './color-schemes.mjs';
 
-export function processPhoto(source,width,height,style,grain,contrast){
+export function processPhoto(source,width,height,style,grain,contrast,schemeId='original'){
   contrast=Math.max(1,contrast);
+  const scheme=resolveColorScheme(schemeId),colored=scheme.id!=='original';
   const cols=Math.ceil(width/grain),rows=Math.ceil(height/grain),values=new Float32Array(cols*rows);
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
     let sum=0,count=0;
@@ -26,7 +28,9 @@ export function processPhoto(source,width,height,style,grain,contrast){
   const data=new Uint8ClampedArray(source.length);
   for(let y=0;y<height;y++)for(let x=0;x<width;x++){
     const index=(y*width+x)*4,value=values[Math.floor(y/grain)*cols+Math.floor(x/grain)];
-    data[index]=data[index+1]=data[index+2]=value;data[index+3]=source[index+3];
+    if(colored){const color=ditherInk(scheme,value===255,source[index]/255);data[index]=color[0];data[index+1]=color[1];data[index+2]=color[2]}
+    else data[index]=data[index+1]=data[index+2]=value;
+    data[index+3]=source[index+3];
   }
   return data;
 }
@@ -37,13 +41,13 @@ export function createPhotoView(image){
   canvas.setAttribute('aria-hidden','true');canvas.hidden=true;
   canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform-origin:center;pointer-events:none;image-rendering:pixelated';
   image.after(canvas);
-  let source=null,style=0,grain=1,contrast=1,frame=0,dirty=false,disposed=false;
+  let source=null,style=0,grain=1,contrast=1,palette='original',frame=0,dirty=false,disposed=false;
   const finite=(value,min,max,fallback)=>Number.isFinite(value)?Math.max(min,Math.min(max,value)):fallback;
   function render(){
     if(frame){cancelAnimationFrame(frame);frame=0}
     if(disposed||!source||!dirty)return;
     const pixels=context.createImageData(canvas.width,canvas.height);
-    pixels.data.set(processPhoto(source,canvas.width,canvas.height,style,grain,contrast));context.putImageData(pixels,0,0);dirty=false;
+    pixels.data.set(processPhoto(source,canvas.width,canvas.height,style,grain,contrast,palette));context.putImageData(pixels,0,0);dirty=false;
   }
   function schedule(){if(!disposed&&source){dirty=true;if(!frame)frame=requestAnimationFrame(render)}}
   function refresh(){if(!disposed)canvas.style.transform=image.style.transform}
@@ -58,8 +62,9 @@ export function createPhotoView(image){
     dirty=true;render();refresh();
   }
   function setStyle(value){const next=Math.round(finite(value,0,3,0));if(style!==next){style=next;schedule()}}
+  function setPalette(value){const next=resolveColorScheme(value).id;if(palette!==next){palette=next;schedule()}}
   function setTone(tone={}){const nextGrain=Math.round(finite(tone.grain??grain,1,8,grain)),nextContrast=finite(tone.contrast??contrast,1,3,contrast);if(grain!==nextGrain||contrast!==nextContrast){grain=nextGrain;contrast=nextContrast;schedule()}}
   function snapshot(pose,native=false){if(disposed||!source)throw new Error('Fotoet er ikkje klart.');render();return photoSnapshot(canvas,pose,native,true)}
   function dispose(){if(disposed)return;disposed=true;if(frame)cancelAnimationFrame(frame);source=null;image.style.opacity=opacity;canvas.remove()}
-  return {setSource,setStyle,setTone,show,refresh,snapshot,dispose};
+  return {setSource,setStyle,setPalette,setTone,show,refresh,snapshot,dispose};
 }
