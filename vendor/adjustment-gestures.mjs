@@ -13,7 +13,7 @@ export function attachAdjustmentGestures(root,{enabled=()=>true,read=()=>({}),on
     start={...position,width:Math.max(1,rect.width),height:Math.max(1,rect.height),levels:{...read()},tone:zone<1/3?'black':zone>2/3?'white':'gamma'};axis=null;
   }
   function down(event){
-    if(disposed||event.pointerType!=='touch'||!enabled()||event.target.closest('a,input,select,[data-photo-save],.access-control,.studio-option'))return;
+    if(disposed||event.pointerType!=='touch'||!enabled()||event.target.closest('a,input,select,textarea,[contenteditable],[data-photo-save],.access-control,.studio-option')||event.target.closest('button')&&!event.target.closest('#capture-plane'))return;
     if(!points.size)tap={time:performance.now(),count:0,moved:false};
     points.set(event.pointerId,{x:event.clientX,y:event.clientY,originX:event.clientX,originY:event.clientY});tap.count=Math.max(tap.count,points.size);
     if(points.size>=3)onGesture();

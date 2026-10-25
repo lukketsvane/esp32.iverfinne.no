@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { COLOR_SCHEMES } from '../vendor/color-schemes.mjs';
 
-const source=(await readFile(new URL('../vendor/studio.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
+const source=(await readFile(new URL('../vendor/studio.mjs',import.meta.url),'utf8')).replace(/^import .*;\s*/gm,'').replace(/^export /gm,'');
 
 function harness(options={}){
   let now=1000,gestures=0,nextTimer=0;
@@ -13,13 +14,14 @@ function harness(options={}){
     setAttribute(name,value){this.attributes.set(name,String(value))}
     getAttribute(name){return this.attributes.get(name)??null}
     appendChild(child){child.parent=this;this.children.push(child);return child}
+    contains(child){return child===this||this.children.some(element=>element.contains(child))}
     remove(){if(this.parent)this.parent.children=this.parent.children.filter(child=>child!==this)}
     addEventListener(name,listener){this.listeners.set(name,listener)}
-    closest(selector){for(const option of selector.split(',')){if(option.startsWith('.')?this.className.split(/\s+/).includes(option.slice(1)):option.startsWith('[')?this.attributes.has(option.slice(1,-1)):this.tagName===option.toUpperCase())return this}return this.parent?.closest(selector)??null}
+    closest(selector){for(const option of selector.split(',')){if(option.startsWith('.')?this.className.split(/\s+/).includes(option.slice(1)):option.startsWith('#')?this.getAttribute('id')===option.slice(1):option.startsWith('[')?this.attributes.has(option.slice(1,-1)):this.tagName===option.toUpperCase())return this}return this.parent?.closest(selector)??null}
   }
   const document={head:new Element('HEAD'),createElement:tag=>new Element(tag)};
   const window={innerWidth:390,innerHeight:844,addEventListener(name,listener,options){if(!events.has(name))events.set(name,[]);events.get(name).push({listener,options})},removeEventListener(name,listener){events.set(name,(events.get(name)??[]).filter(item=>item.listener!==listener))}};
-  const roots=[new Element(),new Element()],context=vm.createContext({document,window,Date:{now:()=>now},setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)});
+  const roots=[new Element(),new Element()],context=vm.createContext({document,window,COLOR_SCHEMES,Date:{now:()=>now},setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)});
   vm.runInContext(source,context);
   const controls=context.attachStudioControls(roots,(kind,level)=>changes.push([kind,level]),options.enabled??(()=>true),()=>gestures++);
   function emit(name,details={}){
@@ -42,8 +44,9 @@ test('two image modes and nine historical display profiles share the existing ed
     const image=app.rail('image',i),profiles=app.rail('primitive',i);
     assert.equal(image.children.length,2);
     assert.equal(profiles.children.length,9);
+    assert.deepEqual(profiles.children.map(button=>button.style.top),COLOR_SCHEMES.map((_,level)=>((level+.5)/COLOR_SCHEMES.length*100)+'%'));
     assert.equal(profiles.getAttribute('aria-label'),'Historisk skjermprofil');
-    assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-label')),Array.from({length:9},(_,index)=>'Profil '+(index+1)));
+    assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-label')),COLOR_SCHEMES.map(scheme=>scheme.label));
     assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-pressed')),['true',...Array(8).fill('false')]);
     assert.equal(app.roots[i].children.some(element=>element.tagName==='INPUT'),false);
   }
@@ -157,4 +160,49 @@ test('disposal clears the silent rails and event ownership',()=>{
   assert.equal(app.document.head.children.length,0);
   assert.ok(app.roots.every(root=>root.children.length===0));
   assert.equal(app.emit('pointerdown',{clientX:4}).prevented,false);
+});
+
+test('each shared profile is reachable by button and edge position in both image modes',()=>{
+  const app=harness();
+  for(const image of [0,1]){
+    app.click('image',image);
+    for(let level=0;level<COLOR_SCHEMES.length;level++){
+      const clientY=(level+.5)/COLOR_SCHEMES.length*app.window.innerHeight;
+      app.emit('pointerdown',{clientX:4,clientY});
+      app.emit('pointerup',{clientX:4,clientY});
+      assert.equal(app.controls[image?'primitive':'photo'],level);
+      app.click('primitive',(level+1)%COLOR_SCHEMES.length);
+      assert.equal(app.controls[image?'primitive':'photo'],(level+1)%COLOR_SCHEMES.length);
+      for(const index of [0,1])assert.equal(app.rail('primitive',index).children[(level+1)%COLOR_SCHEMES.length].getAttribute('aria-pressed'),'true');
+    }
+  }
+  app.controls.dispose();
+});
+
+test('edge gestures leave normal controls and surfaces outside their roots untouched',()=>{
+  const app=harness();
+  for(const tag of ['BUTTON','A','INPUT','SELECT','TEXTAREA']){
+    const control=new app.Element(tag),icon=new app.Element('SVG');
+    control.appendChild(icon);app.roots[0].appendChild(control);
+    for(const name of ['pointerdown','pointermove','pointerup','click'])assert.equal(app.emit(name,{clientX:4,target:icon}).prevented,false,tag+' '+name);
+  }
+  const outside=new app.Element();
+  assert.equal(app.emit('pointerdown',{clientX:4,target:outside}).prevented,false);
+  app.emit('pointerdown',{clientX:4});app.emit('pointerup',{clientX:4});
+  assert.equal(app.emit('click',{clientX:4,target:outside}).prevented,false);
+  const button=new app.Element('BUTTON');app.roots[0].appendChild(button);
+  assert.equal(app.emit('click',{clientX:4,target:button}).prevented,false);
+  const plane=new app.Element('BUTTON');plane.setAttribute('id','capture-plane');app.roots[0].appendChild(plane);
+  assert.equal(app.emit('pointerdown',{clientX:4,clientY:800,target:plane}).prevented,true);
+  assert.equal(app.controls.photo,8);
+  app.controls.dispose();
+});
+
+test('only pointers claimed by the edge gesture are consumed until their release',()=>{
+  const app=harness();
+  app.emit('pointerdown',{clientX:4,clientY:100});
+  for(const name of ['pointermove','pointerup','pointercancel'])assert.equal(app.emit(name,{pointerId:99,isPrimary:false,clientX:195}).prevented,false,name);
+  assert.equal(app.emit('pointermove',{clientX:4,clientY:800}).prevented,true);
+  assert.equal(app.controls.photo,8);
+  app.emit('pointerup',{clientX:4});app.controls.dispose();
 });

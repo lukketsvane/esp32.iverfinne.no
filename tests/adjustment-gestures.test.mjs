@@ -89,3 +89,17 @@ test('disabled, auxiliary and mouse input do not alter tones; disposal releases 
   const app=harness();const p=app.down();app.enabled=false;app.move(p,0,80);assert.equal(app.captures.size,0);assert.equal(app.patches.length,0);app.up(p);assert.equal(app.resets,0);
   app.enabled=true;app.down();app.controls.dispose();assert.equal(app.captures.size,0);assert.equal(app.listenerCount,0);app.controls.dispose();
 });
+
+test('normal controls never join image gestures while the capture plane remains interactive',()=>{
+  for(const selector of ['button','a','input','select','textarea','[contenteditable]','[data-photo-save]','.access-control','.studio-option']){
+    const app=harness(),events=[],target={closest:selectors=>selectors.split(',').includes(selector)?target:null};
+    for(const [type,y]of [['pointerdown',300],['pointermove',400],['pointerup',400]])for(let id=1;id<=4;id++)events.push(app.emit(type,id,150+id*20,y,{target}));
+    assert.equal(events.some(event=>event.stopped||event.prevented),false,selector);
+    assert.equal(app.claims,0,selector);assert.equal(app.dithers,0,selector);assert.equal(app.resets,0,selector);assert.equal(app.patches.length,0,selector);
+    app.controls.dispose();
+  }
+  const app=harness(),target={closest:selectors=>selectors.split(',').some(selector=>selector==='button'||selector==='#capture-plane')?target:null};
+  for(let id=1;id<=4;id++)app.emit('pointerdown',id,150+id*20,300,{target});
+  assert.equal(app.claims,1);assert.equal(app.captures.size,4);
+  app.controls.dispose();
+});

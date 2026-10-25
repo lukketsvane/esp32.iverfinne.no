@@ -23,6 +23,7 @@ primitive = (shared / "pointcloud/primitive.mjs").read_text(encoding="utf-8").re
 gestures = (shared / "vendor/viewer-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
 scene = "const createDepthScene = (() => {\n" + math + "\n" + primitive + "\n" + gestures + "\n" + scene + "\nreturn createDepthScene;\n})();"
 studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("export ", "")
+studio = re.sub(r"^import .*?;\s*", "", studio, flags=re.MULTILINE)
 studio += "\n" + (shared / "vendor/photo-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing = (shared / "vendor/print-client.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing = "const createPrintClient = (() => {\n" + printing + "\nreturn createPrintClient;\n})();"
