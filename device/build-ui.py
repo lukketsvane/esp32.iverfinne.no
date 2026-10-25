@@ -7,7 +7,7 @@ root = Path(__file__).resolve().parent
 sketch = root / "EntropiCamera"
 shared = root.parent
 source = (sketch / "camera_ui.html").read_text(encoding="utf-8")
-source = source.replace("</style>", "</style><style>\n" + (sketch / "camera-ui-v2.css").read_text(encoding="utf-8") + "\n</style>", 1)
+source = source.replace("</style>", "</style><style>\n" + (sketch / "camera-ui-v2.css").read_text(encoding="utf-8") + "\n" + (sketch / "camera-ui-restore.css").read_text(encoding="utf-8") + "\n</style>", 1)
 palettes = (shared / "vendor/color-schemes.mjs").read_text(encoding="utf-8").replace("export ", "")
 retro = (shared / "vendor/retro-modes.mjs").read_text(encoding="utf-8").replace("export ", "")
 palettes += "\n" + re.sub(r"^import .*?;\s*", "", retro, flags=re.MULTILINE)

@@ -144,7 +144,7 @@ function clearShutterDelay(){
 }
 $('phone-timer').addEventListener('click',()=>{
   shutterDelay=shutterDelay===0?3:shutterDelay===3?10:0;
-  $('phone-timer').textContent=shutterDelay?'TIDTAKAR · '+shutterDelay+' S':'TIDTAKAR · AV';
+  $('phone-timer').dataset.delay=String(shutterDelay);
   $('phone-timer').setAttribute('aria-label',shutterDelay?'Utløysar med '+shutterDelay+' sekund forsinking':'Utløysar utan forsinking');
 });
 $('phone-shutter').addEventListener('click',()=>{

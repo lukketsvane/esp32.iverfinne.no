@@ -31,7 +31,7 @@ function shutterPress(){
 $('shutter').addEventListener('click',shutterPress);
 $('timer-cycle').addEventListener('click',()=>{
   selfTimer=selfTimer===0?3:selfTimer===3?10:0;
-  $('timer-cycle').textContent=selfTimer?'TIDTAKAR · '+selfTimer+' S':'TIDTAKAR · AV';
+  $('timer-cycle').dataset.delay=String(selfTimer);
   $('timer-cycle').setAttribute('aria-label',selfTimer?'Utløysar med '+selfTimer+' sekund forsinking':'Utløysar utan forsinking');
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelCountdown()});

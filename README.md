@@ -1,5 +1,9 @@
 # Entropi · ESP32 og iPhone
 
+## Ufråvikelege UI-reglar
+
+Den aktive kameraflata skal vere heilt svart utan dekorative titlar, statussetningar, kameranummer eller forklaringstekst. Bruk éin liten optisk søkjar ståande og to reine søkjarar ved stereo i liggjande format. Knappar har anten berre ikon eller berre tekst, aldri begge; ikonknappar får namn gjennom `aria-label`. Informasjon og innstillingar høyrer til eigne modale visingar, ikkje utanpå kameraet. Bevar det opphavlege diskrete kantsystemet. Kontroller begge mobilretningane etter kvar UI-endring.
+
 Foto frå ESP32-CAM eller telefonen blir viste i svart-kvitt. Høgresida har to val: foto øvst og splats nedst. Foto er standard og krev ingen djupnemodell. Splats blir rekna lokalt med Depth Anything V2 Small og ONNX Runtime WASM. WebGL viser dei synlege flatene med isotropiske Gaussian-splats; djupna er estimert frå eitt bilete i relative einingar.
 
 Kameraet treng ikkje minnekort. Lagring gir eit vanleg PNG-bilete av den synlege foto- eller splatvisinga; ingen 3D-fil blir eksportert. Ingen kamerabilete blir sende til ein modelltenar.

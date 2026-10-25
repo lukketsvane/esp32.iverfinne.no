@@ -56,3 +56,31 @@
 .phone-vault-toolbar{width:36%;align-content:center}
 }
 @media(prefers-reduced-motion:reduce){.pwa-shutter:before{transition:none}}
+
+.studio,.studio.camera{background:#000}
+.pwa-heading{top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));display:block;z-index:8}
+.pwa-heading>strong,.pwa-heading>small,#phone-state,.pwa-bottom #open-gallery small{position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
+.pwa-camera-actions{margin:0;display:flex;align-items:center;gap:2px}
+.pwa-camera-actions button{position:relative;display:grid;place-items:center;width:44px;height:44px;min-height:44px;padding:0;border:0;background:none;color:#999}
+.pwa-camera-actions button svg{display:block;width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
+.pwa-camera-actions #phone-timer[data-delay="3"]:after,.pwa-camera-actions #phone-timer[data-delay="10"]:after{content:"";position:absolute;right:7px;bottom:7px;width:5px;height:5px;border-radius:50%;background:#ddd}
+.pwa-camera-actions #phone-timer[data-delay="10"]:after{width:8px;border-radius:2px}
+.studio.camera .finder{width:clamp(104px,30vw,148px);box-shadow:0 0 0 1px #ffffff21}
+.pwa-bottom{bottom:calc(12px + env(safe-area-inset-bottom));height:54px}
+.pwa-shutter{width:54px;height:54px;border:1px solid #ffffff80;box-shadow:none}
+.pwa-shutter:before{width:41px;height:41px;background:#e9e9e9}
+.pwa-bottom #open-gallery{left:calc(14px + env(safe-area-inset-left));bottom:4px;width:44px;min-height:44px;gap:0}
+.pwa-bottom #open-gallery svg{width:20px;height:20px}
+.studio .access-control.device-link{top:calc(12px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right))}
+.studio:not(.camera) .pwa-heading,.studio:not(.camera) .pwa-bottom{display:none}
+.phone-vault{background:#000}
+.phone-vault-top small{display:none}
+@media(orientation:landscape) and (max-height:550px){
+.pwa-heading{top:calc(6px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left))}
+.pwa-camera-actions{gap:2px}
+.pwa-camera-actions button{min-height:44px;width:44px}
+.studio.camera .finder{left:42%;top:50%;width:min(17vw,112px)}
+.pwa-bottom{top:0;bottom:0;right:calc(14px + env(safe-area-inset-right));left:auto;width:22%;height:100%}
+.pwa-bottom #open-gallery{left:12px;bottom:calc(8px + env(safe-area-inset-bottom))}
+.studio .access-control.device-link{top:calc(6px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right))}
+}
