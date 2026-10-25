@@ -1,4 +1,5 @@
 import { inferenceSize, imageToPointCloud, pointStride, gaussianSplats } from '../pointcloud/math.mjs';
+import { shiftStereoRows } from '../pointcloud/stereo-align.mjs';
 import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, primitiveDimensions, qualityPointBudget } from '../pointcloud/primitive.mjs';
 import { attachViewerGestures, progressiveIndices } from './viewer-gestures.mjs';
 import { resolveColorScheme, gaussianInk } from './color-schemes.mjs';
@@ -176,8 +177,40 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
   mount();observer=globalThis.ResizeObserver?new ResizeObserver(redraw):null;observer?.observe(host);signal.addEventListener('abort',dispose,{once:true});redraw();if(signal.aborted)dispose();return api;
 }
 
-export async function createDepthScene(host, blob, onProgress = () => {}, signal = new AbortController().signal, quality = 2) {
+async function stereoScene(host,left,right,onProgress,signal,quality,verticalShift=0){
+  const urls=[],images=[];let pixels;
+  try{
+    for(const blob of [left,right]){
+      const image=new Image(),url=URL.createObjectURL(blob);urls.push(url);image.src=url;await image.decode();signal.throwIfAborted();images.push(image);
+    }
+    const first=images[0];
+    if(!first.naturalWidth||!first.naturalHeight||first.naturalWidth!==images[1].naturalWidth||first.naturalHeight!==images[1].naturalHeight)throw new Error('Kameraa må bruke same fotooppløysing.');
+    const scale=Math.min(1,320/first.naturalWidth,240/first.naturalHeight),width=Math.round(first.naturalWidth*scale),height=Math.round(first.naturalHeight*scale);
+    const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+    const context=canvas.getContext('2d',{willReadFrequently:true});if(!context)throw new Error('Telefonen kunne ikkje lese bileta.');
+    pixels=images.map(image=>{context.drawImage(image,0,0,width,height);return context.getImageData(0,0,width,height)});canvas.width=canvas.height=1;
+  }finally{urls.forEach(url=>URL.revokeObjectURL(url))}
+  onProgress({phase:'matching'});signal.throwIfAborted();
+  const prediction=await new Promise((resolve,reject)=>{
+    const worker=new Worker('/pointcloud/stereo-worker.mjs',{type:'module'});let finished=false;
+    const finish=(error,result)=>{if(finished)return;finished=true;clearTimeout(timer);signal.removeEventListener('abort',abort);worker.terminate();if(error)reject(error);else resolve(result)};
+    const abort=()=>finish(signal.reason||new DOMException('Avbrote.','AbortError'));
+    const timer=setTimeout(()=>finish(new Error('Stereoberekninga tok for lang tid.')),30000);
+    signal.addEventListener('abort',abort,{once:true});
+    worker.onmessage=({data})=>{if(data.type==='result')finish(null,{depth:new Float32Array(data.depth),valid:new Uint8Array(data.valid),width:data.width,height:data.height});else if(data.type==='error')finish(new Error(data.message))};
+    worker.onerror=()=>finish(new Error('Telefonen kunne ikkje kombinere kameraa.'));
+    const left=new Uint8ClampedArray(pixels[0].data),right=shiftStereoRows(new Uint8ClampedArray(pixels[1].data),pixels[1].width,pixels[1].height,Math.round(verticalShift*pixels[1].height/240));
+    try{worker.postMessage({left:left.buffer,right:right.buffer,width:pixels[0].width,height:pixels[0].height},[left.buffer,right.buffer])}catch(error){finish(error)}
+    if(signal.aborted)abort();
+  });
+  signal.throwIfAborted();onProgress({phase:'rendering'});
+  const detail=pixels[0],cloud=imageToPointCloud({rgba:detail.data,width:detail.width,height:detail.height,depth:prediction.depth,depthWidth:prediction.width,depthHeight:prediction.height,valid:prediction.valid,stride:pointStride(detail.width,detail.height,qualityPointBudget(quality))});
+  return renderScene(host,cloud,gaussianSplats(cloud),signal,detail.data);
+}
+
+export async function createDepthScene(host, blob, onProgress = () => {}, signal = new AbortController().signal, quality = 2, right = null, verticalShift = 0) {
   signal.throwIfAborted();
+  if(right)return stereoScene(host,blob,right,onProgress,signal,quality,verticalShift);
   const image=new Image(),url=URL.createObjectURL(blob);let inference,detail;
   onProgress({phase:'reading'});
   try {

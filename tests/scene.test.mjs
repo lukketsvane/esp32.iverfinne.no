@@ -49,6 +49,14 @@ test('invalid depth data cannot become an invented 3D scene', () => {
   assert.throws(()=>imageToPointCloud({...image(),depth:new Float32Array(2)}),/djupnekart/);
 });
 
+test('stereo confidence removes unmatched pixels without filling or interpolating holes',()=>{
+  const input=image(),depth=new Float32Array(16).fill(NaN),valid=new Uint8Array(16);depth[0]=4;depth[15]=12;valid[0]=valid[15]=1;
+  const cloud=imageToPointCloud({...input,depth,valid});
+  assert.equal(cloud.count,2);assert.deepEqual([...cloud.pixelOffsets],[0,60]);assert.ok([...cloud.positions].every(Number.isFinite));
+  assert.throws(()=>imageToPointCloud({...input,depth,valid:new Uint8Array(16).fill(1)}),/ugyldige punkt/);
+  assert.throws(()=>imageToPointCloud({...input,depth,valid:new Uint8Array(2)}),/stereomaske/);
+});
+
 test('Gaussian renderer records carry finite XYZ, depth-scaled isotropic covariance, RGB, opacity and identity rotation', () => {
   const cloud = imageToPointCloud(image()), bytes = gaussianSplats(cloud), view = new DataView(bytes.buffer);
   assert.equal(bytes.length,cloud.count*32);

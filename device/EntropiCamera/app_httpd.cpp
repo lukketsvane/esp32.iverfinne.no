@@ -20,11 +20,13 @@
 #include "esp_http_server.h"
 #include "esp_timer.h"
 #include "freertos/semphr.h"
+#include "lwip/sockets.h"
 #include "camera_ui.h"
 #include "camera_assets.h"
 #include "board_config.h"
 #include "jpeg_frame.h"
 #include "px10_printer.h"
+#include "rig_network.h"
 
 static httpd_handle_t cameraHttpd = nullptr;
 static httpd_handle_t streamHttpd = nullptr;
@@ -178,6 +180,12 @@ static bool initializeCamera() {
     sensor->set_vflip(sensor, 1);
     sensor->set_saturation(sensor, -2);
   }
+#if defined(ENTROPI_SECONDARY_CAMERA) && ENTROPI_SECONDARY_CAMERA
+  if (sensor->set_hmirror(sensor, 1) != 0 || sensor->set_vflip(sensor, 1) != 0) {
+    cameraMessage("Could not orient the second camera");
+    return false;
+  }
+#endif
   if (sensor->set_framesize(sensor, previewSize) != 0 || sensor->set_brightness(sensor, brightness) != 0) {
     cameraMessage("Could not restore camera settings");
     return false;
@@ -222,11 +230,15 @@ static bool queryValue(httpd_req_t *request, const char *key, char *value, size_
 }
 
 static esp_err_t statusHandler(httpd_req_t *request) {
+  httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "http://192.168.4.1");
+  char cameraId[13];
+  snprintf(cameraId, sizeof(cameraId), "%012llx", static_cast<unsigned long long>(ESP.getEfuseMac()));
   char error[sizeof(lastError)];
   portENTER_CRITICAL(&stateMux);
   snprintf(error, sizeof(error), "%s", serverError[0] ? serverError : lastError);
   portEXIT_CRITICAL(&stateMux);
   String json = "{\"camera_ready\":" + String(cameraReady ? "true" : "false");
+  json += ",\"camera_id\":" + quoted(cameraId);
   json += ",\"stream_ready\":" + String(streamHttpd && cameraReady && !recovering ? "true" : "false");
   json += ",\"last_error\":" + quoted(error);
   json += ",\"recovering\":" + String(recovering ? "true" : "false");
@@ -236,6 +248,8 @@ static esp_err_t statusHandler(httpd_req_t *request) {
   json += ",\"photo_framesize\":" + String(static_cast<int>(photoSize));
   json += ",\"brightness\":" + String(brightness);
   json += ",\"led_intensity\":" + String(ledDuty);
+  json += ",\"peer\":";
+  json += rigIsPrimary() && rigPeerOrigin().length() ? "{\"camera_id\":" + quoted(rigPeerId()) + "}" : "null";
   json += "}";
   return sendJson(request, json);
 }
@@ -320,6 +334,7 @@ static bool capturePhoto(PhotoFrame &photo) {
 }
 
 static esp_err_t captureHandler(httpd_req_t *request) {
+  httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "http://192.168.4.1");
   if (printerBusy()) return unavailable(request, "Printer is busy");
   PhotoFrame photo;
   if (!capturePhoto(photo)) return unavailable(request, "Could not capture photo");
@@ -328,6 +343,163 @@ static esp_err_t captureHandler(httpd_req_t *request) {
   httpd_resp_set_hdr(request, "Content-Disposition", "inline; filename=capture.jpg");
   esp_err_t result = httpd_resp_send(request, reinterpret_cast<const char *>(photo.data), photo.length);
   free(photo.data);
+  return result;
+}
+
+static esp_err_t previewHandler(httpd_req_t *request) {
+  if (printerBusy() || !cameraReady || !lockCamera()) return unavailable(request, "Camera is unavailable");
+  PhotoFrame photo;
+  int64_t cutoff = esp_timer_get_time(), deadline = cutoff + 1500000;
+  for (unsigned attempt = 0; attempt < 4 && !photo.data; attempt++) {
+    camera_fb_t *frame = waitForFrame(deadline);
+    if (!frame) break;
+    int64_t timestamp = int64_t(frame->timestamp.tv_sec) * 1000000 + frame->timestamp.tv_usec;
+    if (timestamp >= cutoff && frameMatches(frame, previewSize)) copyFrame(frame, photo);
+    esp_camera_fb_return(frame);
+  }
+  unlockCamera();
+  if (!photo.data) return unavailable(request, "No fresh preview frame");
+  httpd_resp_set_type(request, "image/jpeg");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+  esp_err_t result = httpd_resp_send(request, reinterpret_cast<const char *>(photo.data), photo.length);
+  free(photo.data);
+  return result;
+}
+
+static bool peerGet(const String &origin, const String &path, size_t limit, uint8_t **body, size_t *size) {
+  if (!origin.startsWith("http://")) return false;
+  String host = origin.substring(7);
+  NetworkClient client;
+  if (!client.connect(host.c_str(), 80, 1000)) return false;
+  client.setTimeout(5000);
+  client.print("GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
+  String first = client.readStringUntil('\n');
+  if (!first.startsWith("HTTP/1.0 200 ") && !first.startsWith("HTTP/1.1 200 ")) return false;
+  int length = -1;
+  for (unsigned i = 0; i < 48; i++) {
+    String header = client.readStringUntil('\n');
+    header.trim();
+    if (!header.length()) break;
+    header.toLowerCase();
+    if (header.startsWith("content-length:")) length = header.substring(15).toInt();
+  }
+  if (length < 0 || static_cast<size_t>(length) > limit) return false;
+  *body = nullptr;
+  *size = 0;
+  if (!length) return true;
+  uint8_t *buffer = static_cast<uint8_t *>(heap_caps_malloc(size_t(length) + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!buffer) buffer = static_cast<uint8_t *>(malloc(size_t(length) + 1));
+  if (!buffer) return false;
+  if (client.readBytes(buffer, length) != static_cast<size_t>(length)) {
+    free(buffer);
+    return false;
+  }
+  buffer[length] = 0;
+  *body = buffer;
+  *size = length;
+  return true;
+}
+
+#if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
+void serialStereoPair() {
+  String origin = rigIsPrimary() ? rigPeerOrigin() : "http://192.168.4.1";
+  if (!origin.length()) {
+    Serial.println("PAIR_ERROR PEER_OFFLINE");
+    return;
+  }
+  uint8_t *data = nullptr;
+  size_t length = 0;
+  if (!peerGet(origin, "/status", 2048, &data, &length) || !length) {
+    free(data);
+    Serial.println("PAIR_ERROR PEER_OFFLINE");
+    return;
+  }
+  String status(reinterpret_cast<const char *>(data));
+  free(data);
+  data = nullptr;
+  if (status.indexOf("\"camera_id\":" + quoted(rigPeerId())) < 0 || status.indexOf("\"camera_ready\":true") < 0) {
+    Serial.println("PAIR_ERROR PEER_ID_OR_SENSOR");
+    return;
+  }
+  if (status.indexOf("\"photo_framesize\":" + String(static_cast<int>(photoSize)) + ",") < 0) {
+    if (!peerGet(origin, "/control?var=photo_framesize&val=" + String(static_cast<int>(photoSize)), 2048, &data, &length)) {
+      free(data);
+      Serial.println("PAIR_ERROR RESOLUTION");
+      return;
+    }
+    free(data);
+    data = nullptr;
+  }
+  if (!peerGet(origin, "/capture", 1024 * 1024, &data, &length) || length < 4) {
+    free(data);
+    Serial.println("PAIR_ERROR PEER_CAPTURE");
+    return;
+  }
+  PhotoFrame local;
+  if (!capturePhoto(local)) {
+    free(data);
+    Serial.println("PAIR_ERROR LOCAL_CAPTURE");
+    return;
+  }
+  unsigned w1 = 0, h1 = 0, w2 = 0, h2 = 0;
+  bool valid = jpegDimensions(data, length, w1, h1) &&
+               jpegDimensions(local.data, local.length, w2, h2) && w1 == w2 && h1 == h2;
+  if (!valid) {
+    Serial.println("PAIR_ERROR SIZE_OR_JPEG");
+  } else {
+    const uint8_t *first = rigIsPrimary() ? local.data : data;
+    const uint8_t *second = rigIsPrimary() ? data : local.data;
+    size_t firstSize = rigIsPrimary() ? local.length : length;
+    size_t secondSize = rigIsPrimary() ? length : local.length;
+    Serial.printf("PAIR_BEGIN %u %u\n", static_cast<unsigned>(firstSize), static_cast<unsigned>(secondSize));
+    for (size_t n = 0; n < firstSize; n += 512) {
+      size_t chunk = firstSize - n < 512 ? firstSize - n : 512;
+      Serial.write(first + n, chunk);
+      delay(1);
+    }
+    for (size_t n = 0; n < secondSize; n += 512) {
+      size_t chunk = secondSize - n < 512 ? secondSize - n : 512;
+      Serial.write(second + n, chunk);
+      delay(1);
+    }
+    Serial.print("PAIR_END\n");
+  }
+  free(local.data);
+  free(data);
+}
+#endif
+
+static esp_err_t peerHandler(httpd_req_t *request) {
+  String origin = rigIsPrimary() ? rigPeerOrigin() : "";
+  if (!origin.length()) return unavailable(request, "Paired camera is unavailable");
+  uint8_t *data = nullptr;
+  size_t length = 0;
+  if (!peerGet(origin, "/status", 2048, &data, &length) || !length)
+    return unavailable(request, "Paired camera did not respond");
+  String status(reinterpret_cast<const char *>(data));
+  free(data);
+  if (status.indexOf("\"camera_id\":" + quoted(rigPeerId())) < 0 || origin != rigPeerOrigin())
+    return unavailable(request, "Paired camera identity did not match");
+  if (!strncmp(request->uri, "/peer/status", 12)) return sendJson(request, status);
+  if (status.indexOf("\"camera_ready\":true") < 0 || status.indexOf("\"stream_ready\":true") < 0 || printerBusy())
+    return unavailable(request, "Paired camera is not ready");
+  bool capture = !strncmp(request->uri, "/peer/capture", 13);
+  if (capture && status.indexOf("\"photo_framesize\":" + String(static_cast<int>(photoSize)) + ",") < 0) {
+    if (!peerGet(origin, "/control?var=photo_framesize&val=" + String(static_cast<int>(photoSize)), 2048, &data, &length))
+      return unavailable(request, "Paired camera resolution could not be matched");
+    free(data);
+  }
+  if (!peerGet(origin, capture ? "/capture" : "/preview", 1024 * 1024, &data, &length) || length < 4)
+    return unavailable(request, "Paired camera image was unavailable");
+  unsigned width = 0, height = 0;
+  bool valid = jpegDimensions(data, length, width, height) && origin == rigPeerOrigin();
+  esp_err_t result;
+  if (valid) {
+    httpd_resp_set_type(request, "image/jpeg");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    result = httpd_resp_send(request, reinterpret_cast<const char *>(data), length);
+  } else result = unavailable(request, "Paired camera did not provide a complete image");
+  free(data);
   return result;
 }
 
@@ -390,6 +562,18 @@ static esp_err_t indexHandler(httpd_req_t *request) {
   httpd_resp_set_hdr(request, "Content-Encoding", "gzip");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   return httpd_resp_send(request, reinterpret_cast<const char *>(camera_ui_html_gz), sizeof(camera_ui_html_gz));
+}
+
+static esp_err_t portalHandler(httpd_req_t *request) {
+  sockaddr_in local = {};
+  socklen_t length = sizeof(local);
+  if (!rigIsPrimary() || getsockname(httpd_req_to_sockfd(request), reinterpret_cast<sockaddr *>(&local), &length) != 0 ||
+      local.sin_family != AF_INET || local.sin_addr.s_addr != static_cast<uint32_t>(WiFi.softAPIP()))
+    return httpd_resp_send_err(request, HTTPD_404_NOT_FOUND, "Not found");
+  httpd_resp_set_status(request, "302 Found");
+  httpd_resp_set_hdr(request, "Location", "http://192.168.4.1/");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+  return httpd_resp_send(request, "", 0);
 }
 
 static bool registerHandler(httpd_handle_t server, const char *uri, esp_err_t (*handler)(httpd_req_t *), httpd_method_t method = HTTP_GET) {
@@ -462,7 +646,7 @@ void startCameraServer() {
 #endif
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_open_sockets = 4;
-  config.max_uri_handlers = 8;
+  config.max_uri_handlers = 12;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
   config.send_wait_timeout = 3;
@@ -473,9 +657,14 @@ void startCameraServer() {
     registerHandler(cameraHttpd, "/status", statusHandler);
     registerHandler(cameraHttpd, "/control", controlHandler);
     registerHandler(cameraHttpd, "/capture", captureHandler);
+    registerHandler(cameraHttpd, "/preview", previewHandler);
+    registerHandler(cameraHttpd, "/peer/status", peerHandler);
+    registerHandler(cameraHttpd, "/peer/preview", peerHandler);
+    registerHandler(cameraHttpd, "/peer/capture", peerHandler);
     registerHandler(cameraHttpd, "/pointcloud/*", assetHandler);
     registerHandler(cameraHttpd, "/print", printerUploadHandler, HTTP_POST);
     registerHandler(cameraHttpd, "/print-status", printerStatusHandler);
+    registerHandler(cameraHttpd, "/*", portalHandler);
   } else {
     setServerError("Could not start HTTP server");
   }

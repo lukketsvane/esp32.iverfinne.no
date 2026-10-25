@@ -6,6 +6,13 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "any",
+  "description": "Kamera, djupne og lokalt fotoarkiv. Fungerer på heimskjermen også utan internett.",
+  "categories": ["photography", "utilities"],
+  "shortcuts": [
+    {"name": "Fotoarkiv", "short_name": "Arkiv", "url": "/?gallery=1", "icons": [{"src": "/icons/icon-192.png", "sizes": "192x192"}]},
+    {"name": "Kople til stereo", "short_name": "Stereo", "url": "/start/?camera", "icons": [{"src": "/icons/icon-192.png", "sizes": "192x192"}]}
+  ],
   "background_color": "#000000",
   "theme_color": "#000000",
   "icons": [

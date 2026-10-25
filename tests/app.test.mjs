@@ -55,6 +55,8 @@ function harness(options={}){
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
     COLOR_SCHEMES,
+    createArchive:()=>({save:async()=>({}),list:async()=>[],get:async()=>null,remove:async()=>{}}),
+    location:{search:''},URLSearchParams,
     Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
     readColorScheme:()=> 'macintosh',saveColorScheme(){},attachColorSchemeControls:()=>({refresh(){},dispose(){}}),
@@ -391,4 +393,20 @@ test('a failed new capture retries the camera rather than reprocessing the retai
 test('a scene save requests native rendered pixels and a pending save becomes stale after a new photo',async()=>{
   const flags=[],native={width:20,height:30,data:new Uint8ClampedArray(20*30*4)},app=harness({image:1,scene:async()=>({dispose(){},snapshot:flag=>{flags.push(flag);return native}})});await photoFromDevice(app);await app.get('save').emit('click');assert.deepEqual(flags,[true]);assert.equal(app.encodedSnapshots[0],native);assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].isCurrent(),true);
   await app.get('reset').emit('click');assert.equal(app.saves[0].isCurrent(),false);await photoFromDevice(app,new Blob(['replacement'],{type:'image/jpeg'}));assert.equal(app.saves[0].isCurrent(),false);
+});
+
+test('an unchanged live viewport tone does not delay opening the camera',async()=>{
+  const app=harness();
+  assert.equal(app.gestureLive({grain:1,contrast:1}),true);
+  await app.get('capture-plane').emit('click');
+  assert.equal(app.mediaRequests,1);
+});
+test('an intentional live tone adjustment still defers accidental capture',async()=>{
+  const app=harness();
+  assert.equal(app.gestureLive({grain:2}),true);
+  await app.get('capture-plane').emit('click');
+  assert.equal(app.mediaRequests,0);
+  await app.tick(401);
+  await app.get('capture-plane').emit('click');
+  assert.equal(app.mediaRequests,1);
 });

@@ -7,6 +7,7 @@ root = Path(__file__).resolve().parent
 sketch = root / "EntropiCamera"
 shared = root.parent
 source = (sketch / "camera_ui.html").read_text(encoding="utf-8")
+source = source.replace("</style>", "</style><style>\n" + (sketch / "camera-ui-v2.css").read_text(encoding="utf-8") + "\n</style>", 1)
 palettes = (shared / "vendor/color-schemes.mjs").read_text(encoding="utf-8").replace("export ", "")
 retro = (shared / "vendor/retro-modes.mjs").read_text(encoding="utf-8").replace("export ", "")
 palettes += "\n" + re.sub(r"^import .*?;\s*", "", retro, flags=re.MULTILINE)
@@ -17,7 +18,8 @@ scene = re.sub(r"^import .*?;\s*", "", scene, flags=re.MULTILINE)
 math = (shared / "pointcloud/math.mjs").read_text(encoding="utf-8").replace("export ", "")
 primitive = (shared / "pointcloud/primitive.mjs").read_text(encoding="utf-8").replace("export ", "")
 gestures = (shared / "vendor/viewer-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
-scene = "const createDepthScene = (() => {\n" + math + "\n" + primitive + "\n" + gestures + "\n" + scene + "\nreturn createDepthScene;\n})();"
+alignment = (shared / "pointcloud/stereo-align.mjs").read_text(encoding="utf-8").replace("export ", "")
+scene = "const createDepthScene = (() => {\n" + math + "\n" + alignment + "\n" + primitive + "\n" + gestures + "\n" + scene + "\nreturn createDepthScene;\n})();"
 studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("export ", "")
 studio += "\n" + (shared / "vendor/photo-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing = (shared / "vendor/print-client.mjs").read_text(encoding="utf-8").replace("export ", "")
@@ -29,11 +31,14 @@ printing += "\n" + (shared / "vendor/photo.mjs").read_text(encoding="utf-8").rep
 photo_view = (shared / "vendor/photo-view.mjs").read_text(encoding="utf-8").replace("export ", "")
 photo_view = re.sub(r"^import .*?;\s*", "", photo_view, flags=re.MULTILINE)
 printing += "\n" + photo_view
+printing += "\n" + (shared / "vendor/archive.mjs").read_text(encoding="utf-8").replace("export ", "")
+printing += "\n" + (shared / "pointcloud/stereo-align.mjs").read_text(encoding="utf-8").replace("export ", "")
 assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
 bridge = "const { requestPhoneModels, phoneModelsReady } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady };\n})();"
 source = source.replace("__ENTROPI_VIEWFINDER__", palettes + "\n" + renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_PRINT_CLIENT__", printing).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
+source = source.replace("__ENTROPI_APP_ENHANCEMENTS__", (sketch / "camera-ui-v2.js").read_text(encoding="utf-8"))
 source = source.replace("__ENTROPI_ICON__", "data:image/svg+xml," + quote((shared / "favicon.svg").read_text(encoding="utf-8"), safe=""))
 
 def array(name, payload):

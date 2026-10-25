@@ -24,15 +24,15 @@ Utskrifta er 384 punkt brei med svart mønster på kvitt papir. Begge transporta
 
 ## ESP32-CAM
 
-1. Skann den trykte QR-koden. [Tilkoplinga](https://esp32.iverfinne.no/start/) viser Wi-Fi-koden med ei kort instruksjon og ein stor «Opne kameraet»-knapp. 3D-status og eventuelle modellfeil ligg i ein eigen, valfri del. Modellane blir lasta og kontrollerte i bakgrunnen; foto ventar ikkje på dei. Tidlegare lagra modellar blir brukte om igjen.
-2. Hald inne Wi-Fi-koden på sida og vel å kople til **ENTROPI**, eller vel ENTROPI under Innstillingar → Wi-Fi. Nettet er ope og fungerer utan internett.
-3. Trykk **Opne kameraet**. Foto er tilgjengeleg straks kameraet svarar. Vel splats for lokal modelloverføring til kamerasida. På iPhone kan Safari vise tilkoplingshandlingar ved [langt trykk på eit QR-bilete](https://developer.apple.com/videos/play/tech-talks/206/); den konkrete systemdialogen må kontrollerast på telefonen.
+1. Slå på riggen og skann [Wi-Fi-koden](prepare/entropi-wifi.png). Denne eine koden gjeld begge kamera: `WIFI:T:nopass;S:ENTROPI;;`.
+2. Godta tilkoplinga til **ENTROPI**. Primærkameraet tilbyr DNS og ei lokal velkomstside slik at telefonen kan opne kameraet ved tilkopling. Nettet fungerer utan internett.
+3. Kamera 2 blir funne og kontrollert automatisk. Foto er tilgjengeleg med kamera 1 medan det andre koplar til. Ingen kameradresse skal skrivast inn.
 
-Tilkoplinga krev inga PWA-installering. Den nye trykkfila peikar til `/start/`, som går utanom gamle klargjeringssider i mellomlageret. `/prepare/` fungerer vidare for eksisterande kodar og lokale overføringar. Direkte **http://192.168.4.1/** fungerer for foto utan klargjering.
+Tilkoplinga krev inga PWA-installering eller modellnedlasting for stereopar. Automatisk opning og lagring i iPhone sitt Wi-Fi-vindauge må kontrollerast på den faktiske telefonen. Eldre trykkfiler som peikar til `/start/`, og den valfrie modelloverføringa for eitt kamera, fungerer vidare. Direkte **http://192.168.4.1/** er framleis tilgjengeleg som reserveinngang.
 
-Dersom Safari viser «HTTPS-Only», skriv heile **http://192.168.4.1/** direkte i adresselinja. [WebKit har dokumentert at lenkjer kan bli blokkerte sjølv når ei uttrykkeleg HTTP-adresse fungerer](https://bugs.webkit.org/show_bug.cgi?id=284559); dette er ikkje ein garanti for alle iPhone-versjonar. Om HTTP framleis blir blokkert, prøv å slå av **Advarsel om usikker forbindelse** under **Innstillinger → Apper → Safari → Personvern og sikkerhet**. Dette er [ei vanleg Safari-innstilling](https://support.apple.com/no-no/guide/iphone/iphfba2ed790/ios), og nettsida kan ikkje endre henne. Ingen eksperimentelle funksjonsflagg er nødvendige for appen; det er ikkje verifisert noko eige iPhone-flagg som løyser denne feilen.
+Ein Wi-Fi-QR koplar telefonen til nettet; sjølve systemvindauget blir styrt av telefonen. Dersom Autopålogging tidlegare er slått av for ENTROPI, kan automatisk opning utebli. DNS og portalomdirigering gjeld berre tilgang via riggen sitt eige aksesspunkt.
 
-Tilkoplingssida held på modellane ved tilkoplingsfeil og prøver igjen i same kamerafane. Modellfeil og kamerafeil blir haldne frå kvarandre; fullført eller mislukka modellnedlasting fjernar ikkje ei kamerafeil. Manglande svar gir «Kameraet svara ikkje», utan å gjette at Wi-Fi er årsaka. Ei protokollhelsing åleine kan ikkje stoppe kamerafristen. Avbroten klargjering held fram ved historikkretur. Lasting utan framdrift i 30 sekund gir nytt forsøk. Trygge oppdateringar ventar medan kamera, overføring eller lasting er i bruk. «Tilbake til kameraet» beheld fotoet som er ope. Kameraet brukar vanleg lokal HTTP utan DNS- eller portalomdirigering. Manglande modellar utløyser klargjering berre når du vel splats; foto fungerer vidare. Dersom nettlesardata blir sletta, klargjer telefonen på nytt for splats.
+Den eldre klargjeringssida held på modellane ved tilkoplingsfeil og prøver igjen i same kamerafane. Modellfeil og kamerafeil blir haldne frå kvarandre. Avbroten klargjering held fram ved historikkretur. Lasting utan framdrift i 30 sekund gir nytt forsøk. Trygge oppdateringar ventar medan kamera, overføring eller lasting er i bruk. «Tilbake til kameraet» beheld fotoet som er ope. Modellar er berre nødvendige for monokulær 3D; foto og stereopar fungerer utan dei.
 
 - Søkjar og foto har separate oppløysingar. Foto kan bruke 1600 × 1200 med PSRAM; utan PSRAM blir begge avgrensa til 320 × 240.
 - Opptak pausar kameratilgangen, hentar ei fersk ramme og gjenopprettar søkjaren. JPEG-formatet blir kontrollert frå sjølve JPEG-headeren ved byte av oppløysing. Sensor- og nettverksinnstillingar blir bevarte på kameraet.
@@ -40,6 +40,22 @@ Tilkoplingssida held på modellane ved tilkoplingsfeil og prøver igjen i same k
 - Wi-Fi og statussida startar uavhengig av sensoren. Kameraet får inntil tre gjenopprettingsforsøk med pause mellom forsøka.
 
 Modell og WASM ligg i telefonen. Kameraet leverer berre JPEG og den vesle visingskoden frå flash. Avbrot under opptak kan ikkje opne eit forelda resultat; ferdige eller pågåande splats blir bevarte for siste foto. Modelloverføring krev rett vindauge, eksakt opphav og økt-ID; begge filene må ha rett storleik og SHA-256 og kunne lesast tilbake før klargjeringa blir stadfesta. Foto blir ikkje overførte til klargjeringstenesta.
+
+## To ESP32-kamera
+
+Kamera 1 fungerer åleine når ingen gyldig partnar er tilgjengeleg. Begge kamera får kvar sin rolle, dei to chip-ID-ane og ein felles privat paringsnøkkel ved bygging. Signerte UDP-utfordringar finn den rette partnaren og den gjeldande adressa. Ei oppføring går ut etter 12 sekund utan svar. Nettlesaren kontrollerer identiteten og eit ferskt JPEG-bilete før paropptak blir aktivert; seinare statuskontrollar prøver igjen etter avbrot. Ferdige bilete og brukarval blir bevarte.
+
+Det same opptaket og dei same kontrollane blir brukte med eitt eller to kamera. Med kamera 2 tilkopla tek utløysaren begge bileta og lagar éi samla 3D-vising. Den eksisterande lagre-/utskriftsknappen brukar den synlege visinga. Ingen separate kamerafeedar, venstre-/høgre-nedlastingar eller nye synlege statusmeldingar blir viste. Originalane blir haldne saman i minnet for ny vising; eit ufullstendig par erstattar ikkje førre resultat.
+
+Den første stereoberekninga køyrer lokalt i ein web worker, på opptil 320 × 240. Ho finn samsvarande biletpunkt med census-matching, tekstur-/unikheitskrav og kontroll i begge retningar. Punkt utan påliteleg samsvar blir utelatne; bilete med for få samsvar blir avviste. Berekninga brukar ingen monokulær modell som erstatning for manglande stereo. Eitt kamera brukar den eksisterande fotoflyten og valfrie Depth Anything-visinga.
+
+Stereo er førebels eit relativt djupneestimat for stilleståande motiv og horisontalt justerte kamera med lik oppløysing og orientering. Kalibrering, korreksjon av linseforvrenging, måling av avstand og synkroniserte eksponeringar er ikkje implementerte. Fysisk rigg må kontrollerast før resultatet kan vurderast med ekte kamera.
+
+Primærkameraet tilbyr ENTROPI på `http://192.168.4.1`. Bygg kamera 2 med `-DENTROPI_SECONDARY_CAMERA=1`; det koplar seg til ENTROPI og får adresse automatisk. Begge bygg må få `ENTROPI_PRIMARY_ID`, `ENTROPI_SECONDARY_ID` og `ENTROPI_RIG_KEY` frå ein privat, ignorert header via `compiler.cpp.extra_flags=-include<absolutt-sti>`. ID-ane er 12 små heksadesimale teikn slik `/status.camera_id` rapporterer; nøkkelen er 16–128 teikn. Feil eller manglande oppsett gir vanleg eitt-kamera-modus. USB-kommandoen `rig-check` viser parings-/DNS-status utan å vise nøkkelen.
+
+Primærkameraet leverer også `/peer/status`, `/peer/preview` og `/peer/capture` frå den kontrollerte partnaren. Telefonen og ein lokal PC-mellomtenar treng berre å nå primærkameraet. Partnaren si fotooppløysing blir samordna før opptak. Dei to HTTP-opptaka er sekvensielle, ikkje eksponeringssynkroniserte.
+
+For PC-utvikling kan primærkameraet i tillegg få `ENTROPI_WIFI_SSID` og `ENTROPI_WIFI_PASSWORD` frå den private headeren. Det held ENTROPI ope samtidig som det koplar til lokalnettet. Kamera 2 kan bli verande på ENTROPI, slik at riggen fungerer utan heimerutaren. Dersom også kamera 2 blir bygd med LAN-oppsett, går det over til ENTROPI etter 15 sekund utan LAN-tilkopling. USB blir brukt til straum, flashing og diagnostikk; bileta går over Wi-Fi. Private parings- og nettverksbygg skal ikkje publiserast.
 
 ## Bygg og kontroll
 

@@ -30,12 +30,13 @@ function bilinear(data, width, height, x, y) {
     + data[y1 * width + x0] * (1 - a) * b + data[y1 * width + x1] * a * b;
 }
 
-export function imageToPointCloud({ rgba, width, height, depth, depthWidth, depthHeight, stride = 2, focalEstimate }) {
+export function imageToPointCloud({ rgba, width, height, depth, depthWidth, depthHeight, valid, stride = 2, focalEstimate }) {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 || rgba.length !== width * height * 4) throw new Error('Ugyldig kamerabilete.');
   if (!Number.isInteger(depthWidth) || !Number.isInteger(depthHeight) || depthWidth < 2 || depthHeight < 2 || depth.length !== depthWidth * depthHeight) throw new Error('Ugyldig djupnekart.');
   if (!Number.isInteger(stride) || stride < 1) throw new Error('Ugyldig punktavstand.');
-  const sorted = Array.from(depth).filter(Number.isFinite).sort((a, b) => a - b);
-  if (sorted.length < depth.length * .95) throw new Error('Djupneberekninga gav ugyldige punkt.');
+  if(valid&&(valid.length!==depth.length||width!==depthWidth||height!==depthHeight))throw new Error('Ugyldig stereomaske.');
+  const sorted = Array.from(depth).filter((value,index)=>Number.isFinite(value)&&(!valid||valid[index])).sort((a, b) => a - b);
+  if (valid?sorted.length<1||sorted.length!==valid.reduce((sum,value)=>sum+(value?1:0),0):sorted.length < depth.length * .95) throw new Error('Djupneberekninga gav ugyldige punkt.');
 
   const low = sorted[Math.floor((sorted.length - 1) * .02)], high = sorted[Math.floor((sorted.length - 1) * .98)];
   const span = high - low;
@@ -46,8 +47,8 @@ export function imageToPointCloud({ rgba, width, height, depth, depthWidth, dept
   let used = 0, min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   for (let y = 0; y < height; y += stride) for (let x = 0; x < width; x += stride) {
     const pixel = (y * width + x) * 4;
-    if (rgba[pixel + 3] < 128) continue;
-    const value = bilinear(depth, depthWidth, depthHeight, (x + .5) * depthWidth / width - .5, (y + .5) * depthHeight / height - .5);
+    if (rgba[pixel + 3] < 128||valid&&!valid[y*width+x]) continue;
+    const value = valid?depth[y*width+x]:bilinear(depth, depthWidth, depthHeight, (x + .5) * depthWidth / width - .5, (y + .5) * depthHeight / height - .5);
     if (!Number.isFinite(value)) continue;
     const inverse = span > 1e-6 ? Math.max(0, Math.min(1, (value - low) / span)) : .5;
     pixelOffsets[used] = pixel;

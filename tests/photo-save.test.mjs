@@ -38,7 +38,7 @@ test('native share cancellation never falls through to another save action',asyn
 });
 
 test('HTTP saving uses an inline data image with native image actions and cleans up on close',async()=>{
-  const app=harness({secure:false,canShare:true});await app.save(png(),'view.png');const dialog=app.dialog,image=dialog.children[0],button=dialog.children[1];assert.equal(app.shares.length,0);assert.equal(app.downloads.length,0);assert.equal(app.urls.size,0);assert.match(image.src,/^data:image\/png;base64,/);assert.match(image.style.cssText,/-webkit-touch-callout:default/);assert.match(image.style.cssText,/filter:none/);
+  const app=harness({secure:false,canShare:true});await app.save(png(),'view.png');const dialog=app.dialog,image=dialog.children[0],button=dialog.children[1];assert.equal(app.shares.length,0);assert.equal(app.downloads.length,0);assert.equal(app.urls.size,0);assert.match(image.src,/^data:image\/png;base64,/);assert.match(image.style.cssText,/-webkit-touch-callout:default/);assert.match(image.style.cssText,/filter:none/);assert.match(dialog.children[2].textContent,/Hald inne/);
   const menu=new Event('contextmenu',{cancelable:true});image.dispatchEvent(menu);assert.equal(menu.defaultPrevented,false);assert.equal(dialog.open,true);button.click();assert.equal(image.src,'');assert.equal(app.dialog,null);assert.equal(app.focused,1);
 });
 

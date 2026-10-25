@@ -9,7 +9,7 @@ export async function savePhoto(blob,name='entropi.jpg',isCurrent=()=>true){
     if(!isCurrent()||document.querySelector('dialog[data-photo-save]'))return;
     const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Fotoet kunne ikkje opnast.'));reader.readAsDataURL(blob)});
     if(!isCurrent()||document.querySelector('dialog[data-photo-save]'))return;
-    const dialog=document.createElement('dialog'),image=document.createElement('img'),back=document.createElement('button'),focus=document.activeElement;
+    const dialog=document.createElement('dialog'),image=document.createElement('img'),back=document.createElement('button'),hint=document.createElement('p'),focus=document.activeElement;
     dialog.setAttribute('data-photo-save','');dialog.setAttribute('aria-label','Lagre foto');
     dialog.style.cssText='position:fixed;inset:0;margin:0;padding:0;border:0;width:100%;height:100%;max-width:none;max-height:none;background:#000;color:#aaa;overflow:hidden;touch-action:auto';
     image.src=data;image.alt='Fotoet ditt';image.style.cssText='display:block;width:100%;height:100%;object-fit:contain;filter:none;touch-action:auto;-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto';
@@ -18,7 +18,9 @@ export async function savePhoto(blob,name='entropi.jpg',isCurrent=()=>true){
     back.innerHTML='<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="m14 5-7 7 7 7"/></svg>';
     back.addEventListener('click',()=>dialog.close());dialog.addEventListener('close',()=>{image.removeAttribute('src');dialog.remove();focus?.focus({preventScroll:true})},{once:true});
     dialog.addEventListener('keydown',event=>{if(event.key==='Escape')event.stopPropagation()});
-    dialog.append(image,back);document.body.append(dialog);dialog.showModal();return;
+    hint.textContent='Hald inne på biletet, og vel «Lagre bilete» eller «Lagre i Foto».';
+    hint.style.cssText='position:absolute;left:12px;right:12px;bottom:calc(20px + env(safe-area-inset-bottom));color:#ddd;font:12px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;text-shadow:0 1px 4px #000;margin:0;pointer-events:none';
+    dialog.append(image,back,hint);document.body.append(dialog);dialog.showModal();return;
   }
   const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
 }

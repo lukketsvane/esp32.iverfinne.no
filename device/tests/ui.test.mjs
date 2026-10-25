@@ -6,8 +6,8 @@ import { COLOR_SCHEMES } from '../../vendor/color-schemes.mjs';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'');
-const verifiedStatus = { camera_ready: true, stream_ready: true, recovering: false, recovery_attempts: 0, last_error: '', framesize: 10, photo_framesize: 15, brightness: 0, psram: true };
+const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','function updateCameraChrome(){} async function archiveCapture(){}');
+const verifiedStatus = { camera_id: 'aaaaaaaaaaaa', camera_ready: true, stream_ready: true, recovering: false, recovery_attempts: 0, last_error: '', framesize: 10, photo_framesize: 15, brightness: 0, psram: true };
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
 function deferred() {
@@ -51,6 +51,7 @@ function harness(options = {}) {
   }
   const elements = new Map();
   const stored = new Map(options.onboarded === false ? [] : [['entropi-onboarded', '2']]);
+  if(options.secondAddress)stored.set('entropi-second-camera',options.secondAddress);
   const clockDate = class extends Date {
     constructor(...args) { super(...(args.length ? args : [now])); }
     static now() { return now; }
@@ -114,6 +115,7 @@ function harness(options = {}) {
     const element = new Element(match[2], match[1].toUpperCase());
     element.disabled = /\bdisabled\b/.test(match[0]);
     element.hidden = /\bhidden\b/.test(match[0]);
+    if(element.tagName==='CANVAS'){element.width=320;element.height=240;element.draws=0;element.getContext=()=>({drawImage(){element.draws++}})}
     elements.set(element.id, element);
   }
   const document = {
@@ -144,15 +146,15 @@ function harness(options = {}) {
   class CameraImage extends Element {
     constructor() { super('', 'IMG'); this.naturalWidth = 0; this.naturalHeight = 0; images.push(this); }
     set src(value) {
-      this.source = value;
-      if (value.startsWith('http') && options.frames !== false) { this.naturalWidth = 320; this.naturalHeight = 240; }
+      this.source = value; this.blob = objectUrls.get(value);
+      if (value.startsWith('http') && options.frames !== false && (!options.frameUrl||options.frameUrl(value))) { this.naturalWidth = 320; this.naturalHeight = 240; }
     }
     get src() { return this.source ?? ''; }
     async decode() {
       if (options.decodeFailure) throw new Error('Invalid JPEG');
       if (options.decode) await options.decode(this);
-      this.naturalWidth = 1600;
-      this.naturalHeight = 1200;
+      this.naturalWidth = options.imageSize?.(this)?.[0]??1600;
+      this.naturalHeight = options.imageSize?.(this)?.[1]??1200;
     }
   }
   class BrowserURL extends URL {
@@ -163,11 +165,13 @@ function harness(options = {}) {
     const normalized = new Map(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
     return { ok, status: ok ? 200 : 500, headers: { get: name => normalized.get(name.toLowerCase()) ?? null }, json: async () => body, blob: async () => body };
   };
-  const status = structuredClone(options.status === undefined ? verifiedStatus : options.status);
+  const status = structuredClone(options.status === undefined ? {...verifiedStatus,peer:options.second?{camera_id:'bbbbbbbbbbbb'}:null} : options.status);
   const fetch = async (url, init) => {
     requests.push({ url: String(url), init });
-    const custom = options.fetch?.(String(url), requests.length, response);
+    const custom = options.fetch?.(String(url), requests.length, response, init);
     if (custom !== undefined) return await custom;
+    if(String(url)==='/peer/status')return response(structuredClone(options.secondStatus??{...verifiedStatus,camera_id:'bbbbbbbbbbbb'}));
+    if(String(url).startsWith('/peer/'))return response(new Blob([String(url).includes('/preview')?'preview-jpeg':'right-jpeg'],{type:'image/jpeg'}));
     if (String(url).startsWith('/status')) return response(structuredClone(status));
     if (String(url).startsWith('/capture')) return response(new Blob(['jpeg'], { type: 'image/jpeg' }));
     return response(null);
@@ -202,9 +206,9 @@ function harness(options = {}) {
     photoSnapshot:(image,pose,native=false)=>({width:native?1600:384,height:native?1200:288,data:new Uint8ClampedArray((native?1600*1200:384*288)*4),photo:true,image,pose:{...pose},native}),
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},
     savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
-    createDepthScene: async (host, blob, onProgress, signal, quality) => {
-      sceneCalls.push({ host, blob, onProgress, signal, quality });
-      if (options.scene) {const viewer={setPrimitiveLevel(){},setPalette(id){this.palette=id},refresh(){return true},resetView(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,onProgress,signal,quality)};viewers.push(viewer);return viewer}
+    createDepthScene: async (host, blob, onProgress, signal, quality, right) => {
+      sceneCalls.push({ host, blob, onProgress, signal, quality, right });
+      if (options.scene) {const viewer={setPrimitiveLevel(){},setPalette(id){this.palette=id},refresh(){return true},resetView(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,onProgress,signal,quality,right)};viewers.push(viewer);return viewer}
       const error=new Error('Modellen manglar på telefonen.');error.code='PHONE_SETUP_REQUIRED';throw error;
     },
     setTimeout: (callback, delay) => timeout(callback, delay),
@@ -238,7 +242,7 @@ function harness(options = {}) {
   function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
   function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
-  return { elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id), choosePalette:id=>{if(!colorBinding)throw Error('Palettes not mounted');colorBinding.onChoose(colorBinding.getKind(),id)}, paletteKind:()=>colorBinding?.getKind(), selectedPalette:()=>colorBinding?.getSelection(colorBinding.getKind()) };
+  return { status, elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id), choosePalette:id=>{if(!colorBinding)throw Error('Palettes not mounted');colorBinding.onChoose(colorBinding.getKind(),id)}, paletteKind:()=>colorBinding?.getKind(), selectedPalette:()=>colorBinding?.getSelection(colorBinding.getKind()) };
 }
 
 async function connectedCamera(options = {}) {
@@ -249,6 +253,196 @@ async function connectedCamera(options = {}) {
   if(options.splats)app.changeStudio('image',1);
   return app;
 }
+
+test('a missing peer leaves mono unchanged and ignores obsolete saved addresses',async()=>{
+  const app=await connectedCamera({secondAddress:'http://192.168.4.2'});
+  assert.doesNotMatch(html,/second-address|connect-second|disconnect-second|second-feedback|entropi-second-camera|stereo-dialog|capture-pair|save-left|save-right/);
+  await app.tick(10000);assert.equal(app.requests.some(request=>request.url.startsWith('/peer/')),false);
+  await app.get('capture-plane').emit('click');
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.studioControls.image,0);assert.equal(app.sceneCalls.length,0);
+  assert.ok(app.requests.every(request=>request.url.startsWith('/')));
+});
+
+test('automatic pairing waits for a decoded fresh preview without blocking the mono shutter',async()=>{
+  const preview=deferred(),decoded=deferred();let previewImage;
+  const app=await connectedCamera({second:true,fetch:url=>url.startsWith('/peer/preview')?preview.promise:undefined,decode:image=>{previewImage=image;return decoded.promise}});
+  assert.equal(app.studioControls.image,0);assert.equal(app.get('capture-plane').disabled,false);
+  const blob=new Blob(['preview'],{type:'image/jpeg'});preview.resolve(app.response(blob));await flush();
+  assert.equal(app.studioControls.image,0);decoded.resolve();await flush();
+  assert.equal(app.studioControls.image,1);assert.equal(app.finders.length,1);assert.equal(app.get('onboarding').open,false);
+  assert.equal(previewImage.blob,blob);assert.ok(app.revoked.includes(previewImage.src));
+  assert.equal(app.images.filter(image=>image.src.startsWith('http')).length,1);
+  assert.equal(app.stored.get('entropi-second-camera'),undefined);
+});
+
+for(const [label,peer] of Object.entries({missing:null,duplicate:{camera_id:verifiedStatus.camera_id},malformed:{camera_id:'camera2'},numeric:{camera_id:123456789012},empty:{}}))test(`an advertised ${label} peer never starts pairing`,async()=>{
+  const app=await connectedCamera({status:{...verifiedStatus,peer}});await app.tick(10000);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/')),false);
+  await app.get('capture-plane').emit('click');assert.equal(app.get('photo-dialog').open,true);assert.equal(app.studioControls.image,0);
+});
+
+for(const [label,status] of Object.entries({duplicate:{...verifiedStatus},legacy:{...verifiedStatus,camera_id:undefined},unexpected:{...verifiedStatus,camera_id:'cccccccccccc'},unready:{...verifiedStatus,camera_id:'bbbbbbbbbbbb',stream_ready:false}}))test(`secondary ${label} status preserves mono capture`,async()=>{
+  const app=await connectedCamera({second:true,secondStatus:status});
+  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/preview')),false);
+  await app.get('capture-plane').emit('click');assert.equal(app.get('photo-dialog').open,true);assert.equal(app.studioControls.image,0);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/capture')),false);
+});
+
+for(const [label,blob] of Object.entries({empty:new Blob([],{type:'image/jpeg'}),html:new Blob(['offline'],{type:'text/html'})}))test(`an ${label} secondary preview cannot enable pairing`,async()=>{
+  const app=await connectedCamera({second:true,fetch:(url,count,response)=>url.startsWith('/peer/preview')?response(blob):undefined});
+  await app.get('capture-plane').emit('click');assert.equal(app.get('photo-dialog').open,true);assert.equal(app.studioControls.image,0);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/capture')),false);
+});
+
+test('a corrupt secondary JPEG preserves the primary live camera',async()=>{
+  const app=await connectedCamera({second:true,decode:async image=>{if(await image.blob.text()==='preview-jpeg')throw Error('Bad JPEG')}});
+  assert.equal(app.studioControls.image,0);assert.equal(app.get('capture-plane').disabled,false);
+  await app.get('capture-plane').emit('click');assert.equal(app.get('photo-dialog').open,true);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/capture')),false);
+});
+
+test('a timed out secondary request leaves mono usable and retries on the next heartbeat',async()=>{
+  let checks=0;
+  const app=await connectedCamera({second:true,fetch:(url,count,response,init)=>url==='/peer/status'&&++checks===1?new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')))):undefined});
+  await app.tick(5100);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.studioControls.image,0);
+  await app.tick(5000);assert.equal(checks,2);assert.equal(app.studioControls.image,1);
+});
+
+test('a newly advertised peer joins automatically on a later primary heartbeat',async()=>{
+  const app=await connectedCamera();app.status.peer={camera_id:'bbbbbbbbbbbb'};
+  await app.tick(10000);assert.equal(app.studioControls.image,1);
+  assert.equal(app.requests.filter(request=>request.url==='/peer/status').length,1);
+  assert.equal(app.get('capture-plane').disabled,false);
+});
+
+test('capturing mono cancels pending pairing and rejects its late response',async()=>{
+  const pending=deferred(),app=await connectedCamera({second:true,fetch:url=>url==='/peer/status'?pending.promise:undefined});
+  await app.get('capture-plane').emit('click');pending.resolve(app.response({...verifiedStatus,camera_id:'bbbbbbbbbbbb'}));await app.tick(0);
+  assert.equal(app.requests.find(request=>request.url==='/peer/status').init.signal.aborted,true);
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.studioControls.image,0);assert.equal(app.sceneCalls.length,0);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/preview')),false);
+});
+
+for(const reason of ['hidden','primary disconnected'])test(`a pending secondary preview cannot pair after ${reason}`,async()=>{
+  const pending=deferred(),app=await connectedCamera({second:true,fetch:url=>url.startsWith('/peer/preview')?pending.promise:undefined});
+  if(reason==='hidden'){app.document.hidden=true;await app.emit('visibilitychange')}else await app.images[0].emit('error');
+  pending.resolve(app.response(new Blob(['preview'],{type:'image/jpeg'})));await app.tick(0);
+  assert.equal(app.requests.find(request=>request.url.startsWith('/peer/preview')).init.signal.aborted,true);
+  assert.equal(app.studioControls.image,0);assert.equal(app.get('capture-plane').disabled,true);
+});
+
+test('a changed advertised identity invalidates an older pairing response',async()=>{
+  const pending=deferred(),app=await connectedCamera({second:true,fetch:url=>url==='/peer/status'?pending.promise:undefined});
+  app.status.peer={camera_id:'cccccccccccc'};await app.tick(10000);
+  pending.resolve(app.response({...verifiedStatus,camera_id:'bbbbbbbbbbbb'}));await app.tick(0);
+  assert.equal(app.studioControls.image,0);assert.equal(app.get('capture-plane').disabled,false);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/preview')),false);
+});
+
+test('pairing preserves a mode chosen while secondary verification is pending',async()=>{
+  const pending=deferred(),app=await connectedCamera({second:true,scene:async()=>({dispose(){}}),fetch:url=>url==='/peer/status'?pending.promise:undefined});
+  app.changeStudio('image',1);app.changeStudio('image',0);
+  pending.resolve(app.response({...verifiedStatus,camera_id:'bbbbbbbbbbbb'}));await app.tick(0);
+  assert.equal(app.studioControls.image,0);await app.get('capture-plane').emit('click');
+  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,2);assert.equal(app.sceneCalls.length,0);
+});
+
+test('a mode selected before primary connection is not treated as an automatic stereo choice',async()=>{
+  const app=harness({second:true,frames:false});app.changeStudio('image',1);
+  app.images[0].naturalWidth=320;app.images[0].naturalHeight=240;await app.tick(150);
+  assert.equal(app.studioControls.image,1);app.status.peer=null;await app.tick(10000);
+  assert.equal(app.studioControls.image,1);assert.equal(app.get('capture-plane').disabled,false);
+});
+
+test('the existing shutter captures both originals and produces one scene with the same save control',async()=>{
+  const left=deferred(),right=deferred(),app=await connectedCamera({second:true,modelsReady:false,scene:async()=>({dispose(){}}),fetch:url=>url.startsWith('/capture')?left.promise:url.startsWith('/peer/capture')?right.promise:undefined});
+  const capture=app.get('capture-plane').emit('click');await flush();
+  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,2);
+  await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,2);
+  const leftBlob=new Blob(['left-original'],{type:'image/jpeg'}),rightBlob=new Blob(['right-original'],{type:'image/jpeg'});
+  left.resolve(app.response(leftBlob));right.resolve(app.response(rightBlob));await capture;await app.tick(0);
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.get('scene').hidden,false);assert.equal(app.get('photo').hidden,true);
+  assert.equal(app.sceneCalls.length,1);assert.equal(app.sceneCalls[0].blob,leftBlob);assert.equal(app.sceneCalls[0].right,rightBlob);
+  assert.equal(app.modelChecks.length,0);assert.equal(app.preparations.length,0);assert.equal(app.get('onboarding').open,false);
+  assert.equal(app.get('save-photo').hidden,false);await app.get('save-photo').emit('click');
+  assert.equal(app.saves.length,1);assert.equal(app.saves[0].blob.type,'image/png');assert.match(app.saves[0].name,/\.png$/);
+  assert.equal(app.encodedSnapshots[0],app.nativeSnapshot);
+});
+
+test('a failed second capture cannot replace the previous single-camera photograph',async()=>{
+  const app=await connectedCamera({modelsReady:false,fetch:(url,count,response)=>url.startsWith('/peer/capture')?response(null,false):undefined});
+  await app.get('capture-plane').emit('click');const original=app.get('photo').src;
+  await app.get('close-photo').emit('click');app.status.peer={camera_id:'bbbbbbbbbbbb'};await app.tick(10000);
+  await app.get('capture-plane').emit('click');await app.tick(150);
+  assert.equal(app.get('photo-dialog').open,false);assert.equal(app.get('photo').src,original);assert.equal(app.sceneCalls.length,0);assert.equal(app.get('retry-capture').hidden,false);
+  app.changeStudio('image',0);await app.get('last-photo').emit('click');await app.get('save-photo').emit('click');
+  assert.equal(app.saves.length,1);assert.equal(app.get('photo').src,original);
+});
+
+test('suspending a pending stereo capture rejects late images and releases temporary URLs',async()=>{
+  const pending=deferred(),app=await connectedCamera({second:true,fetch:url=>url.startsWith('/peer/capture')?pending.promise:undefined});
+  const before=app.revoked.length,capture=app.get('capture-plane').emit('click');await flush();app.document.hidden=true;await app.emit('visibilitychange');
+  assert.equal(app.requests.find(request=>request.url.startsWith('/peer/capture')).init.signal.aborted,true);
+  pending.resolve(app.response(new Blob(['right'],{type:'image/jpeg'})));await capture;
+  assert.equal(app.get('photo-dialog').open,false);assert.equal(app.sceneCalls.length,0);assert.equal(app.revoked.length-before,2);
+});
+
+test('completed stereo review survives backgrounding and returning revalidates the peer',async()=>{
+  const app=await connectedCamera({second:true,modelsReady:false,scene:async()=>({dispose(){}})});await app.get('capture-plane').emit('click');await app.tick(0);
+  const original=app.get('photo').src,requests=app.requests.length;
+  app.document.hidden=true;await app.emit('visibilitychange');app.document.hidden=false;await app.emit('visibilitychange');await app.tick(10150);
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.get('scene').hidden,false);assert.equal(app.get('photo').src,original);
+  assert.equal(app.requests.length,requests);assert.equal(app.sceneCalls.length,1);await app.get('save-photo').emit('click');assert.equal(app.saves.length,1);
+  await app.get('close-photo').emit('click');await app.tick(300);assert.equal(app.get('capture-plane').disabled,false);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/peer/preview')).length,2);
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.sceneCalls.length,2);assert.ok(app.sceneCalls[1].right);assert.equal(app.modelChecks.length,0);
+});
+
+test('a vanished peer restores mono and recovery does not keep switching the selected mode',async()=>{
+  const app=await connectedCamera({second:true});assert.equal(app.studioControls.image,1);
+  app.status.peer=null;await app.tick(10000);assert.equal(app.studioControls.image,0);assert.equal(app.get('capture-plane').disabled,false);
+  await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,1);
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.modelChecks.length,0);await app.get('close-photo').emit('click');
+  app.status.peer={camera_id:'bbbbbbbbbbbb'};await app.tick(10000);
+  assert.equal(app.studioControls.image,0);await app.get('capture-plane').emit('click');
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/peer/capture')).length,1);assert.equal(app.sceneCalls.length,0);
+});
+
+test('secondary health failure preserves a mode explicitly chosen by the user',async()=>{
+  let ready=true;
+  const app=await connectedCamera({second:true,fetch:(url,count,response)=>url==='/peer/status'?response({...verifiedStatus,camera_id:'bbbbbbbbbbbb',stream_ready:ready}):undefined});
+  app.changeStudio('image',0);app.changeStudio('image',1);ready=false;await app.tick(10000);
+  assert.equal(app.studioControls.image,1);assert.equal(app.get('capture-plane').disabled,false);
+  ready=true;await app.tick(10000);assert.equal(app.studioControls.image,1);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/peer/preview')).length,2);
+});
+
+test('an older primary heartbeat cannot restart streams during stereo capture',async()=>{
+  const heartbeat=deferred(),photo=deferred();let statusCalls=0;
+  const app=await connectedCamera({second:true,scene:async()=>({dispose(){}}),fetch:url=>url==='/status'&&++statusCalls>1?heartbeat.promise:url.startsWith('/capture')?photo.promise:undefined});
+  await app.tick(10000);const capture=app.get('capture-plane').emit('click');await flush();
+  heartbeat.reject(new Error('Disconnected'));await app.tick(2000);assert.equal(statusCalls,2);assert.equal(app.images[0].src,'');
+  photo.resolve(app.response(new Blob(['left'],{type:'image/jpeg'})));await capture;await app.tick(0);assert.equal(app.get('save-photo').hidden,false);
+});
+
+test('different photo dimensions cannot enter stereo reconstruction',async()=>{
+  const right=new Blob(['right'],{type:'image/jpeg'});
+  const app=await connectedCamera({second:true,fetch:(url,count,response)=>url.startsWith('/peer/capture')?response(right):undefined,imageSize:image=>image.blob===right?[800,600]:[1600,1200]});
+  await app.get('capture-plane').emit('click');assert.equal(app.sceneCalls.length,0);assert.equal(app.get('photo-dialog').open,false);assert.equal(app.get('retry-capture').hidden,false);
+});
+
+test('automatic stereo mismatch returns to photo and explicit 3D still explains the error',async()=>{
+  const app=await connectedCamera({second:true,modelsReady:false,scene:async()=>{throw new Error('For få sikre samsvar.')}});await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.sceneCalls.length,1);assert.ok(app.sceneCalls[0].right);
+  assert.equal(app.studioControls.image,0);assert.equal(app.get('save-photo').hidden,false);
+  assert.equal(app.get('retry-scene').hidden,true);
+  assert.equal(app.get('onboarding').open,false);assert.equal(app.modelChecks.length,0);assert.equal(app.preparations.length,0);
+  app.changeStudio('image',1);await app.tick(0);
+  assert.equal(app.sceneCalls.length,2);assert.equal(app.get('retry-scene').hidden,false);
+  app.changeStudio('image',0);assert.equal(app.get('save-photo').hidden,false);
+  await app.get('save-photo').emit('click');assert.equal(app.saves.length,1);
+});
 
 test('capture stays unavailable until both camera status and a decoded live frame exist', async () => {
   const app = harness({ frames: false });
@@ -351,8 +545,8 @@ test('the connection helper remains usable when optional browser storage is deni
   await app.get('connection').emit('click');
   assert.equal(app.get('onboarding').open, true);
   assert.equal(app.get('onboarding-title').textContent,'Kameraet er klart');
-  assert.equal(app.get('onboarding-next').hidden,true);
-  assert.equal(app.get('onboarding-copy').hidden,true);
+  assert.equal(app.get('onboarding-next').hidden,false);
+  assert.equal(app.get('onboarding-copy').hidden,false);
   await app.get('close-onboarding').emit('click');
   assert.equal(app.get('onboarding').open, false);
   assert.equal(app.preparations.length,0);
@@ -365,7 +559,7 @@ test('the connection helper exposes the open ENTROPI network without password fi
   const app=harness({search:'?setup',frames:false});await app.tick(150);
   assert.equal(app.get('onboarding').open,true);
   assert.equal(app.get('onboarding-title').textContent,'Finn kameraet');
-  assert.equal(app.get('onboarding-copy').textContent,'Slå på kameraet og vel ENTROPI under Wi-Fi.');
+  assert.match(app.get('onboarding-copy').textContent,/Slå på begge kameraa, vel ENTROPI under Wi-Fi/);
   assert.equal(app.get('onboarding-next').textContent,'Prøv igjen');
   assert.match(html,/ENTROPI er eit ope nett utan internett/);
   assert.equal(app.get('password'),undefined);
@@ -801,7 +995,7 @@ test('the visible onboarding close button cancels preparation without a late tak
 test('phone setup identifies its actions and preserves progress and actionable errors',async()=>{
   const pending=deferred(),app=await connectedCamera({modelsReady:false,prepare:()=>pending.promise});await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
   assert.equal(app.get('onboarding-title').textContent,'Klargjer 3D');assert.match(app.get('onboarding-copy').textContent,/internett éin gong/);assert.equal(app.get('onboarding-copy').hidden,false);assert.equal(app.get('onboarding-next').textContent,'Fullfør');assert.equal(app.get('close-onboarding').getAttribute('aria-label'),'Tilbake til biletet');assert.equal(app.get('onboarding-help').open,false);
-  await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-title').textContent,'Fullfører 3D');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title" class="sr">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
+  await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-title').textContent,'Fullfører 3D');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
 });
 
 test('a suspended capture cannot reopen review or clear a newer capture while finishing late',async()=>{
@@ -1021,4 +1215,13 @@ test('historical profiles change photo and Gaussian output independently without
   assert.equal(app.stored.get('entropi-screen-depth-v2'),'ibmcga');
   app.changeStudio('image',0);
   assert.equal(app.photoViews[0].palette,'bluecrt');
+});
+
+test('an unchanged orientation or viewport tone cannot suppress an immediate paired shutter',async()=>{
+  const app=await connectedCamera({second:true,modelsReady:false});
+  app.changeStudio('image',0);
+  assert.equal(app.gestureLive({grain:1,contrast:1}),true);
+  await app.get('capture-plane').emit('click');
+  assert.equal(app.get('photo-dialog').open,true);
+  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,2);
 });
