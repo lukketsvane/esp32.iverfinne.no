@@ -39,15 +39,20 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
     for(let y=0;y<pulse.height;y++)for(let x=0;x<pulse.width;x++){
       const i=y*pulse.width+x,index=Math.min(current.height-1,Math.floor((y+.5)*current.height/pulse.height))*current.width+Math.min(current.width-1,Math.floor((x+.5)*current.width/pulse.width));
       samples[i]=current.validity&&current.validity[index]!==1?NaN:depth[index];
-      pixels.data[i*4]=pixels.data[i*4+1]=pixels.data[i*4+2]=255;
+      pixels.data[i*4+3]=255;
     }
+    context.putImageData(pixels,0,0);pulse.hidden=false;
     let started=null,last=-Infinity;
     const tick=now=>{
       pulseFrame=0;if(disposed||!current||host.hidden||document.hidden||motion?.matches){stopPulse();return}
       started??=now;const progress=(now-started)/1400;if(progress>=1){stopPulse();return}
       if(now-last>=1000/24){
-        const centre=-.18+1.36*progress,opacity=46*Math.sin(Math.PI*progress);
-        for(let i=0;i<samples.length;i++){const band=Math.max(0,1-Math.abs(samples[i]-centre)/.16);pixels.data[i*4+3]=Number.isFinite(band)?Math.round(opacity*band*band):0}
+        const centre=-.18+1.36*progress,opacity=46/255*Math.sin(Math.PI*progress);
+        for(let i=0;i<samples.length;i++){
+          if(!Number.isFinite(samples[i]))continue;
+          const reveal=Math.max(0,Math.min(1,(centre-samples[i]+.16)/.32)),cover=1-reveal*reveal*(3-2*reveal),band=Math.max(0,1-Math.abs(samples[i]-centre)/.16),glow=opacity*band*band,alpha=glow+cover*(1-glow),shade=alpha?Math.round(255*glow/alpha):0;
+          pixels.data[i*4]=pixels.data[i*4+1]=pixels.data[i*4+2]=shade;pixels.data[i*4+3]=Math.round(255*alpha);
+        }
         context.putImageData(pixels,0,0);pulse.hidden=false;last=now;
       }
       pulseFrame=requestAnimationFrame(tick);

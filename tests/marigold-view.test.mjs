@@ -244,10 +244,10 @@ test('app switching commits an interrupted edit and restores the native resoluti
   }
 });
 
-test('result pulse sweeps through depth once without changing the recipe, source values or export canvas',async()=>{
+test('result pulse begins fully black and reveals depth once without changing the recipe, source values or export canvas',async()=>{
   const app=harness(),result=await app.view.process(photo),values=[...result.depth],recipe={...app.view.recipe},changes=app.changes;
-  assert.equal(app.pulse.hidden,true);app.flush();app.advance(700);app.flush();
-  assert.equal(app.pulse.hidden,false);assert.ok(app.pulse.pixels.some((value,index)=>index%4===3&&value>0));assert.ok(app.pulse.pixels.every((value,index)=>index%4!==3||value<=46));
+  assert.equal(app.pulse.hidden,false);assert.ok(app.pulse.pixels.every((value,index)=>value===(index%4===3?255:0)));app.flush();assert.ok(app.pulse.pixels.every((value,index)=>value===(index%4===3?255:0)));app.advance(700);app.flush();
+  assert.equal(app.pulse.hidden,false);assert.equal(app.pulse.pixels[3],0);assert.equal(app.pulse.pixels[15],255);assert.ok(app.pulse.pixels.some((value,index)=>index%4===3&&value>0&&value<255));
   const snapshot=app.view.snapshot(true);assert.equal(snapshot.width,2);assert.equal(app.drawSources.at(-1).className,'mg-art');assert.deepEqual([...result.depth],values);assert.deepEqual({...app.view.recipe},recipe);assert.equal(app.changes,changes);
   app.advance(700);app.flush();assert.equal(app.pulse.hidden,true);assert.equal(app.frames.size,0);assert.equal(app.host.hidden,false);assert.equal(app.view.ready,true);app.advance(2000);app.flush();assert.equal(app.pulse.hidden,true);app.view.dispose();
 });
@@ -264,7 +264,7 @@ test('pulse respects reduced motion and stops on interaction, backgrounding, res
 test('pulse never illuminates invalid stereo samples and caps presentation work at 512 pixels and 24fps',async()=>{
   const app=harness({photoWidth:1600,photoHeight:1200});await app.view.process(photo,undefined,{right:photo});assert.equal(app.pulse.width,512);assert.equal(app.pulse.height,384);
   app.flush();const paints=app.pulse.paintCount;app.advance(20);app.flush();assert.equal(app.pulse.paintCount,paints);app.advance(680);app.flush();
-  for(let y=0;y<app.pulse.height/2;y++)for(let x=app.pulse.width/2;x<app.pulse.width;x++)assert.equal(app.pulse.pixels[(y*app.pulse.width+x)*4+3],0);
+  for(let y=0;y<app.pulse.height/2;y++)for(let x=app.pulse.width/2;x<app.pulse.width;x++){const pixel=(y*app.pulse.width+x)*4;assert.deepEqual([...app.pulse.pixels.slice(pixel,pixel+4)],[0,0,0,255])}
   assert.equal(app.renders.at(-1).outputWidth,1600);assert.equal(app.view.snapshot(true).width,1600);app.view.dispose();
 });
 
