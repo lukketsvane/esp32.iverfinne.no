@@ -35,7 +35,7 @@ struct Client {
 const char *pair="0123456789abcdef0123456789abcdef",*camera="c443180d5020";
 std::string fields="Content-Length: 4\\r\\nContent-Type: image/jpeg\\r\\nX-Entropi-Pair-Id: "+std::string(pair)+"\\r\\nX-Entropi-Camera-Id: "+camera+"\\r\\nX-Entropi-Capture-Started-Us: 20\\r\\nX-Entropi-Capture-Us: 25\\r\\nX-Entropi-Response-Ready-Us: 30\\r\\n";
 std::string response(const std::string &headers){return "HTTP/1.1 200 OK\\r\\n"+headers+"\\r\\n";}
-bool parse(const std::string &text,StereoHeaders &headers,size_t limit=STEREO_MAX_JPEG){tick=0;Client client;client.bytes=text;return stereoReadHeaders(client,headers,limit,1000,now,idle);}
+bool parse(const std::string &text,StereoHeaders &headers,size_t limit=STEREO_MAX_JPEG,unsigned expectedStatus=200){tick=0;Client client;client.bytes=text;return stereoReadHeaders(client,headers,limit,1000,now,idle,expectedStatus);}
 std::string changed(std::string text,const std::string &from,const std::string &to){size_t at=text.find(from);assert(at!=std::string::npos);text.replace(at,from.size(),to);return text;}
 int main(){
   StereoHeaders headers;assert(parse(response(fields),headers));assert(headers.captureMatches(pair,camera));
@@ -57,6 +57,14 @@ int main(){
   for(const std::string &bad:{changed(response(fields),"200 OK","503 Unavailable"),response(fields+"Long: "+std::string(512,'x')+"\\r\\n"),"HTTP/1.1 200 OK\\r\\n"+fields}){
     StereoHeaders result;assert(!parse(bad,result));
   }
+  std::string accepted=changed(response(fields),"200 OK","202 Accepted");
+  StereoHeaders defaultStatus;assert(!parse(accepted,defaultStatus));
+  StereoHeaders recoveryStatus;assert(parse(accepted,recoveryStatus,STEREO_MAX_JPEG,202));
+  StereoHeaders wrongStatus;assert(!parse(response(fields),wrongStatus,STEREO_MAX_JPEG,202));
+  for(const std::string &bad:{changed(accepted,"202 Accepted","2020 Accepted"),changed(accepted,"202 Accepted","503 Unavailable"),changed(accepted,"HTTP/1.1","HTTP/2.0")}){
+    StereoHeaders result;assert(!parse(bad,result,STEREO_MAX_JPEG,202));
+  }
+  StereoHeaders invalidExpected;assert(!parse(accepted,invalidExpected,STEREO_MAX_JPEG,0));
   std::string many=fields;for(int i=0;i<48;i++)many+="Ignored: value\\r\\n";
   StereoHeaders tooMany;assert(!parse(response(many),tooMany));
   std::string large=fields;for(int i=0;i<20;i++)large+="Ignored: "+std::string(480,'x')+"\\r\\n";

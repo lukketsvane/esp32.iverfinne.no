@@ -53,6 +53,20 @@ static uint32_t nextRecovery = 0;
 static char lastError[96] = "Camera is starting";
 static const char *serverError = "";
 static uint32_t streamStackFree = UINT32_MAX;
+static uint32_t activeStreams = 0;
+static uint32_t streamFrames = 0;
+static uint32_t lastStreamFrameMs = 0;
+struct StreamActivity {
+  StreamActivity() { portENTER_CRITICAL(&stateMux); activeStreams++; portEXIT_CRITICAL(&stateMux); }
+  ~StreamActivity() { portENTER_CRITICAL(&stateMux); activeStreams--; portEXIT_CRITICAL(&stateMux); }
+  void sent() {
+    uint32_t now = millis();
+    portENTER_CRITICAL(&stateMux);
+    streamFrames++;
+    lastStreamFrameMs = now;
+    portEXIT_CRITICAL(&stateMux);
+  }
+};
 struct PhotoFrame {
   uint8_t *data = nullptr;
   size_t length = 0;
@@ -97,6 +111,18 @@ static void cameraSucceeded() {
   captureFailures = 0;
   previewFailures = 0;
   cameraMessage("");
+}
+
+static void previewResult(bool success) {
+  if (success) {
+    previewFailures = 0;
+    recoveryAttempts = 0;
+    if (!captureFailures) cameraMessage("");
+  } else {
+    cameraMessage("Could not capture preview frame");
+    previewFailures++;
+    if (previewFailures >= 3) cameraReady = false;
+  }
 }
 
 static void setLed(bool enabled) {
@@ -259,13 +285,18 @@ static String cameraStatusJson() {
   char cameraId[13];
   snprintf(cameraId, sizeof(cameraId), "%012llx", static_cast<unsigned long long>(ESP.getEfuseMac()));
   char error[sizeof(lastError)];
+  uint32_t streams, frames, sentAt;
   portENTER_CRITICAL(&stateMux);
   snprintf(error, sizeof(error), "%s", serverError[0] ? serverError : lastError);
+  streams = activeStreams; frames = streamFrames; sentAt = lastStreamFrameMs;
   portEXIT_CRITICAL(&stateMux);
   bool ready = cameraReady && !recovering && !recoveryRequested;
   String json = "{\"camera_ready\":" + String(ready ? "true" : "false");
   json += ",\"camera_id\":" + quoted(cameraId);
   json += ",\"stream_ready\":" + String(streamHttpd && ready ? "true" : "false");
+  json += ",\"stream_active\":" + String(streams ? "true" : "false");
+  json += ",\"stream_frames\":" + String(static_cast<unsigned long>(frames));
+  json += ",\"stream_age_ms\":" + (frames ? String(static_cast<unsigned long>(millis() - sentAt)) : String("-1"));
   json += ",\"last_error\":" + quoted(error);
   json += ",\"recovering\":" + String(recovering || recoveryRequested ? "true" : "false");
   json += ",\"recovery_attempts\":" + String(recoveryAttempts);
@@ -376,6 +407,7 @@ static bool capturePhoto(PhotoFrame &photo, framesize_t targetSize = photoSize, 
     setCameraError(configured ? "Could not capture a fresh photo" : "Could not select photo resolution");
   } else {
     cameraSucceeded();
+    recoveryAttempts = 0;
   }
   unlockCamera();
   return success;
@@ -424,6 +456,7 @@ static esp_err_t previewHandler(httpd_req_t *request) {
     if (timestamp >= cutoff && frameMatches(frame, previewSize)) copyFrame(frame, photo);
     esp_camera_fb_return(frame);
   }
+  previewResult(photo.data != nullptr);
   unlockCamera();
   if (!photo.data) return unavailable(request, "No fresh preview frame");
   httpd_resp_set_type(request, "image/jpeg");
@@ -444,7 +477,7 @@ static void peerIdle() {
   vTaskDelay(1);
 }
 
-static bool beginPeerRequest(PeerRequest &request, const String &origin, const String &path, int64_t timeoutUs = 5000000) {
+static bool beginPeerRequest(PeerRequest &request, const String &origin, const String &path, int64_t timeoutUs = 5000000, const char *method = "GET") {
   if (!origin.startsWith("http://")) return false;
   String host = origin.substring(7);
   if (!request.client.connect(host.c_str(), 80, 1000)) return false;
@@ -452,15 +485,15 @@ static bool beginPeerRequest(PeerRequest &request, const String &origin, const S
   if (setsockopt(request.client.fd(), SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout))) return false;
   request.requestedUs = esp_timer_get_time();
   request.deadline = request.requestedUs + timeoutUs;
-  String text = "GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nConnection: close\r\n\r\n";
+  String text = String(method) + " " + path + " HTTP/1.0\r\nHost: " + host + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
   return request.client.print(text) == text.length();
 }
 
 static bool readPeerResponse(PeerRequest &request, size_t limit, uint8_t **body, size_t *size,
-                             StereoHeaders &headers, const char *pair = nullptr, const char *camera = nullptr) {
+                             StereoHeaders &headers, const char *pair = nullptr, const char *camera = nullptr, unsigned expectedStatus = 200) {
   *body = nullptr;
   *size = 0;
-  if (!stereoReadHeaders(request.client, headers, limit, request.deadline, esp_timer_get_time, peerIdle)) return false;
+  if (!stereoReadHeaders(request.client, headers, limit, request.deadline, esp_timer_get_time, peerIdle, expectedStatus)) return false;
   request.headersUs = esp_timer_get_time();
   if (pair && !headers.captureMatches(pair, camera)) return false;
   size_t length = static_cast<size_t>(headers.length);
@@ -478,12 +511,66 @@ static bool readPeerResponse(PeerRequest &request, size_t limit, uint8_t **body,
   return true;
 }
 
-static bool peerGet(const String &origin, const String &path, size_t limit, uint8_t **body, size_t *size) {
+static bool peerGet(const String &origin, const String &path, size_t limit, uint8_t **body, size_t *size, int64_t timeoutUs = 5000000) {
   *body = nullptr;
   *size = 0;
   PeerRequest request;
   StereoHeaders headers;
-  return beginPeerRequest(request, origin, path) && readPeerResponse(request, limit, body, size, headers);
+  return beginPeerRequest(request, origin, path, timeoutUs) && readPeerResponse(request, limit, body, size, headers);
+}
+
+static bool checkedPeerStatus(String &origin, String &id, String &status) {
+  origin = rigIsPrimary() ? rigPeerOrigin() : "http://192.168.4.1";
+  id = rigPeerId();
+  if (!origin.length() || !stereoHex(id.c_str(), 12)) return false;
+  uint8_t *data = nullptr;
+  size_t length = 0;
+  bool ok = peerGet(origin, "/status", 2048, &data, &length, 2000000) && length;
+  if (ok) status = String(reinterpret_cast<const char *>(data));
+  free(data);
+  return ok && id == rigPeerId() && (!rigIsPrimary() || origin == rigPeerOrigin()) &&
+         status.indexOf("\"camera_id\":" + quoted(id.c_str())) >= 0;
+}
+
+static bool requestPeerRecovery(String &status, bool &requested) {
+  requested = false;
+  if (!rigIsPrimary() || printerBusy()) return false;
+  String origin, id;
+  if (!checkedPeerStatus(origin, id, status)) return false;
+  if (status.indexOf("\"camera_ready\":true") >= 0) return true;
+  PeerRequest request;
+  StereoHeaders headers;
+  uint8_t *data = nullptr;
+  size_t length = 0;
+  bool ok = beginPeerRequest(request, origin, "/recover", 3000000, "POST") &&
+            readPeerResponse(request, 2048, &data, &length, headers, nullptr, nullptr, 202) && length;
+  if (ok) status = String(reinterpret_cast<const char *>(data));
+  free(data);
+  requested = ok && id == rigPeerId() && origin == rigPeerOrigin() &&
+              status.indexOf("\"camera_id\":" + quoted(id.c_str())) >= 0;
+  return requested;
+}
+
+static esp_err_t peerRecoverHandler(httpd_req_t *request) {
+  String status;
+  bool requested;
+  if (!requestPeerRecovery(status, requested)) return unavailable(request, "Paired camera is busy or unavailable");
+  if (requested) httpd_resp_set_status(request, "202 Accepted");
+  return sendJson(request, status);
+}
+
+void serialPeerCheck() {
+  String origin, id, status;
+  if (checkedPeerStatus(origin, id, status)) { Serial.print("PEER_STATUS "); Serial.println(status); }
+  else Serial.println("PEER_ERROR unavailable");
+}
+
+void serialPeerRetry() {
+  String status;
+  bool requested;
+  if (!requestPeerRecovery(status, requested)) { Serial.println("PEER_RETRY unavailable"); return; }
+  Serial.println(requested ? "PEER_RETRY queued" : "PEER_RETRY already_ready");
+  Serial.print("PEER_STATUS "); Serial.println(status);
 }
 
 struct StereoPair {
@@ -602,6 +689,26 @@ static esp_err_t stereoCaptureHandler(httpd_req_t *request) {
 }
 
 #if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
+void serialCameraPhoto() {
+  PhotoFrame photo;
+  if (printerBusy() || !capturePhoto(photo, photoSize, STEREO_MAX_JPEG)) {
+    Serial.println("PHOTO_ERROR CAPTURE");
+    return;
+  }
+  Serial.printf("PHOTO_META {\"camera_id\":\"%012llx\",\"captured_us\":%lld,\"bytes\":%u}\n",
+                static_cast<unsigned long long>(ESP.getEfuseMac()),
+                static_cast<long long>(photo.capturedUs), static_cast<unsigned>(photo.length));
+  Serial.printf("PHOTO_BEGIN %u\n", static_cast<unsigned>(photo.length));
+  for (size_t offset = 0; offset < photo.length; offset += 512) {
+    size_t count = photo.length - offset < 512 ? photo.length - offset : 512;
+    Serial.write(photo.data + offset, count);
+    pollRigNetwork();
+    delay(1);
+  }
+  Serial.print("PHOTO_END\n");
+  free(photo.data);
+}
+
 void serialStereoPair() {
   StereoPair pair;
   const char *error;
@@ -649,8 +756,10 @@ static esp_err_t peerHandler(httpd_req_t *request) {
       return unavailable(request, "Paired camera resolution could not be matched");
     free(data);
   }
-  if (!peerGet(origin, capture ? "/capture" : "/preview", 1024 * 1024, &data, &length) || length < 4)
+  if (!peerGet(origin, capture ? "/capture" : "/preview", 1024 * 1024, &data, &length) || length < 4) {
+    free(data);
     return unavailable(request, "Paired camera image was unavailable");
+  }
   unsigned width = 0, height = 0;
   bool valid = jpegDimensions(data, length, width, height) && origin == rigPeerOrigin();
   esp_err_t result;
@@ -682,6 +791,7 @@ static esp_err_t streamHandler(httpd_req_t *request) {
   httpd_resp_set_type(request, "multipart/x-mixed-replace;boundary=entropi-frame");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "*");
+  StreamActivity activity;
   unsigned staleFrames = 0;
   while (cameraReady && !recovering && !printerBusy()) {
     PhotoFrame photo;
@@ -693,14 +803,8 @@ static esp_err_t streamHandler(httpd_req_t *request) {
     bool stale = frame && !frameMatches(frame, previewSize);
     bool success = frame && !stale && copyFrame(frame, photo);
     if (frame) esp_camera_fb_return(frame);
-    if (success) {
-      previewFailures = 0;
-      if (!captureFailures) cameraMessage("");
-    } else if (!stale || ++staleFrames >= 4) {
-      cameraMessage("Could not capture preview frame");
-      previewFailures++;
-      if (previewFailures >= 3) cameraReady = false;
-    }
+    if (success) previewResult(true);
+    else if (!stale || ++staleFrames >= 4) previewResult(false);
     unlockCamera();
     if (stale && staleFrames < 4) continue;
     if (!success) break;
@@ -712,6 +816,7 @@ static esp_err_t streamHandler(httpd_req_t *request) {
     free(photo.data);
     sampleStreamStack();
     if (result != ESP_OK) return result;
+    activity.sent();
     vTaskDelay(pdMS_TO_TICKS(1));
   }
   return ESP_FAIL;
@@ -804,7 +909,7 @@ void startCameraServer() {
 #endif
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_open_sockets = 4;
-  config.max_uri_handlers = 15;
+  config.max_uri_handlers = 16;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
   config.send_wait_timeout = 3;
@@ -819,6 +924,7 @@ void startCameraServer() {
     registerHandler(cameraHttpd, "/stereo/capture", stereoCaptureHandler);
     registerHandler(cameraHttpd, "/preview", previewHandler);
     registerHandler(cameraHttpd, "/peer/status", peerHandler);
+    registerHandler(cameraHttpd, "/peer/recover", peerRecoverHandler, HTTP_POST);
     registerHandler(cameraHttpd, "/peer/preview", peerHandler);
     registerHandler(cameraHttpd, "/peer/capture", peerHandler);
     registerHandler(cameraHttpd, "/apple-touch-icon.png", assetHandler);

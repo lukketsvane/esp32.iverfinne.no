@@ -17,8 +17,11 @@ const char *ssid = "ENTROPI";
 void startCameraServer();
 void serialCameraCheck();
 void serialCameraRetry();
+void serialPeerCheck();
+void serialPeerRetry();
 #if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
 void serialStereoPair();
+void serialCameraPhoto();
 #endif
 
 void networkCheck() {
@@ -126,8 +129,11 @@ void loop() {
       else if (!strcmp(command, "rig-check")) checkRigNetwork();
       else if (!strcmp(command, "camera-check")) serialCameraCheck();
       else if (!strcmp(command, "camera-retry")) serialCameraRetry();
+      else if (!strcmp(command, "peer-check")) serialPeerCheck();
+      else if (!strcmp(command, "peer-retry")) serialPeerRetry();
 #if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
       else if (!strcmp(command, "stereo-snap")) serialStereoPair();
+      else if (!strcmp(command, "camera-photo")) serialCameraPhoto();
 #endif
       used = 0;
     } else if (byte != '\r') {

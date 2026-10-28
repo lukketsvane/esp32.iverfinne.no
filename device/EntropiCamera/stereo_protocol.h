@@ -99,10 +99,14 @@ static bool stereoReadLine(Client &client, char *line, size_t capacity, int64_t 
 
 template <typename Client>
 static bool stereoReadHeaders(Client &client, StereoHeaders &headers, size_t limit, int64_t deadline,
-                              int64_t (*now)(), void (*idle)()) {
+                              int64_t (*now)(), void (*idle)(), unsigned expectedStatus = 200) {
   char line[512];
-  if (!stereoReadLine(client, line, sizeof(line), deadline, now, idle) ||
-      (strncmp(line, "HTTP/1.0 200 ", 13) && strncmp(line, "HTTP/1.1 200 ", 13))) return false;
+  if (!stereoReadLine(client, line, sizeof(line), deadline, now, idle) || strlen(line) < 13 ||
+      (strncmp(line, "HTTP/1.0 ", 9) && strncmp(line, "HTTP/1.1 ", 9)) || line[12] != ' ' ||
+      expectedStatus < 100 || expectedStatus > 599 ||
+      line[9] != static_cast<char>('0' + expectedStatus / 100) ||
+      line[10] != static_cast<char>('0' + expectedStatus / 10 % 10) ||
+      line[11] != static_cast<char>('0' + expectedStatus % 10)) return false;
   size_t bytes = 0;
   for (unsigned i = 0; i < 48; i++) {
     if (!stereoReadLine(client, line, sizeof(line), deadline, now, idle)) return false;
