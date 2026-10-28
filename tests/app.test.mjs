@@ -13,7 +13,7 @@ function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{reso
 
 function harness(options={}){
   let now=1000,nextTimer=0,nextUrl=0,mediaRequests=0,stopped=0;
-  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),saves=[],encodedSnapshots=[],sceneCalls=[],messages=[],studioBindings=[],printCalls=[],revoked=[],photoViews=[],artViews=[],artCalls=[];
+  const elements=new Map(),events=new Map(),timers=new Map(),urls=new Map(),saves=[],encodedSnapshots=[],sceneCalls=[],messages=[],studioBindings=[],printCalls=[],revoked=[],photoViews=[],artViews=[],artCalls=[],restoreCalls=[];
   const snapshot={width:384,height:1,data:new Uint8ClampedArray(384*4)},nativeSnapshot={width:640,height:960,data:new Uint8ClampedArray(640*960*4)};let printDisposed=false;
   const studioControls={image:options.image??2,primitive:0,photo:0,dispose(){}},finders=[],savedSchemes=[];
   const photoGestureState={scale:1,x:0,y:0,width:390,height:844,grain:1,contrast:1},liveGestureState={...photoGestureState};let photoGestureBinding,liveGestureBinding;
@@ -33,6 +33,7 @@ function harness(options={}){
     append(...children){this.children.push(...children)}
     async emit(name,details={}){for(const callback of this.listeners.get(name)??[])callback({type:name,target:this,currentTarget:this,isPrimary:true,pointerId:1,clientX:100,clientY:100,preventDefault(){},...details});await flush()}
     click(){void this.emit('click')}
+    focus(){document.activeElement=this}
     async decode(){if(options.decode)await options.decode()}
   }
   for(const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g)){
@@ -67,20 +68,20 @@ function harness(options={}){
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
     PX10Printer:class{},cloudPrintJob:()=>new Uint8Array(),
     createPrintClient:()=>({print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return Promise.resolve(true)},dispose(){printDisposed=true}}),
-    createMarigoldView:(host,binding)=>{const viewer={recipe:{preset:1,position:0,width:1},async restore(blob,result,recipe,signal){if(signal.aborted)throw signal.reason;this.result=result;this.recipe=recipe;this.ready=true;host.hidden=false;return result},ready:false,result:null,resets:0,disposed:false,tones:0,snapshots:[],async process(blob,signal,settings){artCalls.push({blob,signal,settings});const result=options.art?await options.art(blob,signal,settings):{model:'Test raw model',width:2,height:2,depth:Float32Array.of(.1,.2,.6,.9),polarity:'near'};if(!signal.aborted){this.result=result;this.ready=true;host.hidden=false}return result},reset(){this.resets++;this.ready=false;this.result=null;host.hidden=true},resetTone(){this.tones++},snapshot(native){const result={width:native?640:384,height:native?960:1,data:new Uint8ClampedArray(native?640*960*4:384*4),depthArt:true};this.snapshots.push({native,result});return result},dispose(){this.disposed=true},binding};artViews.push(viewer);return viewer},
+    createMarigoldView:(host,binding)=>{const viewer={recipe:{preset:1,position:0,width:1},async restore(blob,result,recipe,signal){restoreCalls.push({blob,result,recipe,signal});if(options.restore)await options.restore(blob,result,recipe,signal);if(signal.aborted)throw signal.reason;this.result=result;this.recipe=recipe;this.ready=true;host.hidden=false;return result},ready:false,result:null,resets:0,disposed:false,tones:0,snapshots:[],async process(blob,signal,settings){artCalls.push({blob,signal,settings});const result=options.art?await options.art(blob,signal,settings):{model:'Test raw model',width:2,height:2,depth:Float32Array.of(.1,.2,.6,.9),polarity:'near'};if(!signal.aborted){this.result=result;this.ready=true;host.hidden=false}return result},reset(){this.resets++;this.ready=false;this.result=null;host.hidden=true},resetTone(){this.tones++},snapshot(native){const result={width:native?640:384,height:native?960:1,data:new Uint8ClampedArray(native?640*960*4:384*4),depthArt:true};this.snapshots.push({native,result});return result},dispose(){this.disposed=true},binding};artViews.push(viewer);return viewer},
     createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});return options.scene?{setPrimitiveLevel(){},setPalette(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,progress,signal,quality)}:{dispose(){},setPrimitiveLevel(){},setPalette(){},snapshot:native=>native?nativeSnapshot:snapshot}},
     performance:{now:()=>now},Date:class extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}},
     setTimeout:(callback,delay=0)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)
   });
   vm.runInContext(photoSource+'\n'+application,context,{filename:'app.mjs'});
   async function tick(duration){now+=duration;for(const [id,timer]of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}await flush()}
-  async function emit(name,details={}){for(const callback of events.get(name)??[])callback({type:name,...details});await flush()}
+  async function emit(name,details={}){const event={type:name,defaultPrevented:false,preventDefault(){this.defaultPrevented=true},...details};for(const callback of events.get(name)??[])callback(event);await flush();return event}
   function changeStudio(kind,level){studioControls[kind]=level;for(const binding of studioBindings)binding.onChange(kind,level)}
   studioControls.setImage=level=>changeStudio('image',level);
   function gestureStudio(){for(const binding of studioBindings)binding.onGesture?.()}
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
   function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
-  return {get:id=>elements.get(id),opener,sceneCalls,artViews,artCalls,studioControls,changeStudio,gestureStudio,gesturePhoto,gestureLive,photoGestureState,liveGestureState,finders,photoViews,savedSchemes,messages,urls,revoked,saves,encodedSnapshots,printCalls,snapshot,nativeSnapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
+  return {get:id=>elements.get(id),opener,sceneCalls,artViews,artCalls,restoreCalls,studioControls,changeStudio,gestureStudio,gesturePhoto,gestureLive,photoGestureState,liveGestureState,finders,photoViews,savedSchemes,messages,urls,revoked,saves,encodedSnapshots,printCalls,snapshot,nativeSnapshot,tick,emit,media,async visibility(hidden){document.hidden=hidden;await emit('visibilitychange')},get activeElement(){return document.activeElement},get printDisposed(){return printDisposed},get mediaRequests(){return mediaRequests},get stopped(){return stopped}};
 }
 
 async function photoFromDevice(app,blob=new Blob(['camera-jpeg'],{type:'image/jpeg'})){
@@ -508,7 +509,7 @@ function archiveFixture(){
     async save(left,right=null,preview=left){const id='capture-'+ ++nextId;records.set(id,{id,left,right,created:nextId,preview,pending:!preview});return {id}},
     async saveDocument(document,id=document.id){writes.push({document,id});if(state.failSave)throw new DOMException('Storage full','QuotaExceededError');if(state.blockedSave)await state.blockedSave.promise;const previous=records.get(id);records.set(id,{id,left:document.left,right:document.right,document,created:previous?.created??nextId++,preview:document.preview});return {id}},
     async savePreview(id,preview){const record=records.get(id);if(!record)return null;previewWrites.push({id,preview});record.preview=preview;record.pending=false;return {id}},
-    async list(){return [...records.values()].filter(record=>!record.pending).map(({id,created,preview})=>({id,created,preview}))},
+    async list(){return [...records.values()].map(({id,created,preview,pending,left})=>({id,created,preview:preview??left,pending}))},
     async get(id){return records.get(id)},
     async remove(id){if(state.failRemove)throw new Error('Delete failed');if(state.blockedRemove)await state.blockedRemove.promise;removed.push(id);records.delete(id);state.failSave=false}
   }};return state;
@@ -534,9 +535,9 @@ test('the archive publishes the native rendered splat and updates its current st
   assert.notEqual(record.preview,first);assert.equal(app.encodedSnapshots.at(-1).level,2);assert.equal(app.sceneCalls.length,1);assert.equal(record.left,original);
 });
 
-test('unfinished depth captures retain the original privately until their processed preview is ready',async()=>{
+test('unfinished depth captures remain recoverable and become finished entries after processing',async()=>{
   const pending=deferred(),store=archiveFixture(),app=harness({image:2,archive:store.archive,art:()=>pending.promise}),original=await photoFromDevice(app);
-  const record=store.records.get('capture-1');assert.equal(record.left,original);assert.equal(record.pending,true);assert.equal(record.preview,null);assert.equal((await store.archive.list()).length,0);
+  const record=store.records.get('capture-1');assert.equal(record.left,original);assert.equal(record.pending,true);assert.equal(record.preview,null);assert.equal((await store.archive.list()).length,1);
   pending.resolve({model:'Test depth',width:2,height:2,depth:Float32Array.of(.1,.2,.6,.9),polarity:'near'});await flush();
   const finished=store.records.get('capture-1');assert.equal(finished.left,original);assert.equal(finished.preview.type,'image/png');assert.equal(finished.document.left,original);assert.equal((await store.archive.list()).length,1);assert.equal(app.artCalls.length,1);
 });
@@ -592,4 +593,49 @@ test('a delayed deletion failure cannot resume autosaving a replacement capture 
   assert.equal(app.get('phone-vault-status').textContent,'');
   app.artViews[0].binding.onChange();await app.tick(400);
   assert.equal(store.writes.length,writes);assert.equal(store.records.has('capture-2'),false);assert.equal(store.records.has('capture-1'),true);
+});
+
+for(const stereo of [false,true])test(`a reloaded ${stereo?'stereo':'mono'} capture develops from its preserved originals into the same archive record`,async()=>{
+  const store=archiveFixture(),left=new Blob(['left'],{type:'image/jpeg'}),right=stereo?new Blob(['right'],{type:'image/jpeg'}):null;
+  const saved=await store.archive.save(left,right,null),app=harness({image:0,archive:store.archive});
+  await app.get('open-gallery').emit('click');const tile=app.get('phone-vault-grid').children[0];
+  assert.equal(tile.classList.contains('pending'),true);assert.match(tile.getAttribute('aria-label'),/Ikkje framkalla/);assert.equal(app.urls.get(tile.children[0].src),left);assert.equal(tile.children[1].className,'archive-pending-mark');
+  await tile.emit('click');assert.equal(app.get('phone-vault-edit').hidden,false);assert.equal(app.get('phone-vault-detail').classList.contains('pending'),true);assert.match(app.get('phone-vault-image').alt,/ikkje framkalla/);
+  await app.get('phone-vault-edit').emit('click');
+  assert.equal(app.get('phone-vault').hidden,true);assert.equal(app.get('studio').className,'studio done');assert.equal(app.artCalls.length,1);assert.equal(app.artCalls[0].blob,left);assert.equal(app.artCalls[0].settings?.right??null,right);
+  const record=store.records.get(saved.id);assert.equal(store.records.size,1);assert.equal(store.writes[0].id,saved.id);assert.equal(record.document.left,left);assert.equal(record.document.right,right);assert.equal(record.preview.type,'image/png');
+  await app.get('open-gallery').emit('click');const finished=app.get('phone-vault-grid').children[0];assert.equal(finished.classList.contains('pending'),false);assert.equal(app.urls.get(finished.children[0].src),store.records.get(saved.id).preview);
+});
+
+test('failed development remains recoverable after page disposal and never requires another capture',async()=>{
+  const store=archiveFixture(),first=harness({archive:store.archive,art:async()=>{throw new Error('Interrupted model')}}),original=await photoFromDevice(first);
+  assert.equal(first.get('studio').className,'studio error');await first.emit('pagehide',{persisted:false});
+  const reopened=harness({archive:store.archive});await reopened.get('open-gallery').emit('click');await reopened.get('phone-vault-grid').children[0].emit('click');await reopened.get('phone-vault-edit').emit('click');
+  assert.equal(reopened.get('studio').className,'studio done');assert.equal(reopened.artCalls[0].blob,original);assert.equal(reopened.mediaRequests,0);assert.equal(store.records.size,1);assert.equal(store.writes.at(-1).id,'capture-1');
+});
+
+test('a failed master restore retries the saved depth and recipe without becoming stuck or running inference',async()=>{
+  const stored=createEntropiDocument({left:new Blob(['original'],{type:'image/jpeg'}),right:new Blob(['right'],{type:'image/jpeg'}),preview:new Blob(['preview'],{type:'image/png'}),result:{width:2,height:2,depth:Float32Array.of(1,2,3,4)},recipe:{preset:4,position:.2,width:1.5}});
+  let attempts=0;const app=harness({importDocument:stored,restore:async()=>{if(++attempts===1)throw new Error('Temporary decode failure')}});
+  await app.get('phone-vault-import').emit('click');assert.equal(app.get('studio').className,'studio error');assert.equal(app.restoreCalls.length,1);
+  await app.get('retry').emit('click');assert.equal(app.get('studio').className,'studio done');assert.equal(app.restoreCalls.length,2);assert.equal(app.artCalls.length,0);
+  assert.equal(app.restoreCalls[1].result,stored.result);assert.equal(app.restoreCalls[1].recipe,stored.recipe);
+  await app.get('save').emit('click');const exported=await app.saves[0].options.document();assert.equal(exported.right,stored.right);assert.deepEqual(exported.result.depth,stored.result.depth);
+});
+
+test('the archive contains keyboard focus and Escape returns through the archive without leaving the result',async()=>{
+  const store=archiveFixture(),app=harness({archive:store.archive});await photoFromDevice(app);app.get('open-gallery').focus();
+  await app.get('open-gallery').emit('click');assert.equal(app.get('studio').inert,true);assert.equal(app.activeElement,app.get('phone-vault-close'));
+  await app.emit('keydown',{key:'Tab',shiftKey:true});assert.equal(app.activeElement,app.get('phone-vault-import'));
+  await app.emit('keydown',{key:'Tab',shiftKey:true});const tile=app.get('phone-vault-grid').children[0];assert.equal(app.activeElement,tile);
+  await app.emit('keydown',{key:'Tab'});assert.equal(app.activeElement,app.get('phone-vault-import'));
+  await tile.emit('click');await app.emit('keydown',{key:'Escape'});assert.equal(app.get('phone-vault').hidden,false);assert.equal(app.get('phone-vault-detail').hidden,true);assert.equal(app.get('studio').className,'studio done');
+  await app.emit('keydown',{key:'Escape'});assert.equal(app.get('phone-vault').hidden,true);assert.equal(app.get('studio').inert,false);assert.equal(app.activeElement,app.get('open-gallery'));assert.equal(app.get('studio').className,'studio done');assert.equal(app.mediaRequests,0);
+});
+
+test('an open archive blocks the central capture handler and ignores a late list after close',async()=>{
+  const listed=deferred(),app=harness({archive:{list:()=>listed.promise}});app.get('open-gallery').focus();await app.get('open-gallery').emit('click');
+  await app.get('capture-plane').emit('click');assert.equal(app.mediaRequests,0);assert.equal(app.finders[0].captures.length,0);
+  await app.get('phone-vault-close').emit('click');listed.resolve([{id:'late',created:0,pending:true,preview:new Blob(['old'],{type:'image/jpeg'})}]);await flush();
+  assert.equal(app.get('phone-vault-grid').children.length,0);assert.equal(app.urls.size,0);assert.equal(app.get('studio').inert,false);assert.equal(app.activeElement,app.get('open-gallery'));
 });

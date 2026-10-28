@@ -83,10 +83,10 @@ test('invalid master input rejects before changing a capture',async()=>{
   const saved=await app.archive.get(info.id);assert.equal(await saved.left.text(),'original');assert.equal(saved.document,undefined);assert.equal(app.commits.length,1);
 });
 
-test('pending captures preserve originals but stay out of the archive until their processed preview commits',async()=>{
+test('pending captures expose a recovery thumbnail while retaining undeveloped originals',async()=>{
   const app=harness(),left=photo('raw left'),right=photo('raw right'),processed=photo('processed frame');
   const pending=await app.archive.save(left,right,null);
-  assert.equal(pending.pending,true);assert.equal(pending.preview,null);assert.equal(app.drawn.length,0);assert.equal((await app.archive.list()).length,0);
+  assert.equal(pending.pending,true);assert.equal(await pending.preview.text(),'thumbnail:raw left');assert.equal(app.drawn.length,1);assert.equal((await app.archive.list()).length,1);assert.equal((await app.archive.list())[0].pending,true);
   const original=await app.archive.get(pending.id);assert.equal(await original.left.text(),'raw left');assert.equal(await original.right.text(),'raw right');assert.equal(original.preview,null);
   app.setClock(20000);const newer=await app.archive.save(photo('newer'));
   const saved=await app.archive.savePreview(pending.id,processed),record=await app.archive.get(pending.id),list=await app.archive.list();
@@ -108,9 +108,9 @@ test('updating the visible preview preserves an editable master and both origina
   assert.equal(await record.left.text(),'left');assert.equal(await record.right.text(),'right');
 });
 
-test('saving a master makes a pending capture visible with its developed image',async()=>{
+test('saving a master completes the same pending capture with its developed image',async()=>{
   const app=harness(),pending=await app.archive.save(photo('raw'),null,null),document=master();
-  assert.equal((await app.archive.list()).length,0);await app.archive.saveDocument(document,pending.id);
+  assert.equal((await app.archive.list()).length,1);await app.archive.saveDocument(document,pending.id);
   const list=await app.archive.list();assert.equal(list.length,1);assert.equal(list[0].id,pending.id);assert.equal(list[0].created,pending.created);assert.equal(list[0].pending,false);assert.equal(await list[0].preview.text(),'thumbnail:rendered master');
 });
 
@@ -150,4 +150,12 @@ test('invalid processed previews cannot alter an existing capture',async()=>{
   const app=harness(),saved=await app.archive.save(photo('original'));
   for(const blob of [null,new Blob(),new Uint8Array([1])])await assert.rejects(app.archive.savePreview(saved.id,blob),/gyldig/);
   assert.equal(await (await app.archive.get(saved.id)).preview.text(),'original');assert.equal(app.commits.length,1);
+});
+
+test('pending captures from an older archive acquire a recovery thumbnail without publishing or changing originals',async()=>{
+  const app=harness(),saved=await app.archive.save(photo('legacy left'),photo('legacy right'),null),index=app.stores.get('index');
+  index.set(saved.id,{...index.get(saved.id),preview:null});const commits=app.commits.length;
+  const listed=await app.archive.list(),record=await app.archive.get(saved.id);
+  assert.equal(listed.length,1);assert.equal(listed[0].pending,true);assert.equal(await listed[0].preview.text(),'thumbnail:legacy left');
+  assert.equal(record.preview,null);assert.equal(await record.left.text(),'legacy left');assert.equal(await record.right.text(),'legacy right');assert.equal(app.commits.length,commits);
 });

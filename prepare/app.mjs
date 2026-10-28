@@ -77,7 +77,7 @@ openCamera.addEventListener('click',event=>{
   if(transfer||closed||openCamera.disabled)return;
   if(cameraConnected&&peer&&!peer.closed){try{peer.focus();return}catch{}}
   closeCameraPort();cancelDelivery();cameraConnected=false;peerOrigin=null;
-  try{peer=window.open('http://192.168.4.1/?connect',cameraName)}catch{peer=null}
+  try{peer=window.open('http://192.168.4.1/?connect&helper='+encodeURIComponent(location.origin),cameraName)}catch{peer=null}
   if(peer)waitForCamera();else{launchFailed=true;cameraError='Tillat opning av kameraet, og prøv igjen.';show('ready')}
 });
 retry.addEventListener('click',()=>void prepare(!transfer,true));

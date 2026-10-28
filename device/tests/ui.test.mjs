@@ -4,10 +4,11 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { COLOR_SCHEMES } from '../../vendor/color-schemes.mjs';
 import { readStereoPairResponse } from '../../vendor/stereo-pair.mjs';
+import { phoneHelperOrigin } from '../../vendor/model-bridge.mjs';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','window.checkPhone=checkPhone;function updateCameraChrome(){} async function archiveCapture(){return {id:null,warning:null}} async function persistCurrentMaster(){} async function persistCurrentPreview(){} function schedulePreviewSave(){}');
+const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','window.checkPhone=checkPhone;window.showPhoto=showPhoto;function updateCameraChrome(){} async function archiveCapture(){return {id:null,warning:null}} async function persistCurrentMaster(){} async function persistCurrentPreview(){} function schedulePreviewSave(){}');
 const verifiedStatus = { camera_id: 'aaaaaaaaaaaa', camera_ready: true, stream_ready: true, recovering: false, recovery_attempts: 0, last_error: '', framesize: 10, photo_framesize: 15, brightness: 0, psram: true };
 const jpeg = value => new Blob([Uint8Array.of(255,216),value,Uint8Array.of(255,217)],{type:'image/jpeg'});
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
@@ -30,7 +31,7 @@ function harness(options = {}) {
   const events = new Map();
   const revoked = [];
   const objectUrls = new Map();
-  const sceneCalls = [],artCalls=[],artViews=[];
+  const sceneCalls = [],artCalls=[],artViews=[],restoreCalls=[];
   const viewers=[];
   const printCalls = [], saves=[], encodedSnapshots=[],photoViews=[];
   let printReport=()=>{},printConfiguration;
@@ -123,6 +124,7 @@ function harness(options = {}) {
   }
   const document = {
     hidden: false,
+    referrer: options.referrer??'',
     activeElement: { tagName: 'BODY' },
     getElementById: id => elements.get(id),
     querySelectorAll: () => [],
@@ -194,7 +196,7 @@ function harness(options = {}) {
       getItem(key) { if (options.storageDenied) throw new Error('Storage denied'); return stored.get(key) ?? null; },
       setItem(key, value) { if (options.storageDenied) throw new Error('Storage denied'); stored.set(key, value); },
     },
-    COLOR_SCHEMES,readStereoPairResponse,
+    COLOR_SCHEMES,readStereoPairResponse,phoneHelperOrigin,
     Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};this.captures=[];finders.push(this) }capture(source){const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;this.captures.push({source,url:source.src,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
     readColorScheme:kind=>stored.get('entropi-screen-'+kind+'-v2')??'macintosh',
@@ -204,9 +206,9 @@ function harness(options = {}) {
     },
     attachPhotoGestures:(image,binding)=>{if(binding.toneOnly){liveGestureBinding=binding;return {state:liveGestureState}}photoGestureBinding=binding;binding.onChange(photoGestureState);return photoGestureController},
     createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setPalette(id){this.palette=id},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
-    createMarigoldView:(host,binding)=>{const view={ready:false,result:null,binding,async process(blob,signal,settings){artCalls.push({blob,signal,settings});const result=options.art?await options.art(blob,signal,settings):{};if(!signal.aborted){this.ready=true;this.result=result}return result},reset(){this.ready=false;this.result=null},resetTone(){},snapshot:native=>native?nativeSnapshot:snapshot,dispose(){}};artViews.push(view);return view},
+    createMarigoldView:(host,binding)=>{const view={ready:false,result:null,binding,async process(blob,signal,settings){artCalls.push({blob,signal,settings});const result=options.art?await options.art(blob,signal,settings):{};if(!signal.aborted){this.ready=true;this.result=result}return result},async restore(blob,result,recipe,signal){restoreCalls.push({blob,result,recipe,signal});await options.restore?.(blob,result,recipe,signal);if(!signal.aborted){this.ready=true;this.result=result;this.recipe=recipe}},reset(){this.ready=false;this.result=null},resetTone(){},snapshot:native=>native?nativeSnapshot:snapshot,dispose(){}};artViews.push(view);return view},
     phoneModelsReady: async signal => { modelChecks.push(signal); return typeof options.modelsReady==='function'?options.modelsReady(signal):options.modelsReady!==false; },
-    requestPhoneModels: async (signal,onProgress,source) => { preparations.push({signal,onProgress,source}); if(options.prepare)await options.prepare(signal,onProgress,source); },
+    requestPhoneModels: async (signal,onProgress,source,origin) => { preparations.push({signal,onProgress,source,origin}); if(options.prepare)await options.prepare(signal,onProgress,source); },
     createDevicePrinter:()=>({native:true}),cloudPrintJob:image=>new Uint8Array([image.width&255]),
     createPrintClient:configuration=>{printConfiguration=configuration;printReport=configuration.report;return {print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return options.print?options.print(image,isCurrent,printReport):Promise.resolve(true)},dispose(){}}},
     photoSnapshot:(image,pose,native=false)=>({width:native?1600:384,height:native?1200:288,data:new Uint8ClampedArray((native?1600*1200:384*288)*4),photo:true,image,pose:{...pose},native}),
@@ -249,7 +251,7 @@ function harness(options = {}) {
   function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
   function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
-  return { checkModels:()=>window.checkPhone(), status, elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, artCalls, artViews, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, pairResponse, tick, emit, get: id => elements.get(id), choosePalette:id=>{if(!colorBinding)throw Error('Palettes not mounted');colorBinding.onChoose(colorBinding.getKind(),id)}, paletteKind:()=>colorBinding?.getKind(), selectedPalette:()=>colorBinding?.getSelection(colorBinding.getKind()) };
+  return { get live(){return images.findLast(image=>/^https?:.*\/stream\?/.test(image.src))??{src:''}}, checkModels:()=>window.checkPhone(), showPhoto:(blob,master=null,id=null)=>window.showPhoto(blob,new AbortController().signal,null,master,id), status, elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, artCalls, artViews, restoreCalls, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, pairResponse, tick, emit, get: id => elements.get(id), choosePalette:id=>{if(!colorBinding)throw Error('Palettes not mounted');colorBinding.onChoose(colorBinding.getKind(),id)}, paletteKind:()=>colorBinding?.getKind(), selectedPalette:()=>colorBinding?.getSelection(colorBinding.getKind()) };
 }
 
 async function connectedCamera(options = {}) {
@@ -354,7 +356,7 @@ test('capturing mono cancels pending pairing and rejects its late response',asyn
 
 for(const reason of ['hidden','primary disconnected'])test(`a pending secondary preview cannot pair after ${reason}`,async()=>{
   const pending=deferred(),app=await connectedCamera({second:true,fetch:url=>url.startsWith('/peer/preview')?pending.promise:undefined});
-  if(reason==='hidden'){app.document.hidden=true;await app.emit('visibilitychange')}else await app.images[0].emit('error');
+  if(reason==='hidden'){app.document.hidden=true;await app.emit('visibilitychange')}else await app.live.emit('error');
   pending.resolve(app.response(new Blob(['preview'],{type:'image/jpeg'})));await app.tick(0);
   assert.equal(app.requests.find(request=>request.url.startsWith('/peer/preview')).init.signal.aborted,true);
   assert.equal(app.studioControls.image,0);assert.equal(app.get('capture-plane').disabled,true);
@@ -377,8 +379,8 @@ test('pairing preserves a mode chosen while secondary verification is pending',a
 });
 
 test('a mode selected before primary connection is not treated as an automatic stereo choice',async()=>{
-  const app=harness({second:true,frames:false});app.changeStudio('image',1);
-  app.images[0].naturalWidth=320;app.images[0].naturalHeight=240;await app.tick(150);
+  const app=harness({second:true,frames:false});app.changeStudio('image',1);await app.tick(0);
+  app.live.naturalWidth=320;app.live.naturalHeight=240;await app.tick(150);
   assert.equal(app.studioControls.image,1);app.status.peer=null;await app.tick(10000);
   assert.equal(app.studioControls.image,1);assert.equal(app.get('capture-plane').disabled,false);
 });
@@ -401,7 +403,7 @@ test('the existing shutter captures both originals and produces one scene with t
 test('a failed second capture cannot replace the previous single-camera photograph',async()=>{
   const app=await connectedCamera({modelsReady:false,fetch:(url,count,response)=>url.startsWith('/stereo/capture')?response(null,false):undefined});
   await app.get('capture-plane').emit('click');const original=app.get('photo').src;
-  await app.get('close-photo').emit('click');app.status.peer={camera_id:'bbbbbbbbbbbb'};await app.tick(10000);
+  await app.get('close-photo').emit('click');await app.tick(150);app.status.peer={camera_id:'bbbbbbbbbbbb'};await app.tick(10000);
   await app.get('capture-plane').emit('click');await app.tick(150);
   assert.equal(app.get('photo-dialog').open,false);assert.equal(app.get('photo').src,original);assert.equal(app.sceneCalls.length,0);assert.equal(app.get('retry-capture').hidden,false);
   app.changeStudio('image',0);await app.get('last-photo').emit('click');await app.get('save-photo').emit('click');
@@ -422,7 +424,7 @@ test('completed stereo review survives backgrounding and returning revalidates t
   app.document.hidden=true;await app.emit('visibilitychange');app.document.hidden=false;await app.emit('visibilitychange');await app.tick(10150);
   assert.equal(app.get('photo-dialog').open,true);assert.equal(app.get('scene').hidden,false);assert.equal(app.get('photo').src,original);
   assert.equal(app.requests.length,requests);assert.equal(app.sceneCalls.length,1);await app.get('save-photo').emit('click');assert.equal(app.saves.length,1);
-  await app.get('close-photo').emit('click');await app.tick(300);assert.equal(app.get('capture-plane').disabled,false);
+  await app.get('close-photo').emit('click');await app.tick(150);await app.tick(300);assert.equal(app.get('capture-plane').disabled,false);
   assert.equal(app.requests.filter(request=>request.url.startsWith('/peer/preview')).length,2);
   await app.get('capture-plane').emit('click');await app.tick(0);
   assert.equal(app.sceneCalls.length,2);assert.ok(app.sceneCalls[1].right);assert.equal(app.modelChecks.length,0);
@@ -432,7 +434,7 @@ test('a vanished peer restores mono and recovery does not keep switching the sel
   const app=await connectedCamera({second:true});assert.equal(app.studioControls.image,1);
   app.status.peer=null;await app.tick(10000);assert.equal(app.studioControls.image,0);assert.equal(app.get('capture-plane').disabled,false);
   await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,1);
-  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.modelChecks.length,0);await app.get('close-photo').emit('click');
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.modelChecks.length,0);await app.get('close-photo').emit('click');await app.tick(150);
   app.status.peer={camera_id:'bbbbbbbbbbbb'};await app.tick(10000);
   assert.equal(app.studioControls.image,0);await app.get('capture-plane').emit('click');
   assert.equal(app.requests.filter(request=>request.url.startsWith('/stereo/capture')).length,1);assert.equal(app.sceneCalls.length,0);
@@ -451,7 +453,7 @@ test('an older primary heartbeat cannot restart streams during stereo capture',a
   const heartbeat=deferred(),photo=deferred();let statusCalls=0;
   const app=await connectedCamera({second:true,scene:async()=>({dispose(){}}),fetch:url=>url==='/status'&&++statusCalls>1?heartbeat.promise:url.startsWith('/stereo/capture')?photo.promise:undefined});
   await app.tick(10000);const capture=app.get('capture-plane').emit('click');await flush();
-  heartbeat.reject(new Error('Disconnected'));await app.tick(2000);assert.equal(statusCalls,2);assert.equal(app.images[0].src,'');
+  heartbeat.reject(new Error('Disconnected'));await app.tick(2000);assert.equal(statusCalls,2);assert.equal(app.live.src,'');
   photo.resolve(app.pairResponse());await capture;await app.tick(0);assert.equal(app.get('save-photo').hidden,false);
 });
 
@@ -480,8 +482,8 @@ test('capture stays unavailable until both camera status and a decoded live fram
   await app.tick(150);
   assert.equal(app.get('capture-plane').disabled, true);
   assert.equal(app.get('studio').classList.contains('connected'), false);
-  app.images[0].naturalWidth = 320;
-  app.images[0].naturalHeight = 240;
+  app.live.naturalWidth = 320;
+  app.live.naturalHeight = 240;
   await app.tick(150);
   assert.equal(app.get('capture-plane').disabled, false);
   assert.equal(app.get('studio').classList.contains('connected'), true);
@@ -494,7 +496,7 @@ for (const [label, status] of Object.entries({ missing: {}, null: null, 'string 
     assert.equal(app.get('capture-plane').disabled, true);
     assert.equal(app.get('studio').classList.contains('connected'), false);
     assert.match(app.get('connection-label').textContent, /Fråkopla/);
-    assert.equal(app.images[0].src, '');
+    assert.equal(app.live.src, '');
   });
 }
 
@@ -503,12 +505,12 @@ test('a failed capture retains the last live frame and permits another attempt',
   const source = app.canvases[0];
   assert.ok(source.draws > 0);
   const clears = source.clears;
-  await app.get('capture-plane').emit('click');
+  await app.get('capture-plane').emit('click');await app.tick(150);
   assert.equal(source.clears, clears);
   assert.equal(app.get('photo-dialog').open, false);
   assert.equal(app.get('capture-plane').disabled, false);
   assert.match(app.get('notice').textContent, /ikkje takast/);
-  assert.match(app.images[0].src, /:81\/stream/);
+  assert.match(app.live.src, /:81\/stream/);
 });
 
 test('repeated shutter input sends only one capture request while capture is pending', async () => {
@@ -528,11 +530,11 @@ test('leaving photo review removes the dialog and resumes the live stream', asyn
   const app = await connectedCamera({scene:async()=>({dispose(){}})});
   await app.get('capture-plane').emit('click');
   assert.equal(app.get('photo-dialog').open, true);
-  assert.equal(app.images[0].src, '');
+  assert.equal(app.live.src, '');
   assert.match(app.get('photo').src, /^blob:/);
-  await app.get('close-photo').emit('click');
+  await app.get('close-photo').emit('click');await app.tick(150);
   assert.equal(app.get('photo-dialog').open, false);
-  assert.match(app.images[0].src, /:81\/stream/);
+  assert.match(app.live.src, /:81\/stream/);
   assert.equal(app.document.activeElement, app.get('capture-plane'));
   assert.equal(app.get('capture-plane').disabled, false);
 });
@@ -549,7 +551,7 @@ test('suspension clears connected UI and resume waits for a fresh status and fra
   await app.emit('visibilitychange');
   assert.equal(app.get('capture-plane').disabled, true);
   assert.equal(app.get('studio').classList.contains('connected'), false);
-  assert.equal(app.images[0].src, '');
+  assert.equal(app.live.src, '');
   app.document.hidden = false;
   await app.emit('visibilitychange');
   assert.equal(app.get('capture-plane').disabled, true);
@@ -568,7 +570,7 @@ test('hidden page cannot accept an in-flight connection response as connected', 
   await app.tick(150);
   assert.equal(app.get('capture-plane').disabled, true);
   assert.equal(app.get('studio').classList.contains('connected'), false);
-  assert.equal(app.images[0].src, '');
+  assert.equal(app.live.src, '');
 });
 
 test('the connection helper remains usable when optional browser storage is denied', async () => {
@@ -606,7 +608,7 @@ for (const stream_ready of [true, false]) {
     await app.tick(150);
     assert.equal(app.get('capture-plane').disabled, true);
     assert.equal(app.get('studio').classList.contains('connected'), false);
-    assert.equal(app.images[0].src, '');
+    assert.equal(app.live.src, '');
     assert.match(app.get('notice').textContent, /Sensor not found/);
     assert.doesNotMatch(app.get('notice').textContent, /Wi-Fi|fråkopla/i);
     assert.equal(app.get('last-photo').hidden, true);
@@ -617,13 +619,13 @@ test('a camera without a ready stream never reports a live connection', async ()
   const app = harness({ status: { ...verifiedStatus, stream_ready: false, last_error: 'Stream server unavailable' } });
   await app.tick(150);
   assert.equal(app.get('capture-plane').disabled, true);
-  assert.equal(app.images[0].src, '');
+  assert.equal(app.live.src, '');
   assert.match(app.get('notice').textContent, /Stream server unavailable/);
 });
 
 test('an invalid JPEG cannot open review', async () => {
   const app = await connectedCamera({ decodeFailure: true });
-  await app.get('capture-plane').emit('click');
+  await app.get('capture-plane').emit('click');await app.tick(150);
   assert.equal(app.get('photo-dialog').open, false);
   assert.match(app.get('notice').textContent, /ikkje takast/);
   assert.equal(app.get('capture-plane').disabled, false);
@@ -631,7 +633,7 @@ test('an invalid JPEG cannot open review', async () => {
 
 test('an HTML capture response cannot be mistaken for a photo', async () => {
   const app = await connectedCamera({ fetch: (url, count, response) => url.startsWith('/capture') ? response(new Blob(['error'], { type: 'text/html' })) : undefined });
-  await app.get('capture-plane').emit('click');
+  await app.get('capture-plane').emit('click');await app.tick(150);
   assert.equal(app.get('photo-dialog').open, false);
   assert.match(app.get('notice').textContent, /ikkje takast/);
   assert.equal(app.get('capture-plane').disabled, false);
@@ -648,13 +650,39 @@ test('photo mode opens the original JPEG immediately without models or preparati
   assert.match(html,/\.review img\{[^}]*filter:grayscale\(1\)/);assert.doesNotMatch(html,/toggle-scene/);
 });
 
-test('VATHOgraphy checks phone preparation before capture and retains its mode when setup is closed',async()=>{
+test('VATHOgraphy preserves a mono capture before setup and retries the same original',async()=>{
   const app=await connectedCamera({vathography:true,modelsReady:false});
-  assert.equal(app.modelChecks.length,1);assert.equal(app.get('onboarding').open,true);
-  await app.get('close-onboarding').emit('click');assert.equal(app.studioControls.image,2);
+  assert.equal(app.modelChecks.length,1);assert.equal(app.get('onboarding').open,false);
   await app.get('capture-plane').emit('click');await app.tick(0);
   assert.equal(app.get('onboarding').open,true);assert.equal(app.artCalls.length,0);
-  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,0);
+  const original=app.objectUrls.get(app.finders[0].captures[0].url),photo=app.get('photo').src;
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  await app.get('close-onboarding').emit('click');assert.equal(app.studioControls.image,2);
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.get('retry-scene').hidden,false);
+  await app.get('retry-scene').emit('click');await app.get('onboarding-next').emit('click');await app.tick(0);
+  assert.equal(app.artCalls.length,1);assert.equal(app.artCalls[0].blob,original);assert.equal(app.get('photo').src,photo);
+  assert.equal(app.get('onboarding').open,false);assert.equal(app.get('marigold-view').hidden,false);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+});
+
+test('a cold VATHOgraphy phone waits silently for peer validation and dismisses stale setup',async()=>{
+  const preview=deferred(),app=await connectedCamera({vathography:true,second:true,modelsReady:false,fetch:url=>url.startsWith('/peer/preview')?preview.promise:undefined});
+  assert.equal(app.modelChecks.length,1);assert.equal(app.get('onboarding').open,false);assert.equal(app.preparations.length,0);
+  await app.get('connection').emit('click');assert.equal(app.get('onboarding').open,true);
+  preview.resolve(app.response(jpeg('peer-preview')));await app.tick(0);
+  assert.equal(app.get('onboarding').open,false);assert.equal(app.preparations.length,0);
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.artCalls.length,1);assert.equal(app.artCalls[0].settings.right.type,'image/jpeg');
+  assert.equal(app.get('marigold-view').hidden,false);assert.equal(app.get('onboarding').open,false);
+});
+
+test('an archive overlay blocks capture-plane and keyboard capture at the central guard',async()=>{
+  const app=await connectedCamera();app.get('archive').hidden=false;
+  await app.get('capture-plane').emit('click');await app.emit('keydown',{code:'Space',repeat:false,preventDefault(){}});
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,0);
+  assert.equal(app.get('photo-dialog').open,false);
+  app.get('archive').hidden=true;await app.get('capture-plane').emit('click');
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
 });
 
 test('VATHOgraphy preserves the last frame through capture, processing, accessible failure and icon retry',async()=>{
@@ -698,12 +726,12 @@ test('processing retains the live finder and its review copy until the scene is 
 
 test('camera JPEG is framed once and only the derived color PNG is used by review and depth',async()=>{
   const app=await connectedCamera({splats:true,scene:async()=>({dispose(){}})});await app.get('capture-plane').emit('click');await app.tick(0);const finder=app.finders[0],framed=app.objectUrls.get(app.get('photo').src);assert.equal(finder.captures.length,1);assert.equal(app.objectUrls.get(finder.captures[0].url).type,'image/jpeg');assert.equal(framed.type,'image/png');assert.equal(app.sceneCalls[0].blob,framed);assert.equal(finder.captures[0].canvas.width,1);assert.equal(finder.captures[0].canvas.height,1);assert.ok(app.revoked.includes(finder.captures[0].url));
-  await app.get('close-photo').emit('click');await app.get('last-photo').emit('click');app.changeStudio('image',0);app.changeStudio('image',1);assert.equal(finder.captures.length,1);assert.equal(app.sceneCalls.length,1);assert.equal(app.objectUrls.get(app.get('photo').src),framed);
+  await app.get('close-photo').emit('click');await app.tick(150);await app.get('last-photo').emit('click');app.changeStudio('image',0);app.changeStudio('image',1);assert.equal(finder.captures.length,1);assert.equal(app.sceneCalls.length,1);assert.equal(app.objectUrls.get(app.get('photo').src),framed);
 });
 
 test('failed or abandoned PNG encoding retains the last valid photo and never publishes a partial frame',async()=>{
   for(const abandon of [false,true]){
-    let encode,encodes=0;const app=await connectedCamera({encode:(callback,type)=>{if(++encodes===1)callback(new Blob(['first'],{type}));else encode=callback}});await app.get('capture-plane').emit('click');const original=app.get('photo').src;await app.get('close-photo').emit('click');const taking=app.get('capture-plane').emit('click');await flush();if(abandon)await app.emit('pagehide');encode(abandon?new Blob(['late'],{type:'image/png'}):null);await taking;await app.tick(0);assert.equal(app.get('photo').src,original);assert.equal(app.revoked.includes(original),false);assert.equal(app.finders[0].captures[1].canvas.width,1);assert.equal(app.finders[0].captures[1].canvas.height,1);assert.equal(app.get('photo-dialog').open,false);
+    let encode,encodes=0;const app=await connectedCamera({encode:(callback,type)=>{if(++encodes===1)callback(new Blob(['first'],{type}));else encode=callback}});await app.get('capture-plane').emit('click');const original=app.get('photo').src;await app.get('close-photo').emit('click');await app.tick(150);const taking=app.get('capture-plane').emit('click');await flush();if(abandon)await app.emit('pagehide');encode(abandon?new Blob(['late'],{type:'image/png'}):null);await taking;await app.tick(0);assert.equal(app.get('photo').src,original);assert.equal(app.revoked.includes(original),false);assert.equal(app.finders[0].captures[1].canvas.width,1);assert.equal(app.finders[0].captures[1].canvas.height,1);assert.equal(app.get('photo-dialog').open,false);
   }
 });
 
@@ -743,7 +771,7 @@ test('switching to photo while checking models suppresses setup and inference',a
   assert.equal(app.modelChecks.length,1);app.changeStudio('image',0);pending.resolve(false);await app.tick(0);
   assert.equal(app.get('onboarding').open,false);assert.equal(app.sceneCalls.length,0);assert.equal(app.preparations.length,0);
   assert.equal(app.get('photo').hidden,false);assert.equal(app.get('retry-scene').hidden,true);
-  await app.get('close-photo').emit('click');assert.equal(app.get('capture-plane').disabled,false);
+  await app.get('close-photo').emit('click');await app.tick(150);assert.equal(app.get('capture-plane').disabled,false);
 });
 
 test('a late ready cache never starts splats after photo selection',async()=>{
@@ -756,7 +784,7 @@ test('a late ready cache never starts splats after photo selection',async()=>{
 test('closing review cancels a model check before it can open setup over the camera',async()=>{
   const pending=deferred(),app=await connectedCamera({modelsReady:()=>pending.promise});
   await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
-  await app.get('close-photo').emit('click');assert.equal(app.modelChecks[0].aborted,true);
+  await app.get('close-photo').emit('click');await app.tick(150);assert.equal(app.modelChecks[0].aborted,true);
   pending.resolve(false);await app.tick(0);
   assert.equal(app.get('onboarding').open,false);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.preparations.length,0);
 });
@@ -768,7 +796,7 @@ test('missing models ask for setup only for splats and leave the JPEG available'
   assert.match(app.get('photo').src,/^blob:/);assert.equal(app.sceneCalls.length,0);
   assert.equal(app.get('retry-scene').getAttribute('aria-label'),'Klargjer telefonen');assert.equal(app.opened.length,0);
   let prevented=false;await app.get('onboarding').emit('cancel',{preventDefault(){prevented=true}});app.get('onboarding').close();
-  assert.equal(prevented,true);assert.equal(app.get('onboarding').open,false);assert.equal(app.studioControls.image,0);assert.equal(app.get('photo').hidden,false);assert.equal(app.get('save-photo').hidden,false);assert.equal(app.get('print-photo').hidden,false);await app.get('close-photo').emit('click');
+  assert.equal(prevented,true);assert.equal(app.get('onboarding').open,false);assert.equal(app.studioControls.image,0);assert.equal(app.get('photo').hidden,false);assert.equal(app.get('save-photo').hidden,false);assert.equal(app.get('print-photo').hidden,false);await app.get('close-photo').emit('click');await app.tick(150);
   assert.equal(app.get('capture-plane').disabled,false);
 });
 
@@ -804,7 +832,7 @@ test('cancelling model transfer leaves photo mode usable and ignores a late comp
   await app.get('onboarding-next').emit('click');await app.get('onboarding').emit('cancel');app.get('onboarding').close();
   assert.equal(app.preparations[0].signal.aborted,true);assert.equal(app.studioControls.image,0);pending.resolve();await app.tick(0);
   assert.equal(app.sceneCalls.length,0);assert.equal(app.get('onboarding').open,false);
-  await app.get('close-photo').emit('click');assert.equal(app.get('capture-plane').disabled,false);
+  await app.get('close-photo').emit('click');await app.tick(150);assert.equal(app.get('capture-plane').disabled,false);
 });
 
 test('a prepared opener is used only after splats request models',async()=>{
@@ -830,7 +858,7 @@ test('splat holds do not print and the print icon preserves current-view and sta
   assert.equal(app.printCalls.length,0);await app.get('print-photo').emit('click');
   assert.equal(app.printCalls.length,1);assert.equal(app.printCalls[0].image,app.snapshot);assert.equal(app.printCalls[0].isCurrent(),true);
   assert.equal(app.requests.filter(r=>r.url.startsWith('/capture')).length,1);
-  await app.get('close-photo').emit('click');assert.equal(app.printCalls[0].isCurrent(),false);
+  await app.get('close-photo').emit('click');await app.tick(150);assert.equal(app.printCalls[0].isCurrent(),false);
 });
 
 test('dragging or three fingers cannot become a printer hold',async()=>{
@@ -843,7 +871,7 @@ test('dragging or three fingers cannot become a printer hold',async()=>{
 
 test('a cardless photo reopens from the same JPEG without model work or storage routes',async()=>{
   const app=await connectedCamera({modelsReady:false});await app.get('capture-plane').emit('click');const url=app.get('photo').src;
-  await app.get('close-photo').emit('click');await app.get('last-photo').emit('click');await app.tick(0);
+  await app.get('close-photo').emit('click');await app.tick(150);await app.get('last-photo').emit('click');await app.tick(0);
   assert.equal(app.get('photo').src,url);assert.equal(app.get('photo-dialog').open,true);assert.equal(app.sceneCalls.length,0);
   assert.equal(app.modelChecks.length,0);assert.equal(app.requests.filter(r=>r.url.startsWith('/capture')).length,1);
   assert.equal(app.requests.some(r=>/^\/(photos|photo)(\?|$)/.test(r.url)),false);
@@ -852,10 +880,10 @@ test('a cardless photo reopens from the same JPEG without model work or storage 
 
 test('closing review allows pending inference to cache without reopening review',async()=>{
   const pending=deferred();let disposed=false;const app=await connectedCamera({splats:true,scene:()=>pending.promise});
-  await app.get('capture-plane').emit('click');await app.tick(0);await app.get('close-photo').emit('click');
+  await app.get('capture-plane').emit('click');await app.tick(0);await app.get('close-photo').emit('click');await app.tick(150);
   assert.equal(app.sceneCalls[0].signal.aborted,false);pending.resolve({dispose(){disposed=true}});await app.tick(0);
   assert.equal(disposed,false);assert.equal(app.get('photo-dialog').open,false);assert.equal(app.get('scene').hidden,true);
-  assert.match(app.images[0].src,/:81\/stream/);
+  assert.match(app.live.src,/:81\/stream/);
   await app.get('last-photo').emit('click');await app.tick(0);
   assert.equal(app.get('scene').hidden,false);assert.equal(app.sceneCalls.length,1);
 });
@@ -863,7 +891,7 @@ test('closing review allows pending inference to cache without reopening review'
 test('a late scene from an old capture cannot replace the new scene',async()=>{
   const pending=deferred();let starts=0,disposed=false;
   const app=await connectedCamera({splats:true,scene:()=>++starts===1?pending.promise:Promise.resolve({dispose(){}})});
-  await app.get('capture-plane').emit('click');await app.tick(0);await app.get('close-photo').emit('click');
+  await app.get('capture-plane').emit('click');await app.tick(0);await app.get('close-photo').emit('click');await app.tick(150);
   await app.get('capture-plane').emit('click');await app.tick(0);const url=app.get('photo').src;
   assert.equal(app.sceneCalls.length,2);pending.resolve({dispose(){disposed=true}});await app.tick(0);
   assert.equal(disposed,true);assert.equal(app.get('photo').src,url);assert.equal(app.get('scene').hidden,false);
@@ -873,7 +901,7 @@ test('a late scene from an old capture cannot replace the new scene',async()=>{
 test('closing and reopening a completed scene preserves its view without another capture or inference',async()=>{
   let disposed=0;const viewer={yaw:0,dispose(){disposed++}},app=await connectedCamera({splats:true,scene:async()=>viewer});
   await app.get('capture-plane').emit('click');await app.tick(0);viewer.yaw=1.7;
-  const url=app.get('photo').src;await app.get('close-photo').emit('click');
+  const url=app.get('photo').src;await app.get('close-photo').emit('click');await app.tick(150);
   assert.equal(disposed,0);assert.equal(app.get('scene').hidden,true);
   await app.get('last-photo').emit('click');await app.tick(0);
   assert.equal(viewer.yaw,1.7);assert.equal(app.sceneCalls.length,1);assert.equal(app.get('scene').hidden,false);
@@ -884,7 +912,7 @@ test('a failed next capture retains the last completed scene',async()=>{
   let captures=0,disposed=false;
   const app=await connectedCamera({splats:true,scene:async()=>({dispose(){disposed=true}}),fetch:(url,count,response)=>url.startsWith('/capture')&&++captures===2?response(new Blob(['error'],{type:'text/html'})):undefined});
   await app.get('capture-plane').emit('click');await app.tick(0);const url=app.get('photo').src;
-  await app.get('close-photo').emit('click');await app.get('capture-plane').emit('click');
+  await app.get('close-photo').emit('click');await app.tick(150);await app.get('capture-plane').emit('click');await app.tick(150);
   assert.equal(disposed,false);assert.equal(app.get('photo-dialog').open,false);
   await app.get('last-photo').emit('click');await app.tick(0);
   assert.equal(app.get('photo').src,url);assert.equal(app.get('scene').hidden,false);assert.equal(app.sceneCalls.length,1);
@@ -892,7 +920,7 @@ test('a failed next capture retains the last completed scene',async()=>{
 
 test('a valid new photo disposes the previous scene exactly once',async()=>{
   let disposed=0;const app=await connectedCamera({splats:true,scene:async()=>({dispose(){disposed++}})});
-  await app.get('capture-plane').emit('click');await app.tick(0);await app.get('close-photo').emit('click');
+  await app.get('capture-plane').emit('click');await app.tick(0);await app.get('close-photo').emit('click');await app.tick(150);
   assert.equal(disposed,0);await app.get('capture-plane').emit('click');await app.tick(0);
   assert.equal(disposed,1);assert.equal(app.sceneCalls.length,2);assert.equal(app.sceneCalls[1].signal.aborted,false);
 });
@@ -904,7 +932,7 @@ test('capture failure exposes only a transparent retry glyph and preserves the o
   assert.match(html,/<p id="notice" class="sr"/);assert.doesNotMatch(html,/drop-shadow/);
   await app.get('capture-plane').emit('click');const url=app.get('photo').src;
   assert.equal(app.get('photo-icon'),undefined);assert.doesNotMatch(html,/id="photo-icon"/);assert.equal(app.get('thumbnail').hidden,false);
-  await app.get('close-photo').emit('click');await app.get('capture-plane').emit('click');
+  await app.get('close-photo').emit('click');await app.tick(150);await app.get('capture-plane').emit('click');await app.tick(150);
   assert.equal(app.get('retry-capture').hidden,false);assert.equal(app.get('retry-capture').disabled,false);
   assert.match(app.get('notice').textContent,/ikkje takast/);assert.equal(app.get('thumbnail').src,url);
   await app.get('retry-capture').emit('click');
@@ -919,7 +947,7 @@ test('photo zoom and recenter preserve the same JPEG across close, reopen and mo
   assert.equal(app.get('recenter-photo').hidden,false);
   app.changeStudio('image',1);await app.tick(0);assert.equal(app.gesturePhoto({scale:3}),false);
   app.changeStudio('image',0);assert.equal(app.photoGestureState.scale,2);
-  await app.get('close-photo').emit('click');assert.equal(app.get('recenter-photo').hidden,true);
+  await app.get('close-photo').emit('click');await app.tick(150);assert.equal(app.get('recenter-photo').hidden,true);
   await app.get('last-photo').emit('click');assert.equal(app.photoGestureState.x,45);assert.equal(app.photoGestureState.y,-12);
   assert.equal(app.get('photo').src,url);assert.equal(app.photoResets,resets);assert.equal(app.sceneCalls.length,1);
   await app.get('recenter-photo').emit('click');
@@ -933,7 +961,7 @@ test('only a valid new JPEG resets photo framing and printing receives the curre
   await app.get('print-photo').emit('click');
   assert.equal(app.printCalls[0].image.pose.scale,2.5);assert.equal(app.printCalls[0].image.pose.x,37);
   assert.equal(app.printCalls[0].image.pose.width,390);assert.equal(app.printCalls[0].image.photo,true);
-  const resets=app.photoResets;await app.get('close-photo').emit('click');await app.get('capture-plane').emit('click');
+  const resets=app.photoResets;await app.get('close-photo').emit('click');await app.tick(150);await app.get('capture-plane').emit('click');await app.tick(150);
   assert.equal(app.photoResets,resets);assert.equal(app.photoGestureState.scale,2.5);
   await app.get('retry-capture').emit('click');assert.equal(app.photoResets,resets+1);assert.equal(app.photoGestureState.scale,1);
 });
@@ -941,51 +969,51 @@ test('only a valid new JPEG resets photo framing and printing receives the curre
 test('native device printing holds capture and MJPEG until terminal while preserving the current photo',async()=>{
   const pending=deferred(),app=await connectedCamera({print:()=>pending.promise});assert.equal(app.printConfiguration.devicePrinter.native,true);assert.equal(typeof app.printConfiguration.buildJob,'function');
   await app.get('capture-plane').emit('click');app.gesturePhoto({scale:2,x:20,y:-10});const original=app.get('photo').src,printing=app.get('print-photo').emit('click');await flush();
-  assert.equal(app.printCalls.length,1);assert.equal(app.get('print-photo').disabled,true);await app.get('close-photo').emit('click');assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.get('progress').hidden,false);assert.equal(app.images[0].src,'');await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
-  pending.resolve(true);await printing;assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.get('progress').hidden,true);assert.match(app.images[0].src,/\/stream/);assert.equal(app.opened.length,0);await app.get('last-photo').emit('click');assert.equal(app.get('photo').src,original);assert.equal(app.photoGestureState.scale,2);assert.equal(app.photoGestureState.x,20);
+  assert.equal(app.printCalls.length,1);assert.equal(app.get('print-photo').disabled,true);await app.get('close-photo').emit('click');await app.tick(150);assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.get('progress').hidden,false);assert.equal(app.live.src,'');await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  pending.resolve(true);await printing;await app.tick(150);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.get('progress').hidden,true);assert.match(app.live.src,/\/stream/);assert.equal(app.opened.length,0);await app.get('last-photo').emit('click');assert.equal(app.get('photo').src,original);assert.equal(app.photoGestureState.scale,2);assert.equal(app.photoGestureState.x,20);
 });
 
 test('returning during native printing waits for terminal status before reconnecting the finder',async()=>{
   const pending=deferred(),app=await connectedCamera({print:()=>pending.promise});
   await app.get('capture-plane').emit('click');
   const printing=app.get('print-photo').emit('click');await flush();
-  await app.get('close-photo').emit('click');
+  await app.get('close-photo').emit('click');await app.tick(150);
   const statusReads=app.requests.filter(request=>request.url.startsWith('/status')).length;
   app.document.hidden=true;await app.emit('visibilitychange');await app.emit('pagehide',{persisted:true});
   app.document.hidden=false;await app.emit('visibilitychange');await app.emit('pageshow',{persisted:true});await app.emit('online');
   await app.tick(10000);
   assert.equal(app.requests.filter(request=>request.url.startsWith('/status')).length,statusReads);
-  assert.equal(app.images[0].src,'');assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.get('progress').hidden,false);
+  assert.equal(app.live.src,'');assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.get('progress').hidden,false);
   pending.resolve(true);await printing;await app.tick(150);
   assert.equal(app.requests.filter(request=>request.url.startsWith('/status')).length,statusReads+1);
-  assert.match(app.images[0].src,/\/stream/);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.get('progress').hidden,true);
+  assert.match(app.live.src,/\/stream/);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.get('progress').hidden,true);
   assert.equal(app.printCalls.length,1);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
 });
 
 test('native printing ignores a stale heartbeat and does not poll camera health until terminal',async()=>{
   const heartbeat=deferred(),pending=deferred();let statusReads=0;
-  const app=await connectedCamera({print:()=>pending.promise,fetch:url=>url.startsWith('/status')&&++statusReads===2?heartbeat.promise:undefined});
-  await app.get('capture-plane').emit('click');await app.get('close-photo').emit('click');await app.tick(10000);
+  const app=await connectedCamera({print:()=>pending.promise,fetch:url=>url.startsWith('/status')&&++statusReads===3?heartbeat.promise:undefined});
+  await app.get('capture-plane').emit('click');await app.get('close-photo').emit('click');await app.tick(150);await app.tick(10000);
   await app.get('last-photo').emit('click');
-  const printing=app.get('print-photo').emit('click');await flush();await app.get('close-photo').emit('click');
+  const printing=app.get('print-photo').emit('click');await flush();await app.get('close-photo').emit('click');await app.tick(150);
   heartbeat.reject(new Error('network suspended'));await app.tick(10000);
-  assert.equal(statusReads,2);assert.equal(app.get('notice').textContent,'');assert.equal(app.images[0].src,'');
+  assert.equal(statusReads,3);assert.equal(app.get('notice').textContent,'');assert.equal(app.live.src,'');
   pending.resolve(true);await printing;await app.tick(150);
-  assert.equal(statusReads,2);assert.match(app.images[0].src,/\/stream/);assert.equal(app.get('capture-plane').disabled,false);
+  assert.equal(statusReads,4);assert.match(app.live.src,/\/stream/);assert.equal(app.get('capture-plane').disabled,false);
 });
 
 for(const outcome of ['success','failure'])test(`native printing retires a pending camera reconnect before its late ${outcome}`,async()=>{
   const reconnect=deferred(),pending=deferred();let statusReads=0;
-  const app=await connectedCamera({print:()=>pending.promise,fetch:url=>url.startsWith('/status')&&++statusReads===2?reconnect.promise:undefined});
-  await app.get('capture-plane').emit('click');await app.get('close-photo').emit('click');
+  const app=await connectedCamera({print:()=>pending.promise,fetch:url=>url.startsWith('/status')&&++statusReads===3?reconnect.promise:undefined});
+  await app.get('capture-plane').emit('click');await app.get('close-photo').emit('click');await app.tick(150);
   app.document.hidden=true;await app.emit('visibilitychange');app.document.hidden=false;await app.emit('visibilitychange');
   await app.get('last-photo').emit('click');
-  const printing=app.get('print-photo').emit('click');await flush();await app.get('close-photo').emit('click');
+  const printing=app.get('print-photo').emit('click');await flush();await app.get('close-photo').emit('click');await app.tick(150);
   if(outcome==='success')reconnect.resolve(app.response({...verifiedStatus}));else reconnect.reject(new Error('stale camera reconnect'));
   await app.tick(0);
-  assert.equal(app.get('notice').textContent,'');assert.equal(app.images[0].src,'');assert.equal(app.get('capture-plane').disabled,true);
+  assert.equal(app.get('notice').textContent,'');assert.equal(app.live.src,'');assert.equal(app.get('capture-plane').disabled,true);
   pending.resolve(true);await printing;await app.tick(150);
-  assert.equal(statusReads,3);assert.equal(app.get('notice').textContent,'');assert.match(app.images[0].src,/\/stream/);assert.equal(app.get('capture-plane').disabled,false);
+  assert.equal(statusReads,4);assert.equal(app.get('notice').textContent,'');assert.match(app.live.src,/\/stream/);assert.equal(app.get('capture-plane').disabled,false);
   assert.equal(app.printCalls.length,1);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
 });
 
@@ -1016,7 +1044,7 @@ test('recenter resets only the cached scene view and GPU retry preserves its JPE
 test('a stale GPU error cannot hide a newly captured scene',async()=>{
   const app=await connectedCamera({splats:true,scene:async()=>({dispose(){}})});
   await app.get('capture-plane').emit('click');await app.tick(0);const old=app.viewers[0];
-  await app.get('close-photo').emit('click');await app.get('capture-plane').emit('click');await app.tick(0);
+  await app.get('close-photo').emit('click');await app.tick(150);await app.get('capture-plane').emit('click');await app.tick(0);
   old.onError(new Error('Old GPU error'));
   assert.equal(app.get('scene').hidden,false);assert.equal(app.get('retry-scene').hidden,true);assert.equal(app.get('scene-status').hidden,true);assert.equal(app.sceneCalls.length,2);
 });
@@ -1066,6 +1094,13 @@ test('phone setup identifies its actions and preserves progress and actionable e
   await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-title').textContent,'Fullfører 3D');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title" class="sr">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
 });
 
+test('setup instructions and expanded connection help remain visibly readable inside the dialog',()=>{
+  assert.match(html,/<p id="onboarding-copy"><\/p>/);
+  assert.match(html,/id="onboarding-feedback" class="feedback"/);
+  assert.match(html,/<details id="onboarding-help">[^]*?<p>Skann QR-koden på riggen og hald tilkoplinga utan internett\.<\/p><\/details>/);
+  assert.match(html,/<p id="notice" class="sr"/);
+});
+
 test('a suspended capture cannot reopen review or clear a newer capture while finishing late',async()=>{
   const first=deferred(),second=deferred();let captures=0;
   const app=await connectedCamera({fetch:url=>url.startsWith('/capture')?(++captures===1?first.promise:second.promise):undefined});
@@ -1091,7 +1126,7 @@ test('a JPEG decoded after pagehide is rejected and its object URL is released',
 test('the cached last photo remains usable while camera reconnection is pending',async()=>{
   const pending=deferred();let statuses=0;
   const app=await connectedCamera({splats:true,scene:async()=>({dispose(){}}),fetch:url=>url.startsWith('/status')&&++statuses>1?pending.promise:undefined});
-  await app.get('capture-plane').emit('click');await app.tick(0);await app.get('close-photo').emit('click');
+  await app.get('capture-plane').emit('click');await app.tick(0);await app.get('close-photo').emit('click');await app.tick(150);
   await app.emit('pagehide');await app.emit('pageshow');assert.equal(app.get('last-photo').disabled,false);
   await app.get('last-photo').emit('click');assert.equal(app.get('scene').hidden,false);
   pending.resolve(app.response({...verifiedStatus}));await app.tick(150);
@@ -1116,15 +1151,19 @@ test('a failed model check retries locally without asking for setup or replacing
   assert.equal(app.get('retry-scene').hidden,true);assert.equal(app.get('scene-status').hidden,true);
 });
 
-test('a VATHOgraphy startup check failure exposes an accessible camera retry without setup',async()=>{
+test('a VATHOgraphy startup check failure stays silent and retries after preserving a capture',async()=>{
   let fail=true;
   const app=await connectedCamera({vathography:true,modelsReady:async()=>{if(fail)throw new Error('Manifest unavailable');return true}});
-  assert.equal(app.get('onboarding').open,false);assert.equal(app.get('retry-capture').hidden,false);
-  assert.match(app.get('retry-capture').getAttribute('aria-label'),/Manifest unavailable/);assert.equal(app.preparations.length,0);
-  fail=false;await app.get('retry-capture').emit('click');await app.tick(0);
-  assert.equal(app.modelChecks.length,2);assert.equal(app.get('retry-capture').hidden,true);assert.equal(app.get('onboarding').open,false);
+  assert.equal(app.get('onboarding').open,false);assert.equal(app.get('retry-capture').hidden,true);
+  assert.equal(app.get('notice').textContent,'');assert.equal(app.preparations.length,0);
   await app.get('capture-plane').emit('click');await app.tick(0);
+  const photo=app.get('photo').src;
+  assert.equal(app.modelChecks.length,2);assert.equal(app.get('retry-scene').hidden,false);
+  assert.match(app.get('scene-status').textContent,/Manifest unavailable/);assert.equal(app.get('onboarding').open,false);
+  fail=false;await app.get('retry-scene').emit('click');await app.tick(0);
+  assert.equal(app.modelChecks.length,3);assert.equal(app.get('photo').src,photo);
   assert.equal(app.artCalls.length,1);assert.equal(app.preparations.length,0);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
 });
 
 test('a genuine missing model error still opens setup',async()=>{
@@ -1152,10 +1191,29 @@ test('the legacy Wi-Fi entry shows only handoff and makes no camera or model req
 
 test('the prepared opener hears readiness after a live frame without requiring models',async()=>{
   const app=harness({search:'?connect',opener:true,modelsReady:false,frames:false});await app.tick(150);
-  assert.equal(app.messages.length,0);app.images[0].naturalWidth=320;app.images[0].naturalHeight=240;await app.tick(150);
+  assert.equal(app.messages.length,0);app.live.naturalWidth=320;app.live.naturalHeight=240;await app.tick(150);
   assert.equal(app.messages.length,1);assert.equal(app.messages[0].data.type,'entropi-camera-ready');
   assert.equal(app.messages[0].origin,'https://esp32iverfinneno-iverfinnes-projects.vercel.app');assert.equal(app.modelChecks.length,0);
   await app.tick(10000);assert.equal(app.messages.length,1);
+});
+
+test('camera readiness and model handoff use the exact validated helper query origin',async()=>{
+  for(const origin of ['https://esp32iverfinneno-iverfinnes-projects.vercel.app','https://esp32.iverfinne.no','https://majones.iverfinne.no']){
+    const app=await connectedCamera({vathography:true,search:'?connect&helper='+encodeURIComponent(origin),opener:true,referrer:'',modelsReady:false});
+    assert.equal(app.messages.length,1);assert.equal(app.messages[0].origin,origin);assert.equal(app.preparations.length,0);
+    assert.equal(app.get('onboarding').open,false);
+    await app.get('capture-plane').emit('click');await app.tick(0);
+    assert.equal(app.preparations.length,1);assert.equal(app.preparations[0].source,app.childWindow);assert.equal(app.preparations[0].origin,origin);
+    assert.equal(app.artCalls.length,1);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  }
+});
+
+test('untrusted helper origins receive no readiness or automatic model handshake',async()=>{
+  const app=await connectedCamera({vathography:true,search:'?connect&helper='+encodeURIComponent('https://esp32.iverfinne.no.evil.test'),opener:true,modelsReady:false});
+  assert.equal(app.messages.length,0);assert.equal(app.preparations.length,0);
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.preparations.length,0);assert.equal(app.get('onboarding').open,true);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
 });
 
 test('direct local entry sends no camera notifications to an unrelated opener',async()=>{
@@ -1175,7 +1233,7 @@ test('leaving during preparation aborts transfer without blocking photo capture 
   const pending=deferred(),app=await connectedCamera({modelsReady:false,prepare:()=>pending.promise});
   await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
   await app.get('onboarding-next').emit('click');await app.emit('pagehide');assert.equal(app.preparations[0].signal.aborted,true);
-  app.changeStudio('image',0);app.get('onboarding').close();await app.get('close-photo').emit('click');
+  app.changeStudio('image',0);app.get('onboarding').close();await app.get('close-photo').emit('click');await app.tick(150);
   pending.resolve();await app.tick(0);await app.emit('pageshow',{persisted:true});await app.tick(150);
   assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.sceneCalls.length,0);
 });
@@ -1191,13 +1249,13 @@ test('double taps preserve working review and explicit close keeps its result ca
   const app=await connectedCamera({splats:true,scene:()=>pending.promise});
   await app.get('capture-plane').emit('click');
   await reviewTap(app);await app.tick(100);await reviewTap(app);
-  assert.equal(app.get('photo-dialog').open,true);await app.get('close-photo').emit('click');
+  assert.equal(app.get('photo-dialog').open,true);await app.get('close-photo').emit('click');await app.tick(150);
   assert.equal(app.get('photo-dialog').open,false);
   assert.equal(app.sceneCalls[0].signal.aborted,false);
   pending.resolve({dispose(){disposed=true}});await app.tick(150);
   assert.equal(disposed,false);
   assert.equal(app.get('photo-dialog').open,false);
-  assert.match(app.images[0].src,/:81\/stream/);
+  assert.match(app.live.src,/:81\/stream/);
 });
 
 test('dragging between taps cannot reset the scene', async () => {
@@ -1240,7 +1298,7 @@ test('three-finger adjustment cannot close review or turn the next tap into a do
 test('taps from a closed review cannot reset a newly captured scene', async () => {
   const app=await connectedCamera({splats:true,scene:async()=>({dispose(){}})});
   await app.get('capture-plane').emit('click');await app.tick(0);
-  await reviewTap(app);await app.get('close-photo').emit('click');
+  await reviewTap(app);await app.get('close-photo').emit('click');await app.tick(150);
   await app.tick(100);await app.get('capture-plane').emit('click');await app.tick(0);
   await reviewTap(app);
   assert.equal(app.get('photo-dialog').open,true);
@@ -1252,7 +1310,7 @@ test('primitive changes affect the cached scene while image mode leaves fixed qu
   await app.get('capture-plane').emit('click');await app.tick(0);assert.equal(app.sceneCalls[0].quality,2);
   app.changeStudio('image',0);app.changeStudio('primitive',3);app.changeStudio('image',1);await app.tick(0);
   assert.equal(app.sceneCalls.length,1);assert.equal(styles.at(-1),2);
-  await app.get('close-photo').emit('click');await app.get('capture-plane').emit('click');await app.tick(0);
+  await app.get('close-photo').emit('click');await app.tick(150);await app.get('capture-plane').emit('click');await app.tick(0);
   assert.equal(app.sceneCalls[1].quality,2);assert.equal(styles.at(-1),2);
 });
 
@@ -1270,14 +1328,14 @@ test('the click following a result double tap cannot capture another photo', asy
   await app.get('capture-plane').emit('click');
   assert.equal(app.get('photo-dialog').open,true);
   assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
-  await app.get('close-photo').emit('click');await app.tick(401);await app.get('capture-plane').emit('click');await app.tick(0);
+  await app.get('close-photo').emit('click');await app.tick(150);await app.tick(401);await app.get('capture-plane').emit('click');await app.tick(0);
   assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,2);
   assert.equal(app.get('photo-dialog').open,true);
 });
 
 test('save is an action that encodes the displayed native photo framing without navigating its JPEG',async()=>{
   const app=await connectedCamera();await app.get('capture-plane').emit('click');const url=app.get('photo').src;app.gesturePhoto({scale:2,x:30,y:-10});await app.get('save-photo').emit('click');assert.equal(app.get('save-photo').tagName,'BUTTON');assert.equal(app.get('save-photo').getAttribute('href'),null);assert.equal(app.saves.length,1);assert.equal(app.saves[0].blob.type,'image/png');assert.match(app.saves[0].name,/\.png$/);assert.equal(app.encodedSnapshots[0].native,true);assert.deepEqual(app.encodedSnapshots[0].pose,{scale:2,x:30,y:-10,width:390,height:844,grain:1,contrast:1});assert.equal(app.get('photo').src,url);assert.equal(app.saves[0].isCurrent(),true);
-  await app.get('close-photo').emit('click');assert.equal(app.saves[0].isCurrent(),false);await app.get('capture-plane').emit('click');assert.equal(app.saves[0].isCurrent(),false);
+  await app.get('close-photo').emit('click');await app.tick(150);assert.equal(app.saves[0].isCurrent(),false);await app.get('capture-plane').emit('click');assert.equal(app.saves[0].isCurrent(),false);
 });
 
 test('splat saving requests its native current palette instead of the source image or print resolution',async()=>{
@@ -1287,7 +1345,7 @@ test('splat saving requests its native current palette instead of the source ima
 test('photo style and three-finger tone feed the rendered save and print source without model work',async()=>{
   const app=await connectedCamera({modelsReady:false});await app.get('capture-plane').emit('click');const view=app.photoViews[0],url=app.get('photo').src;assert.equal(view.source.naturalWidth,1600);assert.notEqual(view.source,app.get('photo'));assert.equal(view.shown,true);app.changeStudio('photo',1);const refreshes=view.refreshes;assert.equal(app.gesturePhoto({grain:4,contrast:1.8,scale:2,x:30,y:-10}),true);assert.deepEqual(view.tone,{grain:4,contrast:1.8});assert.ok(view.refreshes>refreshes);
   await app.get('save-photo').emit('click');await app.get('print-photo').emit('click');for(const output of [app.encodedSnapshots[0],app.printCalls[0].image]){assert.equal(output.style,1);assert.deepEqual(output.tone,{grain:4,contrast:1.8});assert.equal(output.photo,true)}assert.deepEqual(view.snapshots.map(call=>call.native),[true,false]);assert.equal(app.sceneCalls.length,0);assert.equal(app.modelChecks.length,0);assert.equal(app.get('photo').src,url);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
-  await app.get('close-photo').emit('click');assert.equal(view.shown,false);await app.get('last-photo').emit('click');assert.equal(view.shown,true);assert.equal(view.sources.length,1);assert.equal(view.style,1);assert.deepEqual(view.tone,{grain:4,contrast:1.8});
+  await app.get('close-photo').emit('click');await app.tick(150);assert.equal(view.shown,false);await app.get('last-photo').emit('click');assert.equal(view.shown,true);assert.equal(view.sources.length,1);assert.equal(view.style,1);assert.deepEqual(view.tone,{grain:4,contrast:1.8});
 });
 
 test('photo and splat styles stay independent while the same original JPEG and scene are reused',async()=>{
@@ -1344,7 +1402,7 @@ test('rejected stereo with missing fallback assets opens setup and preparation r
   await app.get('capture-plane').emit('click');await app.tick(0);
   const raw=app.objectUrls.get(app.finders[0].captures[0].url),right=app.artCalls[0].settings.right;
   assert.equal(app.modelChecks.length,0);assert.equal(app.artCalls.length,1);assert.equal(app.get('onboarding').open,true);
-  assert.equal(app.get('onboarding-title').textContent,'Klargjer djupnekunst');assert.match(app.get('onboarding-copy').textContent,/også med to kamera/);
+  assert.equal(app.get('onboarding-title').textContent,'Klargjer djupnekunst');assert.match(app.get('onboarding-copy').textContent,/Hent modellen med internett éin gong/);
   assert.equal(app.get('onboarding-prepare').hidden,false);assert.equal(app.get('retry-scene').getAttribute('aria-label'),'Klargjer telefonen');
   app.get('onboarding').close();await app.get('retry-scene').emit('click');assert.equal(app.get('onboarding').open,true);assert.equal(app.artCalls.length,1);
   await app.get('onboarding-next').emit('click');await app.tick(0);
@@ -1367,7 +1425,7 @@ test('a fresh stereo capture can succeed after cancelling setup for a rejected p
   const app=await connectedCamera({second:true,vathography:true,modelsReady:false,art:async()=>{if(++attempts===1)throw Object.assign(new Error('Fallback model missing'),{code:'PHONE_SETUP_REQUIRED'});return {source:'stereo',model:'Stereo'}}});
   if(app.get('onboarding').open)await app.get('close-onboarding').emit('click');
   await app.get('capture-plane').emit('click');await app.tick(0);assert.equal(app.artCalls.length,1);assert.equal(app.get('onboarding').open,true);
-  await app.get('close-onboarding').emit('click');await app.get('close-photo').emit('click');await app.tick(200);
+  await app.get('close-onboarding').emit('click');await app.get('close-photo').emit('click');await app.tick(150);await app.tick(200);
   await app.get('capture-plane').emit('click');await app.tick(0);
   assert.equal(app.artCalls.length,2);assert.equal(app.artViews[0].result.source,'stereo');assert.equal(app.get('marigold-view').hidden,false);assert.equal(app.get('onboarding').open,false);assert.equal(app.preparations.length,0);
   assert.equal(app.requests.filter(request=>request.url.startsWith('/stereo/capture')).length,2);
@@ -1390,4 +1448,71 @@ test('a corrupt portable depth cache prompts setup and retries after preparation
   assert.equal(app.artCalls.length,1);assert.equal(app.get('onboarding').open,true);assert.equal(app.get('onboarding-title').textContent,'Klargjer djupnekunst');
   await app.get('onboarding-next').emit('click');await app.tick(0);
   assert.equal(app.preparations.length,1);assert.equal(app.artCalls.length,2);assert.equal(app.artViews[0].result.model,'restored');assert.equal(app.get('marigold-view').hidden,false);
+});
+
+test('a saved master retries its original depth and recipe without models after a restoration failure',async()=>{
+  const original=new Blob(['saved original'],{type:'image/png'}),master={result:{width:2,height:2,depth:Float32Array.of(1,2,3,4)},recipe:{preset:4,position:.2,width:1.5}};
+  let attempts=0;const app=await connectedCamera({vathography:true,modelsReady:false,restore:async()=>{if(++attempts===1)throw new Error('Temporary restore failure')}});
+  await app.showPhoto(original,master,'saved-master');await app.tick(0);
+  const photo=app.get('photo').src;
+  assert.equal(app.restoreCalls.length,1);assert.equal(app.get('retry-scene').hidden,false);assert.match(app.get('scene-status').textContent,/Temporary restore failure/);
+  assert.equal(app.get('onboarding').open,false);assert.equal(app.preparations.length,0);assert.equal(app.artCalls.length,0);
+  await app.get('retry-scene').emit('click');await app.tick(0);
+  assert.equal(app.restoreCalls.length,2);assert.equal(app.restoreCalls[1].blob,original);assert.equal(app.restoreCalls[1].result,master.result);assert.equal(app.restoreCalls[1].recipe,master.recipe);
+  assert.equal(app.artCalls.length,0);assert.equal(app.modelChecks.length,1);assert.equal(app.preparations.length,0);assert.equal(app.get('photo').src,photo);
+  assert.equal(app.get('retry-scene').hidden,true);assert.equal(app.get('marigold-view').hidden,false);
+});
+
+test('a late startup cache failure cannot hide a restored numerical master or require a model',async()=>{
+  const probe=deferred(),app=await connectedCamera({vathography:true,modelsReady:()=>probe.promise}),master={result:{width:1,height:1,depth:Float32Array.of(7)},recipe:{preset:1,position:0,width:1}};
+  await app.showPhoto(jpeg('saved'),master,'master');probe.reject(new Error('Model manifest unavailable'));await app.tick(0);
+  assert.equal(app.restoreCalls.length,1);assert.equal(app.artCalls.length,0);assert.equal(app.get('marigold-view').hidden,false);
+  assert.equal(app.get('retry-scene').hidden,true);assert.equal(app.get('onboarding').open,false);assert.equal(app.preparations.length,0);
+});
+
+test('a replaced saved-master restoration cannot overwrite a newer restored capture',async()=>{
+  const pending=deferred(),first={result:{width:1,height:1,depth:Float32Array.of(1)},recipe:{preset:1,position:0,width:1}},second={result:{width:1,height:1,depth:Float32Array.of(2)},recipe:{preset:4,position:.1,width:1.4}};
+  const app=await connectedCamera({vathography:true,modelsReady:false,restore:async(_blob,result)=>{if(result===first.result)await pending.promise}});
+  const opening=app.showPhoto(jpeg('old'),first,'old');await flush();
+  await app.showPhoto(jpeg('new'),second,'new');const photo=app.get('photo').src;
+  pending.resolve();await opening;await app.tick(0);
+  assert.equal(app.restoreCalls[0].signal.aborted,true);assert.equal(app.artViews[0].result,second.result);assert.equal(app.artViews[0].recipe,second.recipe);
+  assert.equal(app.get('photo').src,photo);assert.equal(app.get('marigold-view').hidden,false);assert.equal(app.artCalls.length,0);
+});
+
+for(const type of ['image/png','image/webp'])test(`a pending ${type} archive original can develop while live capture remains JPEG-only`,async()=>{
+  const original=new Blob(['pending original'],{type}),app=await connectedCamera({vathography:true});
+  await assert.rejects(app.showPhoto(original),/Ugyldig bilete/);
+  await app.showPhoto(original,null,'pending-record');await app.tick(0);
+  assert.equal(app.artCalls.length,1);assert.equal(app.artCalls[0].blob,original);assert.equal(app.get('marigold-view').hidden,false);
+});
+
+test('repeated capture and close cycles require a fresh stream image before the next shutter is ready',async()=>{
+  const app=await connectedCamera(),source=app.canvases[0],originalClears=source.clears;
+  for(let cycle=0;cycle<3;cycle++){
+    const previous=app.live,draws=source.draws;
+    await app.get('capture-plane').emit('click');const photo=app.get('photo').src;
+    assert.equal(previous.src,'');assert.equal(app.get('photo-dialog').open,true);assert.equal(source.clears,originalClears);assert.equal(source.draws,draws);
+    await app.get('close-photo').emit('click');await app.tick(0);
+    assert.equal(app.get('capture-plane').disabled,true);assert.notEqual(app.live,previous);assert.match(app.live.src,/\/stream\?t=\d+&r=\d+/);
+    await app.tick(150);assert.equal(app.get('capture-plane').disabled,false);assert.ok(source.draws>draws);assert.equal(app.get('photo').src,photo);assert.equal(app.get('photo-dialog').open,false);
+  }
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,3);
+});
+
+test('a resumed stream with no new frame retries automatically instead of accepting the old image dimensions',async()=>{
+  let streamStarts=0;const app=await connectedCamera({frameUrl:()=>++streamStarts!==2}),previous=app.live,source=app.canvases[0];
+  await app.get('capture-plane').emit('click');await app.get('close-photo').emit('click');await app.tick(150);
+  assert.equal(previous.naturalWidth,320);assert.notEqual(app.live,previous);assert.equal(app.live.naturalWidth,0);assert.equal(app.get('capture-plane').disabled,true);const draws=source.draws;
+  await app.tick(7900);assert.equal(source.draws,draws);assert.equal(app.get('capture-plane').disabled,true);assert.match(app.get('notice').textContent,/Ingen kamerabilete/);
+  await app.tick(1700);assert.equal(streamStarts,3);assert.equal(app.get('capture-plane').disabled,false);assert.ok(source.draws>draws);assert.equal(app.get('photo-dialog').open,false);
+});
+
+test('callbacks from a retired stream cannot disconnect or satisfy a replacement stream',async()=>{
+  let frames=true;const app=await connectedCamera({frameUrl:()=>frames}),previous=app.live;
+  await app.get('capture-plane').emit('click');frames=false;await app.get('close-photo').emit('click');await app.tick(150);
+  const replacement=app.live,statusReads=app.requests.filter(request=>request.url.startsWith('/status')).length;
+  await previous.emit('error');await app.tick(150);assert.equal(app.live,replacement);assert.equal(app.get('capture-plane').disabled,true);assert.equal(app.get('notice').textContent,'');
+  replacement.naturalWidth=320;replacement.naturalHeight=240;await app.tick(150);assert.equal(app.get('capture-plane').disabled,false);
+  await previous.emit('error');await app.tick(150);assert.equal(app.live,replacement);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.requests.filter(request=>request.url.startsWith('/status')).length,statusReads);
 });

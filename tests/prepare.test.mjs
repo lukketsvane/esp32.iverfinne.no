@@ -18,9 +18,9 @@ function harness(options={}){
   const addEventListener=(name,listener)=>{if(!events.has(name))events.set(name,[]);events.get(name).push(listener)};
   const peer={closed:false,photo:null,focus(){focused++},postMessage:(data,target)=>messages.push({data,target})};
   const document={hidden:false,addEventListener,documentElement:{dataset:{}},referrer:options.referrer??origin+'/',getElementById:id=>elements.get(id)};
-  const scope=options.start?'/start/':'/prepare/',expected=secure+scope+'sw.js',registration={scope:secure+scope,active:{scriptURL:expected}},controller=options.noController?null:{scriptURL:options.controller??expected};
+  const host=options.origin??secure,scope=options.start?'/start/':'/prepare/',expected=host+scope+'sw.js',registration={scope:host+scope,active:{scriptURL:expected}},controller=options.noController?null:{scriptURL:options.controller??expected};
   const context=vm.createContext({
-    document,location:{origin:secure,href:secure+scope+(options.transfer?'?transfer':options.camera?'?camera':''),reload(){reloads++}},history:options.history,URL,AbortController,DOMException,Uint8Array,ArrayBuffer,crypto:webcrypto,
+    document,location:{origin:host,href:host+scope+(options.transfer?'?transfer':options.camera?'?camera':''),reload(){reloads++}},history:options.history,URL,AbortController,DOMException,Uint8Array,ArrayBuffer,crypto:webcrypto,
     window:{opener:options.transfer?peer:null,addEventListener,open(url,target){opened.push({url,target});if(options.popupBlocked)return null;peer.closed=false;peer.photo=null;return peer},close(){closed++}},
     navigator:{onLine:options.onLine,serviceWorker:options.noServiceWorker?undefined:{controller,ready:Promise.resolve(registration),register:async(...args)=>{registrations.push(args);if(options.registrationError)throw options.registrationError;await options.registration?.();return registration},addEventListener(name,listener){if(!workerEvents.has(name))workerEvents.set(name,[]);workerEvents.get(name).push(listener)},removeEventListener(name,listener){workerEvents.set(name,(workerEvents.get(name)||[]).filter(value=>value!==listener))}},storage:{persist:async()=>true}},
     fetch:async()=>({ok:true,json:async()=>manifest}),
@@ -35,7 +35,7 @@ function harness(options={}){
   async function cameraReady(details={}){const port={closed:false,onmessage:null,start(){},close(){this.closed=true},async emit(data){this.onmessage?.({data});await flush()}};await emit({type:'entropi-camera-ready'},{ports:[port],...details});return port}
   async function complete(session){await emit({type:'entropi-model-ack',session,key:'asset'});await emit({type:'entropi-model-ack',session,key:'runtime'})}
   async function expire(delay){for(const [id,timer]of [...timers])if(timer.delay===delay){timers.delete(id);timer.callback()}await flush()}
-  async function update(details={}){for(const listener of workerEvents.get('message')??[])listener({source:controller,origin:secure,data:{type:'entropi-update-ready'},...details});await flush()}
+  async function update(details={}){for(const listener of workerEvents.get('message')??[])listener({source:controller,origin:host,data:{type:'entropi-update-ready'},...details});await flush()}
   return {get:id=>elements.get(id),document,peer,messages,opened,reads,downloads,registrations,event,emit,connect,cameraReady,complete,expire,update,get closed(){return closed},get focused(){return focused},get reloads(){return reloads}};
 }
 
@@ -45,7 +45,7 @@ test('QR and camera are available while model readiness waits for both verified 
   asset.resolve();await flush();assert.equal(app.reads.runtime,1);assert.equal(app.document.documentElement.dataset.ready,'false');
   runtime.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('ready').hidden,false);
   await app.get('open-camera').click();assert.equal(app.opened.length,1);
-  assert.deepEqual(app.downloads,['asset','runtime']);assert.equal(app.opened[0].url,origin+'/?connect');assert.match(app.opened[0].target,/^entropi-camera-[0-9a-f-]+$/);
+  assert.deepEqual(app.downloads,['asset','runtime']);assert.equal(app.opened[0].url,origin+'/?connect&helper='+encodeURIComponent(secure));assert.match(app.opened[0].target,/^entropi-camera-[0-9a-f-]+$/);
 });
 
 test('automatic preparation keeps QR and camera usable without a skip action or loading caption',async()=>{
@@ -53,6 +53,16 @@ test('automatic preparation keeps QR and camera usable without a skip action or 
   assert.equal(app.get('ready').hidden,false);assert.equal(app.get('retry').hidden,true);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);
   await app.get('open-camera').click();assert.equal(app.opened.length,1);assert.doesNotMatch(source+html,/Berre foto|photoFlow|Klargjer …/);
   loading.resolve();await flush();assert.equal(app.document.documentElement.dataset.ready,'true');assert.equal(app.get('ready').hidden,false);await app.cameraReady();await app.get('open-camera').click();assert.equal(app.opened.length,1);assert.equal(app.focused,1);
+});
+
+test('camera launches carry the exact helper origin despite a stripped HTTPS referrer',async()=>{
+  for(const host of [secure,'https://esp32iverfinneno-iverfinnes-projects.vercel.app','https://majones.iverfinne.no']){
+    const app=harness({origin:host,camera:true});await flush();await app.get('open-camera').click();
+    const target=new URL(app.opened[0].url);
+    assert.equal(target.origin,origin);assert.equal(target.searchParams.has('connect'),true);assert.equal(target.searchParams.get('helper'),host);
+    await app.cameraReady();assert.equal(app.get('camera-action').textContent,'Tilbake til kameraet');
+    await app.get('open-camera').click();assert.equal(app.focused,1);assert.equal(app.opened.length,1);
+  }
 });
 
 test('the next camera action is labelled and essential joining instructions are visible',async()=>{

@@ -57,7 +57,7 @@ export function createArchive(){
       if(rendered!==null&&(!(rendered instanceof Blob)||!rendered.size))throw new Error('Manglar gyldig framkalla bilete.');
       const db=await connect();
       const id=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
-      const preview=rendered?await thumbnail(rendered).catch(()=>null)??rendered:null;
+      const preview=await thumbnail(rendered??left).catch(()=>null)??rendered??left;
       const info={id,created:Date.now(),stereo:!!right,preview,pending:rendered===null};
       await transact(db,['photos','index'],'readwrite',tx=>{
         tx.objectStore('photos').put({id,left,right,preview:rendered});
@@ -86,7 +86,11 @@ export function createArchive(){
     },
     async list(){
       const db=await connect(),records=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').getAll());
-      return records.filter(record=>!record.pending).sort((a,b)=>b.created-a.created);
+      return Promise.all(records.sort((a,b)=>b.created-a.created).map(async record=>{
+        if(!record.pending||record.preview)return record;
+        const photo=await transact(db,['photos'],'readonly',tx=>tx.objectStore('photos').get(record.id));
+        return photo?.left?{...record,preview:await thumbnail(photo.left).catch(()=>null)??photo.left}:record;
+      }));
     },
     async saveDocument(document,id=document.id){
       requestPersistence();

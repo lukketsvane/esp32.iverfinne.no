@@ -34,8 +34,8 @@
 <button id="last-photo" class="access-control" aria-label="Opne siste foto" hidden><img id="thumbnail" alt="" width="28" height="28" hidden></button>
 <footer class="rig-bottom"><div class="rig-bottom-side"><button id="open-archive" class="rig-tool" type="button" aria-label="Opne fotoarkivet"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="m3 10 6-3 6 3 6-3M8 14h8"/></svg></button></div><button id="shutter" class="rig-shutter" type="button" aria-label="Ta stereofoto" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="12" r="4"/></svg></button></footer>
 </main>
-<section id="archive" class="vault" role="dialog" aria-label="Fotoarkiv" aria-modal="true" hidden><div class="vault-header"><button id="archive-import" class="vault-close" aria-label="Opne Entropi-fil"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M4 17v4h16v-4"/></svg></button><button id="close-archive" class="vault-close" type="button" aria-label="Lukk fotoarkivet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div id="archive-grid" class="vault-grid"></div><div id="archive-detail" class="vault-detail" hidden><img id="archive-photo" alt="Arkivert kamerabilete"><div class="vault-detail-controls"><div id="archive-detail-info" class="vault-detail-info sr"></div><div class="vault-actions"><button id="archive-edit" class="vault-action" aria-label="Opne VATHOgraphy" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 19 4-1L20 7l-4-4L5 14zM14 5l4 4M4 21h16"/></svg></button><button id="archive-left" class="vault-action" aria-label="Lagre venstre"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 5 8l4 4M5 8h11M4 16v5h16v-5"/></svg></button><button id="archive-right" class="vault-action" aria-label="Lagre høgre"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 4 4-4 4M19 8H8M4 16v5h16v-5"/></svg></button><button id="archive-delete" class="vault-action" aria-label="Slett"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg></button><button id="archive-back" class="vault-action" aria-label="Alle bilete"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg></button></div><p id="archive-notice" class="archive-notice sr" role="status"></p></div></div></section>
-<dialog id="onboarding" class="sheet" aria-labelledby="onboarding-title"><div class="sheet-content"><div class="sheet-head"><button id="close-onboarding" class="icon" aria-label="Tilbake til kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button></div><h1 id="onboarding-title" class="sr">Finn kameraet</h1><p id="onboarding-copy" class="sr"></p><progress id="onboarding-progress" max="100" aria-label="Klargjering" hidden></progress><div id="onboarding-feedback" class="feedback sr" role="status" aria-live="polite"></div><a id="onboarding-prepare" class="primary" href="https://esp32iverfinneno-iverfinnes-projects.vercel.app/start/" target="_blank" rel="noopener" aria-label="Hent modellen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg></a><button id="onboarding-next" class="quiet" aria-label="Fullfør"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v5h-5"/></svg></button><details id="onboarding-help"><summary aria-label="Hjelp med tilkopling"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 11v6M12 7h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"/></svg></summary><p class="sr">Du kan òg kople til ved å skanne QR-koden på riggen.</p></details></div></dialog>
+<section id="archive" class="vault" role="dialog" aria-label="Fotoarkiv" aria-modal="true" hidden><div class="vault-header"><button id="archive-import" class="vault-close" aria-label="Opne Entropi-fil"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M4 17v4h16v-4"/></svg></button><button id="close-archive" class="vault-close" type="button" aria-label="Lukk fotoarkivet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div id="archive-grid" class="vault-grid"></div><div id="archive-detail" class="vault-detail" hidden><span class="archive-pending-mark" aria-hidden="true"></span><img id="archive-photo" alt="Arkivert kamerabilete"><div class="vault-detail-controls"><div id="archive-detail-info" class="vault-detail-info sr"></div><div class="vault-actions"><button id="archive-edit" class="vault-action" aria-label="Opne VATHOgraphy" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 19 4-1L20 7l-4-4L5 14zM14 5l4 4M4 21h16"/></svg></button><button id="archive-left" class="vault-action" aria-label="Lagre venstre"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 5 8l4 4M5 8h11M4 16v5h16v-5"/></svg></button><button id="archive-right" class="vault-action" aria-label="Lagre høgre"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 4 4-4 4M19 8H8M4 16v5h16v-5"/></svg></button><button id="archive-delete" class="vault-action" aria-label="Slett"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg></button><button id="archive-back" class="vault-action" aria-label="Alle bilete"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg></button></div><p id="archive-notice" class="archive-notice sr" role="status"></p></div></div></section>
+<dialog id="onboarding" class="sheet" aria-labelledby="onboarding-title"><div class="sheet-content"><div class="sheet-head"><button id="close-onboarding" class="icon" aria-label="Tilbake til kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button></div><h1 id="onboarding-title" class="sr">Finn kameraet</h1><p id="onboarding-copy"></p><progress id="onboarding-progress" max="100" aria-label="Klargjering" hidden></progress><div id="onboarding-feedback" class="feedback" role="status" aria-live="polite"></div><a id="onboarding-prepare" class="primary" href="https://esp32iverfinneno-iverfinnes-projects.vercel.app/start/" target="_blank" rel="noopener" aria-label="Hent modellen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg></a><button id="onboarding-next" class="quiet" aria-label="Fullfør"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v5h-5"/></svg></button><details id="onboarding-help"><summary aria-label="Hjelp med tilkopling"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 11v6M12 7h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"/></svg></summary><p>Skann QR-koden på riggen og hald tilkoplinga utan internett.</p></details></div></dialog>
 <dialog id="photo-dialog" class="review" aria-label="Biletet ditt">
 <figure><div class="photo-frame"><canvas id="review-finder" class="review-finder" aria-hidden="true" hidden></canvas><img id="photo" alt="Biletet du tok"><div id="scene-progress" class="progress indeterminate" aria-hidden="true" hidden><svg viewBox="0 0 100 150" preserveAspectRatio="none"><rect id="scene-progress-bar" x=".5" y=".5" width="99" height="149" pathLength="100"/></svg></div></div><div id="scene" class="scene" aria-label="Djupnebasert 3D" hidden></div></figure>
 <div id="marigold-view" class="mg-view" role="group" aria-label="VATHOgraphy" hidden>
@@ -71,13 +71,14 @@ __ENTROPI_DOCUMENT__
 (()=>{
 const $=id=>document.getElementById(id);
 const entry=new URLSearchParams(location.search);
+const helperOrigin=phoneHelperOrigin(entry.get('helper')||document.referrer||'https://esp32iverfinneno-iverfinnes-projects.vercel.app');
 if(entry.has('wifi')){$('studio').hidden=true;$('safari-handoff').hidden=false;return}
 const studio=$('studio'),onboarding=$('onboarding'),photoDialog=$('photo-dialog');
 const finder=new Viewfinder($('finder')),source=document.createElement('canvas');
 source.width=320;source.height=240;
 const sourceContext=source.getContext('2d');
 finder.source=source;
-const live=new Image();live.crossOrigin='anonymous';
+let live=null,streamRevision=0;
 const streamUrl=new URL('/stream',location.href);if(globalThis.__ENTROPI_RIG_BRIDGE!==true)streamUrl.port='81';
 let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',parentReady=false,parentPort=null,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,sceneError='',captureAfter=0,captureTask=null,captureFailed=false,printBusy=false,printTimer=0;
 let secondId='',secondEnabled=false,secondTask=null,secondSelected=false,secondAutoMode=false,imageRevision=0,photoPair=null,archiveWarning='';
@@ -117,9 +118,9 @@ async function printCurrent(){
   finally{printBusy=false;controls();refreshReview();resumeStream()}
 }
 function notifyCamera(type){
-  if(!entry.has('connect')||!window.opener)return;
+  if(!entry.has('connect')||!window.opener||!helperOrigin)return;
   try{
-    if(type==='entropi-camera-ready'){parentPort?.close();const channel=new MessageChannel();parentPort=channel.port1;window.opener.postMessage({type},'https://esp32iverfinneno-iverfinnes-projects.vercel.app',[channel.port2])}
+    if(type==='entropi-camera-ready'){parentPort?.close();const channel=new MessageChannel();parentPort=channel.port1;window.opener.postMessage({type},helperOrigin,[channel.port2])}
     else{parentPort?.postMessage({type});parentPort?.close();parentPort=null}
   }catch{parentPort?.close();parentPort=null;parentReady=false}
 }
@@ -153,6 +154,7 @@ async function connectSecond(){
     if(secondTask!==task||!connected||busy||printBusy||reviewing()||document.hidden)return;
     secondEnabled=true;
     if(!secondSelected){secondSelected=true;if(!imageRevision&&studioControls.image===0){studioControls.setImage(1);secondAutoMode=true}}
+    if(onboarding.open){if(!needsPhoneModels()&&!phoneWorking)onboarding.close();else renderOnboarding()}
   }catch{if(!task.signal.aborted&&secondTask===task)disconnectSecond()}
   finally{if(url)URL.revokeObjectURL(url);if(secondTask===task)secondTask=null;controls()}
 }
@@ -195,51 +197,54 @@ async function request(path,type='json',timeout=8000,signal=null,method='GET'){
 function validStatus(s){return s&&typeof s.camera_ready==='boolean'&&typeof s.stream_ready==='boolean'&&(globalThis.__ENTROPI_RIG_BRIDGE===true&&s.transport==='usb'?(!s.camera_ready||Number.isInteger(s.width)&&s.width>0&&Number.isInteger(s.height)&&s.height>0):typeof s.psram==='boolean'&&(!s.camera_ready||([6,10].includes(s.framesize)&&[6,10,15].includes(s.photo_framesize)&&Number.isInteger(s.brightness)&&s.brightness>=-2&&s.brightness<=2)))}
 function healthMessage(s){return !s?'Ser etter kameraet …':s.camera_ready&&s.stream_ready?'Kameraet er klart.':(s.last_error||'Kameraet er ikkje klart.')+(s.recovering?' Prøver å starte kameraet på nytt …':'')}
 function acceptStatus(status){deviceStatus=status;cameraStatus=status.camera_ready?status:null;controls()}
-function stopStream(){streaming=false;clearInterval(frameTimer);live.removeAttribute('src');stopSecond();finder.active=false}
+function stopStream(){streaming=false;clearInterval(frameTimer);frameTimer=0;const previous=live;live=null;previous?.removeAttribute('src');hasFrame=false;stopSecond();finder.active=false}
 function startStream(){
   if(streaming||document.hidden||reviewing()||busy||printBusy||!cameraStatus)return;
-  streaming=true;finder.active=true;live.src=streamUrl.href+'?t='+Date.now();
-  frameTimer=setInterval(()=>{if(!streaming||!live.naturalWidth)return;try{sourceContext.drawImage(live,0,0,source.width,source.height);hasFrame=true}catch{loseConnection('Kamerabiletet kunne ikkje visast.')}},50);
+  const image=new Image();image.crossOrigin='anonymous';live=image;streaming=true;hasFrame=false;finder.active=true;
+  image.addEventListener('error',()=>{if(live===image&&streaming&&!connecting&&!busy)loseConnection('Kamerabiletet stoppa. Koplar til på nytt …')});
+  image.src=streamUrl.href+'?t='+Date.now()+'&r='+ ++streamRevision;
+  frameTimer=setInterval(()=>{if(live!==image||!streaming||!image.naturalWidth||!image.naturalHeight)return;try{sourceContext.drawImage(image,0,0,source.width,source.height);hasFrame=true}catch{loseConnection('Kamerabiletet kunne ikkje visast.')}},50);
 }
-function resumeStream(){if(document.hidden||reviewing()||busy||printBusy)return;if(connected){startStream();void connectSecond()}else connect()}
+function resumeStream(){if(document.hidden||reviewing()||busy||printBusy)return;void connect()}
 function scheduleReconnect(){clearTimeout(retryTimer);if(document.hidden||reviewing()||printBusy)return;retryTimer=setTimeout(connect,Math.min(30000,1500*2**Math.min(retryCount++,4)))}
 function loseConnection(message){connected=false;cameraStatus=null;stopStream();stopSecond();controls();notice(message);if(onboarding.open){renderOnboarding();$('onboarding-feedback').textContent=message}scheduleReconnect()}
 let artNeedsModel=false;
-function needsPhoneModels(){return !phoneReady&&(studioControls.image===1&&!secondEnabled&&!photoPair||studioControls.image===2&&globalThis.__ENTROPI_RIG_BRIDGE!==true&&(!secondEnabled&&!photoPair||artNeedsModel))}
+function needsPhoneModels(){return !phoneReady&&(studioControls.image===1&&!secondEnabled&&!photoPair||studioControls.image===2&&!captureDocument?.result&&globalThis.__ENTROPI_RIG_BRIDGE!==true&&(!secondEnabled&&!photoPair||artNeedsModel))}
 function renderOnboarding(){
   const modelNeeded=needsPhoneModels(),depthArt=studioControls.image===2;
   $('close-onboarding').setAttribute('aria-label',photoDialog.open?'Tilbake til biletet':'Tilbake til kameraet');
   $('onboarding-title').textContent=phoneWorking?(depthArt?'Fullfører djupnekunst':'Fullfører 3D'):modelNeeded?(depthArt?'Klargjer djupnekunst':'Klargjer 3D'):connected?(secondEnabled?'Kameraa er klare':'Kameraet er klart'):'Finn kameraet';
   $('onboarding-title').className='sr';
-  $('onboarding-copy').textContent=phoneWorking?'':modelNeeded?(depthArt?'Hent modellen med internett éin gong for bruk utan nett, også med to kamera.':'Hent modellen med internett éin gong for 3D frå eitt foto. Stereo treng ingen modell.'):connected?(secondEnabled?'':'Kamera 2 koplar seg til automatisk når det får straum.'):'Slå på begge kameraa, vel ENTROPI under Wi-Fi og hald tilkoplinga utan internett.';
+  $('onboarding-copy').textContent=phoneWorking?'':modelNeeded?'Hent modellen med internett éin gong.':connected?(secondEnabled?'':'Kamera 2 koplar seg til automatisk når det får straum.'):'Slå på begge kameraa, vel ENTROPI under Wi-Fi og hald tilkoplinga utan internett.';
   $('onboarding-copy').hidden=!$('onboarding-copy').textContent;$('onboarding-progress').hidden=!phoneWorking;onboarding.setAttribute('aria-busy',String(phoneWorking));
   $('onboarding-next').setAttribute('aria-label',modelNeeded?'Fullfør':connected?'Tilbake til kameraet':'Prøv igjen');$('onboarding-next').className=modelNeeded?'quiet':'primary';$('onboarding-next').hidden=phoneWorking;
   $('onboarding-prepare').hidden=!modelNeeded||phoneWorking;$('onboarding-help').hidden=phoneWorking||connected;
   $('onboarding-feedback').textContent=(modelNeeded?phoneError:'')||(!phoneWorking&&!connecting&&!connected&&deviceStatus&&(!deviceStatus.camera_ready||!deviceStatus.stream_ready)?healthMessage(deviceStatus):'');
+  if($('onboarding-feedback').textContent)$('onboarding-copy').hidden=true;
 }
 function showOnboarding(){renderOnboarding();if(!onboarding.open)onboarding.showModal()}
-function closeOnboarding(){const returnToPhoto=onboarding.open&&needsPhoneModels()&&(studioControls.image===2?!marigoldView.ready:!sceneViewer);phoneTask?.abort();phoneTask=null;phoneWorking=false;onboarding.close();if(returnToPhoto&&(!studioControls.vathography||photoBlob))studioControls.setImage(0);controls();refreshReview()}
+function closeOnboarding(){const returnToPhoto=onboarding.open&&needsPhoneModels()&&(studioControls.image===2?!marigoldView.ready:!sceneViewer);phoneTask?.abort();phoneTask=null;phoneWorking=false;onboarding.close();if(returnToPhoto&&!studioControls.vathography)studioControls.setImage(0);controls();refreshReview()}
 async function setupPhone(source=null){
   if(phoneWorking)return;
   const task=new AbortController();phoneTask?.abort();phoneTask=task;phoneWorking=true;phoneError='';$('onboarding-progress').removeAttribute('value');showOnboarding();controls();
   try{
-    await requestPhoneModels(task.signal,update=>{if(!task.signal.aborted&&Number.isFinite(update.percent))$('onboarding-progress').value=Math.max(0,Math.min(100,update.percent))},source);
+    await requestPhoneModels(task.signal,update=>{if(!task.signal.aborted&&Number.isFinite(update.percent))$('onboarding-progress').value=Math.max(0,Math.min(100,update.percent))},source,helperOrigin);
     task.signal.throwIfAborted();phoneReady=true;needsSetup=false;phoneError='';if(connected||photoDialog.open)onboarding.close();if(photoDialog.open){if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt();else void persistCurrentPreview().catch(error=>printFeedback(error.message))}
   }catch(error){if(!task.signal.aborted)phoneError=error.message||'Klargjer telefonen i nettlesaren med internett og prøv igjen.'}
   finally{if(phoneTask===task){phoneTask=null;phoneWorking=false;renderOnboarding();controls();refreshReview();if(!task.signal.aborted&&needsPhoneModels())showOnboarding()}}
 }
-async function checkPhone(){
+async function checkPhone(silent=false){
   if(phoneTask)return;
   const task=new AbortController();phoneTask=task;phoneWorking=false;controls();refreshReview();
   try{
     const ready=await phoneModelsReady(task.signal);task.signal.throwIfAborted();phoneReady=ready;
     if(phoneReady){needsSetup=false;if(phoneError&&!photoDialog.open){captureFailed=false;notice('')}phoneError='';if(onboarding.open&&connected)onboarding.close();if(photoDialog.open){if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt()}}
-    else{needsSetup=true;if(needsPhoneModels()){if(entry.has('connect')&&window.opener){phoneTask=null;void setupPhone(window.opener)}else showOnboarding()}}
+    else{needsSetup=true;if(needsPhoneModels()&&(!silent||photoDialog.open)){if(entry.has('connect')&&window.opener&&helperOrigin){phoneTask=null;void setupPhone(window.opener)}else showOnboarding()}}
   }catch(error){if(!task.signal.aborted){
     phoneError=error.message||'Modellen kunne ikkje kontrollerast. Prøv igjen.';
     needsSetup=error.code==='PHONE_SETUP_REQUIRED';
-    if(needsSetup){phoneReady=false;if(needsPhoneModels())showOnboarding()}
-    else if(studioControls.image!==0){if(photoDialog.open){if(studioControls.image===2)artError=phoneError;else sceneError=phoneError}else{captureFailed=true;notice(phoneError)}}
+    if(needsSetup){phoneReady=false;if(needsPhoneModels()&&(!silent||photoDialog.open))showOnboarding()}
+    else if(studioControls.image!==0){if(photoDialog.open){if(studioControls.image===2){if(!captureDocument?.result)artError=phoneError}else sceneError=phoneError}else if(!silent){captureFailed=true;notice(phoneError)}}
   }}
   finally{if(phoneTask===task)phoneTask=null;controls();refreshReview()}
 }
@@ -257,13 +262,13 @@ async function connect(){
     while(!hasFrame&&Date.now()-started<8000&&generation===connectGeneration&&!document.hidden&&!reviewing())await new Promise(r=>setTimeout(r,100));
     if(generation!==connectGeneration||document.hidden||reviewing())return;
     if(!hasFrame)throw new Error('Ingen kamerabilete. Prøver igjen …');
-    connected=true;retryCount=0;notice('');if(onboarding.open){if(!needsPhoneModels())onboarding.close();else renderOnboarding()}
+    connected=true;retryCount=0;if(!captureFailed)notice('');if(onboarding.open){if(!needsPhoneModels())onboarding.close();else renderOnboarding()}
   }catch(error){if(generation===connectGeneration)loseConnection(error.name==='AbortError'?'Ingen kontakt. Kontroller Wi-Fi og straum.':error.message)}
   finally{if(generation===connectGeneration){connecting=false;controls();if(connected)void connectSecond()}}
 }
 async function showPhoto(blob,signal,pair=null,master=null,archiveId=null){
   signal?.throwIfAborted();
-  if(!['image/jpeg',...(master?['image/png','image/webp']:[])].includes(blob.type)||!blob.size)throw new Error('Ugyldig bilete');
+  if(!['image/jpeg',...(master||archiveId?['image/png','image/webp']:[])].includes(blob.type)||!blob.size)throw new Error('Ugyldig bilete');
   const original=blob;
   let url=URL.createObjectURL(blob);const img=new Image();img.src=url;
   try{
@@ -280,14 +285,12 @@ async function showPhoto(blob,signal,pair=null,master=null,archiveId=null){
   $('photo').src=url;$('thumbnail').src=url;$('thumbnail').hidden=false;photoView.setSource(img);$('last-photo').hidden=false;
   if(!photoDialog.open)photoDialog.showModal();
   photoGestures.reset();
-  if(master){await marigoldView.restore(original,master.result,master.recipe,signal);signal?.throwIfAborted()}
-  refreshReview();if(!master){if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt();else void persistCurrentPreview().catch(error=>printFeedback(error.message))}
+  refreshReview();if(master){await makeArt();signal?.throwIfAborted()}else if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt();else void persistCurrentPreview().catch(error=>printFeedback(error.message));
 }
 async function takePhoto(){
-  if(busy||printBusy||connecting||!connected||onboarding.open||reviewing()||Date.now()<captureAfter)return;
+  if(busy||printBusy||connecting||!connected||onboarding.open||reviewing()||!$('archive').hidden||Date.now()<captureAfter)return;
   const paired=secondEnabled||globalThis.__ENTROPI_RIG_BRIDGE===true;if(!paired&&secondAutoMode)studioControls.setImage(0);
   if(studioControls.vathography)studioControls.setImage(2);
-  if(studioControls.vathography&&!paired&&needsPhoneModels()){void checkPhone();return}
   ++connectGeneration;clearTimeout(retryTimer);
   archiveWarning='';busy=true;captureFailed=false;stopStream();stopSecond();controls();notice('');
   const held=$('review-finder'),liveFrame=$('finder');held.width=liveFrame.width;held.height=liveFrame.height;held.getContext('2d').drawImage(liveFrame,0,0);
@@ -341,14 +344,15 @@ async function makeArt(){
   if(!photoBlob||!photoDialog.open||studioControls.image!==2)return;
   if(marigoldView.ready||artTask){refreshReview();return}
   if(needsPhoneModels()){if(!phoneTask)void checkPhone();refreshReview();return}
-  const generation=sceneGeneration,blob=photoBlob,task=new AbortController();artTask=task;artError='';needsSetup=false;$('scene-progress').classList.add('indeterminate');$('scene-progress-bar').style.strokeDasharray='';refreshReview();
+  const generation=sceneGeneration,blob=photoBlob,master=captureDocument,task=new AbortController();artTask=task;artError='';needsSetup=false;$('scene-progress').classList.add('indeterminate');$('scene-progress-bar').style.strokeDasharray='';refreshReview();
   try{
-    await marigoldView.process(photoPair?.left??photoOriginal??blob,task.signal,{right:photoPair?.right});
+    if(master?.result)await marigoldView.restore(photoOriginal??blob,master.result,master.recipe,task.signal);
+    else await marigoldView.process(photoPair?.left??photoOriginal??blob,task.signal,{right:photoPair?.right});
     if(task.signal.aborted||generation!==sceneGeneration||blob!==photoBlob)return;
     await persistCurrentMaster().catch(error=>printFeedback(error.message));
   }catch(error){
     if(task.signal.aborted||generation!==sceneGeneration||blob!==photoBlob)return;
-    if(error.code==='PHONE_SETUP_REQUIRED'&&globalThis.__ENTROPI_RIG_BRIDGE!==true){artNeedsModel=true;phoneReady=false;needsSetup=true;artError=error.message||'Klargjer telefonen for djupnekunst.';controls();if(photoDialog.open&&needsPhoneModels())showOnboarding()}
+    if(error.code==='PHONE_SETUP_REQUIRED'&&!master?.result&&globalThis.__ENTROPI_RIG_BRIDGE!==true){artNeedsModel=true;phoneReady=false;needsSetup=true;artError=error.message||'Klargjer telefonen for djupnekunst.';controls();if(photoDialog.open&&needsPhoneModels())showOnboarding()}
     else if(error.name==='AbortError')studioControls.setImage(0);
     else artError=error.message||'Kunne ikkje lage djupnekunst. Prøv igjen.';
   }finally{if(artTask===task){artTask=null;refreshReview()}}
@@ -390,7 +394,6 @@ photoDialog.addEventListener('contextmenu',event=>{if(!event.target.closest('but
 photoDialog.addEventListener('close',()=>{void persistCurrentPreview().catch(error=>notice(error.message,true));reviewDown=reviewTap=null;cancelArt();closeOnboarding();refreshReview();resumeStream();$('capture-plane').focus({preventScroll:true})});
 $('last-photo').addEventListener('click',()=>{if(photoUrl&&!busy){stopStream();photoDialog.showModal();refreshReview();if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt()}});
 onboarding.addEventListener('click',event=>{if(event.target===onboarding){const rect=onboarding.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeOnboarding()}});
-live.addEventListener('error',()=>{if(streaming&&!connecting&&!busy)loseConnection('Kamerabiletet stoppa. Koplar til på nytt …')});
 function suspend(){++connectGeneration;connecting=false;connected=false;clearTimeout(retryTimer);if(captureTask){captureTask.abort();captureTask=null;busy=false}stopSecond();stopStream();controls()}
 function resume(){if(!document.hidden){if(reviewing()){if(studioControls.image===0)photoGestures.refresh?.();else if(studioControls.image===2)void makeArt();else if(photoPair)void makeScene();else if(!phoneReady&&!phoneTask&&!sceneViewer)void checkPhone()}else connect()}}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});window.addEventListener('pagehide',()=>{notifyCamera('entropi-camera-left');parentReady=false;suspend();phoneTask?.abort();cancelArt()});window.addEventListener('pageshow',resume);window.addEventListener('online',resume);
@@ -405,7 +408,7 @@ setInterval(async()=>{
   }catch(error){if(generation===connectGeneration&&!document.hidden&&!busy&&!printBusy&&!reviewing()&&connected)loseConnection(error.name==='AbortError'?'Mista kontakten med kameraet. Koplar til på nytt …':error.message)}
 },10000);
 window.addEventListener('keydown',event=>{if(event.code==='Space'&&!event.repeat&&!onboarding.open&&!reviewing()&&!['INPUT','BUTTON','A'].includes(document.activeElement.tagName)){event.preventDefault();takePhoto()}});
-controls();if(entry.has('setup'))showOnboarding();if(globalThis.__ENTROPI_RIG_BRIDGE!==true&&(entry.has('setup')||studioControls.vathography))void checkPhone();connect();
+controls();if(entry.has('setup'))showOnboarding();if(globalThis.__ENTROPI_RIG_BRIDGE!==true&&(entry.has('setup')||studioControls.vathography))void checkPhone(!entry.has('setup'));connect();
 })();
 </script>
 </body>

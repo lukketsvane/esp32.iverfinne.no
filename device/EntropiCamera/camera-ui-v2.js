@@ -1,5 +1,5 @@
 const archiveStore=createArchive(),masterWrites=new WeakMap();
-let archiveRecords=[],archiveSelected=null,archiveRecord=null,archiveViewer=null,archiveUrls=[],archiveDeleteArmed=false;
+let archiveRecords=[],archiveSelected=null,archiveRecord=null,archiveViewer=null,archiveUrls=[],archiveDeleteArmed=false,archiveFocus=null,archiveGeneration=0;
 let selfTimer=0,countdown=0,countdownTimer=null,peerPreviewBusy=false,peerFinder=null;
 
 function updateCameraChrome(){
@@ -55,20 +55,22 @@ async function persistCurrentMaster(){
   masterWrites.set(blob,write);await write;return master;
 }
 async function openEntropiMaster(master,id=null){
+  return openArchivedCapture({left:master.left,right:master.right,document:master},id);
+}
+async function openArchivedCapture(record,id=null){
   if(busy||printBusy)return;
   ++connectGeneration;clearTimeout(retryTimer);stopStream();stopSecond();
   const task=new AbortController();captureTask=task;busy=true;controls();
   try{
     if(marigoldView.ready)await persistCurrentMaster();task.signal.throwIfAborted();
-    closeArchive();onboarding.close();
-    await showPhoto(master.left,task.signal,master.right?{left:master.left,right:master.right}:null,master,id);
-    studioControls.setImage(2);refreshReview();
-    await persistCurrentMaster().catch(error=>printFeedback(error.message));
+    closeArchive();onboarding.close();studioControls.setImage(2);
+    await showPhoto(record.left,task.signal,record.right?{left:record.left,right:record.right}:null,record.document??null,id);
+    refreshReview();
   }catch(error){if(!task.signal.aborted)notice(error.message,true)}
   finally{if(captureTask===task){captureTask=null;busy=false;controls();resumeStream()}}
 }
 $('archive-import').addEventListener('click',async()=>{try{const master=await pickEntropiDocument();if(master)await openEntropiMaster(master)}catch(error){$('archive-notice').textContent=error.message}});
-$('archive-edit').addEventListener('click',async()=>{const id=archiveSelected;if(!id)return;try{const record=await archiveStore.get(id);if(archiveSelected===id&&record?.document)await openEntropiMaster(record.document,id)}catch(error){$('archive-notice').textContent=error.message}});
+$('archive-edit').addEventListener('click',async()=>{const id=archiveSelected;if(!id)return;try{const record=await archiveStore.get(id);if(archiveSelected===id&&record)await openArchivedCapture(record,id)}catch(error){$('archive-notice').textContent=error.message}});
 
 async function archiveCapture(original,pair){
   try{
@@ -92,28 +94,32 @@ function archiveDate(timestamp){
   return new Date(timestamp).toLocaleString('nn-NO',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
 }
 async function showArchive(){
+  const opening=++archiveGeneration;
+  if($('archive').hidden)archiveFocus=document.activeElement;
   disarmArchiveDelete();cancelCountdown();stopStream();
   $('archive').hidden=false;
+  studio.inert=true;$('close-archive').focus({preventScroll:true});
   $('archive-grid').hidden=false;$('archive-detail').hidden=true;
   archiveSelected=null;
   clearArchiveUrls();
   const grid=$('archive-grid');grid.replaceChildren();
   try{
     await persistCurrentPreview();
-    if($('archive').hidden)return;
-    archiveRecords=await archiveStore.list();
+    if($('archive').hidden||opening!==archiveGeneration)return;
+    const records=await archiveStore.list();if($('archive').hidden||opening!==archiveGeneration)return;archiveRecords=records;
     if(!archiveRecords.length){
       const empty=document.createElement('p');empty.className='vault-empty sr';empty.textContent='Ingen bilete enno.';grid.append(empty);
     }
     for(const record of archiveRecords){
       const button=document.createElement('button');button.className='vault-item';button.type='button';
-      const image=document.createElement('img');image.alt=(record.stereo?'Stereoopptak ':'Foto ')+archiveDate(record.created);
-      if(record.preview)image.src=archiveUrl(record.preview);
-      button.append(image);
+      button.setAttribute('aria-label',(record.pending?'Ikkje framkalla. ':'')+(record.stereo?'Stereoopptak ':'Foto ')+archiveDate(record.created));
+      const image=document.createElement('img');image.alt='';if(record.preview)image.src=archiveUrl(record.preview);button.append(image);
+      if(record.pending){button.classList.add('pending');const mark=document.createElement('span');mark.className='archive-pending-mark';mark.setAttribute('aria-hidden','true');button.append(mark)}
       button.addEventListener('click',()=>void openArchivedPhoto(record.id));
       grid.append(button);
     }
   }catch(error){
+    if($('archive').hidden||opening!==archiveGeneration)return;
     const empty=document.createElement('p');empty.className='vault-empty sr';empty.textContent=error?.message||'Lagringa kunne ikkje opnast.';grid.append(empty);
   }
 }
@@ -122,22 +128,27 @@ async function openArchivedPhoto(id){
   const record=await archiveStore.get(id).catch(()=>null);
   if(!record||archiveSelected!==id)return;
   archiveRecord=record;
+  const pending=!record.preview&&!record.document;
   if(archiveViewer)URL.revokeObjectURL(archiveViewer);
   archiveViewer=URL.createObjectURL(record.preview??record.document?.preview??record.left);
   $('archive-photo').src=archiveViewer;
+  $('archive-photo').alt=pending?'Originalopptak, ikkje framkalla':'Arkivert kamerabilete';
+  $('archive-detail').classList.toggle('pending',pending);
   $('archive-detail-info').textContent=archiveDate(archiveRecords.find(entry=>entry.id===id)?.created??Date.now())+'  ·  '+(record.right?'STEREO':'FOTO');
-  $('archive-left').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':record.right?'Lagre venstre':'Lagre original');
+  $('archive-left').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':pending?(record.right?'Lagre venstre original':'Lagre original'):'Lagre biletet');
   $('archive-right').hidden=!record.right;
-  $('archive-edit').hidden=!record.document;
+  $('archive-edit').hidden=!record.document&&!pending;
+  $('archive-edit').setAttribute('aria-label',pending?'Framkall originalopptaket':'Opne VATHOgraphy');
   $('archive-delete').setAttribute('aria-label','Slett');$('archive-delete').dataset.armed='false';
   $('archive-notice').textContent='';
   $('archive-grid').hidden=true;$('archive-detail').hidden=false;
+  (pending?$('archive-edit'):$('archive-left')).focus({preventScroll:true});
 }
 function closeArchive(){
   if($('archive').hidden)return;
-  disarmArchiveDelete();$('archive').hidden=true;archiveSelected=null;archiveRecord=null;archiveDeleteArmed=false;
+  disarmArchiveDelete();$('archive').hidden=true;++archiveGeneration;archiveSelected=null;archiveRecord=null;archiveDeleteArmed=false;
   $('archive-photo').removeAttribute('src');
-  clearArchiveUrls();resumeStream();
+  clearArchiveUrls();studio.inert=false;(archiveFocus&&archiveFocus.isConnected!==false&&!archiveFocus.hidden&&archiveFocus.tagName!=='BODY'?archiveFocus:$('open-archive')).focus({preventScroll:true});archiveFocus=null;resumeStream();
 }
 $('open-archive').addEventListener('click',()=>void showArchive());
 $('close-archive').addEventListener('click',closeArchive);
@@ -163,7 +174,13 @@ $('archive-delete').addEventListener('click',async()=>{
   try{await archiveStore.remove(id);void showArchive()}catch(error){if(current&&blob===photoBlob)captureArchiveSuppressed=false;$('archive-notice').textContent=error.message}
 });
 window.addEventListener('keydown',event=>{
+  if(event.defaultPrevented||$('archive').hidden)return;
   if(event.key==='Escape'&&!$('archive').hidden){event.preventDefault();if(!$('archive-detail').hidden)void showArchive();else closeArchive()}
+  else if(event.key==='Tab'){
+    const controls=[$('archive-import'),$('close-archive'),...($('archive-detail').hidden?Array.from($('archive-grid').children):[$('archive-edit'),$('archive-left'),$('archive-right'),$('archive-delete'),$('archive-back')])].filter(button=>button.tagName==='BUTTON'&&!button.hidden&&!button.disabled);
+    event.preventDefault();const index=controls.indexOf(document.activeElement),next=index<0?(event.shiftKey?controls.length-1:0):(index+(event.shiftKey?-1:1)+controls.length)%controls.length;
+    controls[next]?.focus({preventScroll:true});
+  }
 });
 
 async function updatePeerPreview(){

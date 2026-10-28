@@ -36,7 +36,7 @@ printing += "\n" + (shared / "vendor/archive.mjs").read_text(encoding="utf-8").r
 assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
-bridge = "const { requestPhoneModels, phoneModelsReady } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady };\n})();"
+bridge = "const { requestPhoneModels, phoneModelsReady, phoneHelperOrigin } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady, phoneHelperOrigin };\n})();"
 source = source.replace("__ENTROPI_VIEWFINDER__", palettes + "\n" + renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_PRINT_CLIENT__", printing).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
 marigold = "\n".join((shared / name).read_text(encoding="utf-8").replace("export ", "") for name in ["pointcloud/math.mjs", "pointcloud/stereo-rig.mjs", "vendor/stereo-depth.mjs", "vendor/vathography.mjs", "vendor/depth-source.mjs", "vendor/marigold-view.mjs"])
 marigold = re.sub(r"^import .*?;\s*", "", marigold, flags=re.MULTILINE)

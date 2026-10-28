@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { loadCachedAsset, storeAsset } from '../pointcloud/assets.mjs';
 import { memoryIndexedDB } from './helpers/indexeddb.mjs';
+import { phoneHelperOrigin } from '../vendor/model-bridge.mjs';
 
 const source=(await readFile(new URL('../vendor/model-bridge.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
 const bytes={asset:new Uint8Array([1,2,3,4]),runtime:new Uint8Array([5,6,7])};
@@ -18,12 +19,12 @@ function harness(options={}){
   const controller=new AbortController();
   const context=vm.createContext({
     window:{open(url){opened=url;return options.popupBlocked?null:helper},addEventListener:(name,listener)=>listeners.add(listener),removeEventListener:(name,listener)=>listeners.delete(listener)},
-    storeAsset:options.store??storeAsset,loadCachedAsset,fetch:options.fetch??(async()=>new Response(JSON.stringify(manifest))),crypto:webcrypto,Uint8Array,ArrayBuffer,DOMException,AbortController,
+    storeAsset:options.store??storeAsset,loadCachedAsset,fetch:options.fetch??(async()=>new Response(JSON.stringify(manifest))),crypto:webcrypto,URL,Uint8Array,ArrayBuffer,DOMException,AbortController,
     setTimeout:callback=>{const id=++nextTimer;timers.set(id,callback);return id},clearTimeout:id=>timers.delete(id)
   });
   vm.runInContext(source,context);
-  const promise=options.start===false?null:context.requestPhoneModels(controller.signal,update=>progress.push(update),options.existing?helper:null);promise?.then(()=>{settled=true},()=>{settled=true});
-  async function emit(data,details={}){await Promise.all([...listeners].map(listener=>listener({data,origin,source:helper,...details})));await flush()}
+  const promise=options.start===false?null:context.requestPhoneModels(controller.signal,update=>progress.push(update),options.existing?helper:null,options.origin??origin);promise?.then(()=>{settled=true},()=>{settled=true});
+  async function emit(data,details={}){await Promise.all([...listeners].map(listener=>listener({data,origin:options.origin??origin,source:helper,...details})));await flush()}
   async function ready(){await emit({type:'entropi-models-ready'});return messages.find(message=>message.data.type==='entropi-models-request')?.data.session}
   const asset=(key,session,data=bytes[key])=>({type:'entropi-model-asset',session,key,bytes:data.slice().buffer});
   return {promise,controller,messages,progress,helper,emit,ready,asset,modelsReady:()=>context.phoneModelsReady(controller.signal),expire:async()=>{for(const callback of [...timers.values()])callback();await flush()},get opened(){return opened},get closed(){return closed},get settled(){return settled}};
@@ -51,6 +52,29 @@ test('phone preparation requires the exact opened window and HTTPS origin before
     const session=await app.ready();assert.match(session,/^[a-f0-9]{32}$/);assert.equal(app.messages[0].target,origin);
     app.controller.abort();await assert.rejects(app.promise,{name:'AbortError'});
   });
+});
+
+test('helper origins accept only the three supported HTTPS origins',()=>{
+  for(const value of [origin,'https://esp32.iverfinne.no','https://majones.iverfinne.no'])assert.equal(phoneHelperOrigin(value+'/start/'),value);
+  for(const value of [null,'','https://untrusted.test','http://esp32.iverfinne.no','https://esp32.iverfinne.no.evil.test','https://esp32.iverfinne.no:8443','https://esp32.iverfinne.no@evil.test'])assert.equal(phoneHelperOrigin(value),null);
+});
+
+test('each supported opener completes transfer only on its selected origin and exact window',async()=>{
+  for(const allowed of [origin,'https://esp32.iverfinne.no','https://majones.iverfinne.no'])await withDatabase(async()=>{
+    const app=harness({existing:true,origin:allowed});
+    assert.equal(app.opened,false);assert.equal(app.messages[0].target,allowed);
+    await app.emit({type:'entropi-models-ready'},{origin:allowed===origin?'https://esp32.iverfinne.no':origin});
+    await app.emit({type:'entropi-models-ready'},{source:{}});assert.equal(app.messages.length,1);
+    const session=await app.ready();assert.ok(session);
+    await app.emit(app.asset('asset',session));await app.emit(app.asset('runtime',session));await app.emit({type:'entropi-models-complete',session});await app.promise;
+    assert.ok(app.messages.every(message=>message.target===allowed));assert.equal(app.closed,false);
+  });
+});
+
+test('an unsupported opener origin is rejected before any message or model request',async()=>{
+  const app=harness({existing:true,origin:'https://esp32.iverfinne.no.evil.test',fetch(){throw new Error('Unexpected manifest request')}});
+  await assert.rejects(app.promise,/Opne klargjeringa frå kameraet/);
+  assert.equal(app.opened,false);assert.equal(app.messages.length,0);assert.equal(app.closed,false);
 });
 
 test('both verified model files must commit before preparation can complete',async()=>{

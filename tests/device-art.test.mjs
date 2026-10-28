@@ -35,21 +35,12 @@ test('embedded archive previews use the current photo framing or native splat sn
 });
 
 test('embedded import restores saved values and recipe without running depth inference',async()=>{
-  const original=new Blob(['png'],{type:'image/png'}),rendered=new Blob(['frame'],{type:'image/png'}),calls=[],elements=new Map();
+  const original=new Blob(['png'],{type:'image/png'}),rendered=new Blob(['frame'],{type:'image/png'}),app=archiveHarness();
   const master=createEntropiDocument({left:original,result:{depth:Float32Array.of(1,2,3,4),width:2,height:2},recipe:{preset:4,position:.1,width:1.5},preview:rendered});
-  const state=vm.createContext({
-    Blob,photoUrl:null,photoBlob:null,photoOriginal:null,photoPair:null,captureDocument:null,captureArchiveId:null,photoReceivedAt:null,photoName:'',
-    URL:{createObjectURL:()=> 'blob:import',revokeObjectURL(){}},Image:class {naturalWidth=2;naturalHeight=2;async decode(){}},
-    finder:{capture(){return {width:2,height:2,toBlob(callback){callback(rendered)}}}},
-    $:id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)},clearScene(){},printFeedback(){},
-    photoDialog:{open:false,showModal(){this.open=true}},photoView:{setSource(){}},photoGestures:{reset(){}},refreshReview(){},studioControls:{image:2},
-    marigoldView:{async restore(...args){calls.push(args)}},makeArt(){throw new Error('Unexpected inference')},makeScene(){throw new Error('Unexpected scene')}
-  });
-  vm.runInContext(section('async function showPhoto(','async function takePhoto('),state);
-  const signal=new AbortController().signal;
-  await state.showPhoto(original,signal,null,master,'stored-master');
-  assert.equal(calls.length,1);assert.equal(calls[0][0],original);assert.equal(calls[0][1],master.result);assert.equal(calls[0][2],master.recipe);assert.equal(calls[0][3],signal);
-  assert.equal(state.photoOriginal,original);assert.equal(state.captureDocument,master);assert.equal(state.captureArchiveId,'stored-master');assert.equal(state.photoDialog.open,true);
+  await app.state.openEntropiMaster(master,'stored-master');
+  assert.equal(app.restored.length,1);assert.equal(app.restored[0].blob,original);assert.equal(app.restored[0].result,master.result);assert.equal(app.restored[0].recipe,master.recipe);
+  assert.equal(app.processed.length,0);assert.equal(app.state.photoOriginal,original);assert.equal(app.state.captureArchiveId,'stored-master');assert.equal(app.state.photoDialog.open,true);
+  assert.equal(app.writes.length,1);assert.equal(app.writes[0].master.id,master.id);assert.deepEqual([...app.writes[0].master.result.depth],[...master.result.depth]);
 });
 
 test('embedded master preserves both originals and updates the original archive record with the editable recipe',async()=>{
@@ -149,6 +140,66 @@ test('deleting the current archive entry settles its queued writes before remova
   finish();await deleting;assert.deepEqual(removed,['capture']);assert.equal(state.captureArchiveSuppressed,true);
 });
 
+function archiveHarness(){
+  const elements=new Map(),events=new Map(),records=new Map(),writes=[],processed=[],restored=[],urls=new Map();let nextId=0,nextUrl=0;
+  const flush=async()=>{for(let n=0;n<40;n++)await Promise.resolve()};
+  class Element{
+    constructor(tagName='DIV'){this.tagName=tagName;this.hidden=false;this.children=[];this.attributes=new Map();this.listeners=new Map();this.dataset={};this.style={};const names=new Set();this.classList={add:name=>names.add(name),toggle:(name,active)=>active?names.add(name):names.delete(name),contains:name=>names.has(name)}}
+    addEventListener(name,callback){if(!this.listeners.has(name))this.listeners.set(name,[]);this.listeners.get(name).push(callback)}
+    setAttribute(name,value){this.attributes.set(name,String(value))}
+    getAttribute(name){return this.attributes.get(name)}
+    removeAttribute(name){this.attributes.delete(name);if(name==='src')this.src=''}
+    append(...children){this.children.push(...children)}
+    replaceChildren(...children){this.children=children}
+    focus(){document.activeElement=this}
+    showModal(){this.open=true}
+    close(){this.open=false}
+    async emit(name,details={}){for(const callback of this.listeners.get(name)??[])await callback({target:this,...details});await flush()}
+  }
+  for(const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g)){const element=new Element(match[1].toUpperCase());element.hidden=/\bhidden\b/.test(match[0]);elements.set(match[2],element)}
+  const document={hidden:false,activeElement:null,createElement:tag=>new Element(tag.toUpperCase()),addEventListener(name,callback){if(!events.has(name))events.set(name,[]);events.get(name).push(callback)}};
+  const store={
+    async save(left,right,preview){const id='capture-'+ ++nextId;records.set(id,{id,left,right,preview,created:nextId,pending:preview===null,stereo:!!right});return {id}},
+    async list(){return [...records.values()].map(record=>({...record,preview:record.preview??record.left}))},
+    async get(id){return records.get(id)},
+    async saveDocument(master,id){writes.push({master,id});records.set(id,{...records.get(id),id,left:master.left,right:master.right,document:master,preview:master.preview,pending:false});return {id}},
+    async savePreview(id,preview){const record=records.get(id);if(record){record.preview=preview;record.pending=false}},
+    async remove(id){records.delete(id)}
+  };
+  const preview=new Blob(['rendered'],{type:'image/png'}),view={ready:false,result:null,recipe:{preset:1,position:0,width:1},snapshot:()=>preview,reset(){this.ready=false;this.result=null},async process(blob,signal,settings){processed.push({blob,signal,settings});this.result={width:2,height:2,depth:Float32Array.of(1,2,3,4)};this.ready=true},async restore(blob,result,recipe,signal){restored.push({blob,result,recipe,signal});this.result=result;this.recipe=recipe;this.ready=true}};
+  const state=vm.createContext({Blob,AbortController,DOMException,document,window:{addEventListener:document.addEventListener},createArchive:()=>store,createEntropiDocument,
+    $:id=>elements.get(id),studio:elements.get('studio'),photoDialog:elements.get('photo-dialog'),onboarding:elements.get('onboarding'),
+    setTimeout:()=>1,clearTimeout(){},stopStream(){},stopSecond(){},resumeStream(){},controls(){},notice(){},printFeedback(){},refreshReview(){},needsPhoneModels:()=>false,bindExportGesture(){},pickEntropiDocument(){},
+    connected:true,connecting:false,busy:false,printBusy:false,connectGeneration:0,retryTimer:0,captureTask:null,sceneGeneration:0,artTask:null,artError:'',artNeedsModel:false,phoneTask:null,needsSetup:false,masterSaveTimer:0,captureArchiveSuppressed:false,
+    photoBlob:null,photoOriginal:null,photoPair:null,photoUrl:null,photoName:'',photoReceivedAt:null,captureDocument:null,captureArchiveId:null,cameraStatus:null,secondId:'',
+    studioControls:{image:0,setImage(value){this.image=value}},marigoldView:view,snapshotBlob:value=>value,photoView:{setSource(){},snapshot:()=>preview},photoGestures:{state:{},reset(){}},
+    finder:{capture(){return {width:2,height:2,toBlob:callback=>callback(preview)}}},Image:class{naturalWidth=2;naturalHeight=2;async decode(){}},URL:{createObjectURL(blob){const url='blob:'+ ++nextUrl;urls.set(url,blob);return url},revokeObjectURL:url=>urls.delete(url)}
+  });
+  state.clearScene=()=>{state.sceneGeneration++;view.reset();state.captureDocument=null;state.captureArchiveId=null;state.captureArchiveSuppressed=false};
+  vm.runInContext(enhancement.slice(0,enhancement.indexOf('async function updatePeerPreview('))+'\n'+section('async function showPhoto(','async function takePhoto(')+'\n'+artSource,state);
+  return {state,store,records,writes,processed,restored,urls,get:id=>elements.get(id),flush,get activeElement(){return document.activeElement},async key(key,shiftKey=false){const event={key,shiftKey,defaultPrevented:false,preventDefault(){this.defaultPrevented=true}};for(const callback of events.get('keydown')??[])callback(event);await flush();return event}};
+}
+
+for(const stereo of [false,true])test(`embedded recovery develops a preserved ${stereo?'stereo pair':'mono original'} using the existing archive identity`,async()=>{
+  const app=archiveHarness(),left=new Blob(['left'],{type:'image/jpeg'}),right=stereo?new Blob(['right'],{type:'image/jpeg'}):null;
+  const saved=await app.store.save(left,right,null);app.get('open-archive').focus();await app.state.showArchive();
+  const tile=app.get('archive-grid').children[0];assert.equal(tile.classList.contains('pending'),true);assert.match(tile.getAttribute('aria-label'),/Ikkje framkalla/);assert.equal(app.urls.get(tile.children[0].src),left);assert.equal(tile.children[1].className,'archive-pending-mark');
+  await tile.emit('click');assert.equal(app.get('archive-edit').hidden,false);assert.equal(app.get('archive-detail').classList.contains('pending'),true);
+  await app.get('archive-edit').emit('click');await app.flush();
+  assert.equal(app.processed.length,1);assert.equal(app.processed[0].blob,left);assert.equal(app.processed[0].settings.right??null,right);assert.equal(app.state.captureArchiveId,saved.id);assert.equal(app.records.size,1);assert.equal(app.writes[0].id,saved.id);assert.equal(app.writes[0].master.left,left);assert.equal(app.writes[0].master.right,right);
+  await app.state.showArchive();const finished=app.get('archive-grid').children[0];assert.equal(finished.classList.contains('pending'),false);assert.equal(app.urls.get(finished.children[0].src),app.records.get(saved.id).preview);
+});
+
+test('embedded archive traps keyboard focus, restores its opener and ignores a late closed listing',async()=>{
+  const app=archiveHarness();await app.store.save(jpeg,null,null);app.get('open-archive').focus();await app.state.showArchive();
+  assert.equal(app.state.studio.inert,true);assert.equal(app.activeElement,app.get('close-archive'));
+  await app.key('Tab',true);assert.equal(app.activeElement,app.get('archive-import'));await app.key('Tab',true);assert.equal(app.activeElement,app.get('archive-grid').children[0]);
+  await app.get('archive-grid').children[0].emit('click');await app.key('Escape');assert.equal(app.get('archive-detail').hidden,true);assert.equal(app.get('archive').hidden,false);
+  await app.key('Escape');assert.equal(app.get('archive').hidden,true);assert.equal(app.state.studio.inert,false);assert.equal(app.activeElement,app.get('open-archive'));
+  let finish;app.store.list=()=>new Promise(resolve=>{finish=resolve});const listing=app.state.showArchive();await app.flush();app.state.closeArchive();finish([{id:'late',pending:true,preview:jpeg}]);await listing;
+  assert.equal(app.get('archive-grid').children.length,0);assert.equal(app.urls.size,0);
+});
+
 test('side-by-side stereo export is removed from review and archive',async()=>{
   assert.doesNotMatch(html,/save-stereo|archive-pair|stereoPairImage|Lagar VATHOgraphy/);
   const archive=await readFile(new URL('../device/EntropiCamera/camera-ui-v2.js',import.meta.url),'utf8');
@@ -175,7 +226,7 @@ function pairHarness(options={}){
 function artHarness(options={}){
   const inputs=[],snapshots=[],progress={classList:{add(){}},style:{}};
   const context=vm.createContext({
-    photoBlob:new Blob(['framed']),photoOriginal:new Blob(['original']),photoPair:null,
+    photoBlob:new Blob(['framed']),photoOriginal:new Blob(['original']),photoPair:null,captureDocument:null,
     photoDialog:{open:true},studioControls:{image:2,setImage(value){this.image=value}},
     sceneGeneration:1,artTask:null,artError:'',artNeedsModel:false,phoneReady:true,phoneTask:null,secondEnabled:false,needsSetup:false,AbortController,DOMException,
     $:()=>progress,refreshReview(){},controls(){},showOnboarding(){},checkPhone(){},async persistCurrentMaster(){},printFeedback(){},

@@ -1,5 +1,9 @@
 import { loadCachedAsset, storeAsset } from '../pointcloud/assets.mjs';
 
+export function phoneHelperOrigin(value){
+  try{const origin=new URL(value).origin;return ['https://esp32iverfinneno-iverfinnes-projects.vercel.app','https://esp32.iverfinne.no','https://majones.iverfinne.no'].includes(origin)?origin:null}catch{return null}
+}
+
 async function modelManifest(signal){
   const task=new AbortController(),cancel=()=>task.abort(signal.reason),timer=setTimeout(()=>task.abort(new Error('Kameraet svarte ikkje. Kontroller tilkoplinga og prøv igjen.')),10000);
   signal?.addEventListener('abort',cancel,{once:true});
@@ -18,9 +22,11 @@ export async function phoneModelsReady(signal){
   catch(error){signal?.throwIfAborted();if(error.code==='PHONE_SETUP_REQUIRED')return false;throw error}
 }
 
-export function requestPhoneModels(signal,onProgress=()=>{},source=null){
+export function requestPhoneModels(signal,onProgress=()=>{},source=null,sourceOrigin='https://esp32iverfinneno-iverfinnes-projects.vercel.app'){
   signal?.throwIfAborted();
-  const origin='https://esp32iverfinneno-iverfinnes-projects.vercel.app',helper=source||window.open(origin+'/prepare/?transfer','entropi-models');
+  const origin=source?phoneHelperOrigin(sourceOrigin):'https://esp32iverfinneno-iverfinnes-projects.vercel.app';
+  if(!origin)return Promise.reject(new Error('Opne klargjeringa frå kameraet og prøv igjen.'));
+  const helper=source||window.open(origin+'/prepare/?transfer','entropi-models');
   if(!helper)return Promise.reject(new Error('Tillat opning av klargjeringa og prøv igjen.'));
   const random=new Uint8Array(16);crypto.getRandomValues(random);
   const session=Array.from(random,value=>value.toString(16).padStart(2,'0')).join('');
