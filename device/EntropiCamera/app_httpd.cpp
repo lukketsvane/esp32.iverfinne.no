@@ -30,6 +30,7 @@
 #include "stereo_protocol.h"
 #include "px10_printer.h"
 #include "rig_network.h"
+#include "serial_guard.h"
 
 static httpd_handle_t cameraHttpd = nullptr;
 static httpd_handle_t streamHttpd = nullptr;
@@ -710,6 +711,11 @@ void serialCameraPhoto() {
     Serial.println("PHOTO_ERROR CAPTURE");
     return;
   }
+  if (!beginSerialBinary()) {
+    free(photo.data);
+    Serial.println("PHOTO_ERROR SERIAL");
+    return;
+  }
   Serial.printf("PHOTO_META {\"camera_id\":\"%012llx\",\"captured_us\":%lld,\"bytes\":%u}\n",
                 static_cast<unsigned long long>(ESP.getEfuseMac()),
                 static_cast<long long>(photo.capturedUs), static_cast<unsigned>(photo.length));
@@ -721,6 +727,7 @@ void serialCameraPhoto() {
     delay(1);
   }
   Serial.print("PHOTO_END\n");
+  endSerialBinary();
   free(photo.data);
 }
 
@@ -735,6 +742,11 @@ void serialStereoPair() {
   const PhotoFrame &left = pair.primary ? pair.local : pair.peer;
   const PhotoFrame &right = pair.primary ? pair.peer : pair.local;
   String timing = stereoTiming(pair);
+  if (!beginSerialBinary()) {
+    freeStereoPair(pair);
+    Serial.println("PAIR_ERROR SERIAL");
+    return;
+  }
   Serial.printf("PAIR_META {\"id\":\"%s\",\"left_camera_id\":\"%s\",\"right_camera_id\":\"%s\",%s\n", pair.id,
                 pair.primary ? pair.localId : pair.peerId, pair.primary ? pair.peerId : pair.localId, timing.c_str() + 1);
   Serial.printf("PAIR_BEGIN %u %u\n", static_cast<unsigned>(left.length), static_cast<unsigned>(right.length));
@@ -747,6 +759,7 @@ void serialStereoPair() {
     }
   }
   Serial.print("PAIR_END\n");
+  endSerialBinary();
   freeStereoPair(pair);
 }
 #endif

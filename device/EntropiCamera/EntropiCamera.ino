@@ -8,6 +8,7 @@
 #include "capture_button.h"
 #include "px10_printer.h"
 #include "rig_network.h"
+#include "serial_guard.h"
 
 #ifndef ENTROPI_SECONDARY_CAMERA
 #define ENTROPI_SECONDARY_CAMERA 0
@@ -56,6 +57,7 @@ void networkCheck() {
 }
 
 void networkEvent(arduino_event_id_t event, arduino_event_info_t info) {
+  if (!trySerialText()) return;
   if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
     Serial.printf("Entropi %s: http://" IPSTR "/\n", ENTROPI_SECONDARY_CAMERA ? "second camera" : "local Wi-Fi", IP2STR(&info.got_ip.ip_info.ip));
   } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
@@ -73,6 +75,7 @@ void networkEvent(arduino_event_id_t event, arduino_event_info_t info) {
     Serial.printf("Network: assigned %02x:%02x:%02x:%02x:%02x:%02x IP=" IPSTR "\n",
                   client.mac[0], client.mac[1], client.mac[2], client.mac[3], client.mac[4], client.mac[5], IP2STR(&client.ip));
   }
+  endSerialText();
 }
 
 void setup() {
@@ -81,6 +84,7 @@ void setup() {
 #else
   Serial.begin(115200);
 #endif
+  beginSerialGuard();
   WiFi.onEvent(networkEvent);
 #if ENTROPI_SECONDARY_CAMERA
   WiFi.mode(WIFI_STA);
