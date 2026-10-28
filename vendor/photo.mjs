@@ -19,7 +19,7 @@ export async function savePhoto(blob,name='entropi.jpg',isCurrent=()=>true){
     back.addEventListener('click',()=>dialog.close());dialog.addEventListener('close',()=>{image.removeAttribute('src');dialog.remove();focus?.focus({preventScroll:true})},{once:true});
     dialog.addEventListener('keydown',event=>{if(event.key==='Escape')event.stopPropagation()});
     hint.textContent='Hald inne på biletet, og vel «Lagre bilete» eller «Lagre i Foto».';
-    hint.style.cssText='position:absolute;left:12px;right:12px;bottom:calc(20px + env(safe-area-inset-bottom));color:#ddd;font:12px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;text-shadow:0 1px 4px #000;margin:0;pointer-events:none';
+    hint.style.cssText='position:absolute;width:1px;height:1px;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;pointer-events:none';
     dialog.append(image,back,hint);document.body.append(dialog);dialog.showModal();return;
   }
   const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);

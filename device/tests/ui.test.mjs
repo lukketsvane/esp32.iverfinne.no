@@ -6,7 +6,7 @@ import { COLOR_SCHEMES } from '../../vendor/color-schemes.mjs';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','function updateCameraChrome(){} async function archiveCapture(){}');
+const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','window.checkPhone=checkPhone;function updateCameraChrome(){} async function archiveCapture(){return {id:null,warning:null}} async function persistCurrentMaster(){}');
 const verifiedStatus = { camera_id: 'aaaaaaaaaaaa', camera_ready: true, stream_ready: true, recovering: false, recovery_attempts: 0, last_error: '', framesize: 10, photo_framesize: 15, brightness: 0, psram: true };
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
@@ -208,6 +208,7 @@ function harness(options = {}) {
     photoSnapshot:(image,pose,native=false)=>({width:native?1600:384,height:native?1200:288,data:new Uint8ClampedArray((native?1600*1200:384*288)*4),photo:true,image,pose:{...pose},native}),
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},
     savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
+    showExportOptions:async({image,name,isCurrent})=>{saves.push({blob:await image(),name,isCurrent,master:true})},
     createDepthScene: async (host, blob, onProgress, signal, quality, right, ...extra) => {
       sceneCalls.push({ host, blob, onProgress, signal, quality, right, extra });
       if (options.scene) {const viewer={setPrimitiveLevel(){},setPalette(id){this.palette=id},refresh(){return true},resetView(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,onProgress,signal,quality,right)};viewers.push(viewer);return viewer}
@@ -244,7 +245,7 @@ function harness(options = {}) {
   function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
   function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
-  return { status, elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, artCalls, artViews, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id), choosePalette:id=>{if(!colorBinding)throw Error('Palettes not mounted');colorBinding.onChoose(colorBinding.getKind(),id)}, paletteKind:()=>colorBinding?.getKind(), selectedPalette:()=>colorBinding?.getSelection(colorBinding.getKind()) };
+  return { checkModels:()=>window.checkPhone(), status, elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, artCalls, artViews, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id), choosePalette:id=>{if(!colorBinding)throw Error('Palettes not mounted');colorBinding.onChoose(colorBinding.getKind(),id)}, paletteKind:()=>colorBinding?.getKind(), selectedPalette:()=>colorBinding?.getSelection(colorBinding.getKind()) };
 }
 
 async function connectedCamera(options = {}) {
@@ -586,7 +587,7 @@ test('the connection helper exposes the open ENTROPI network without password fi
   assert.equal(app.get('onboarding').open,true);
   assert.equal(app.get('onboarding-title').textContent,'Finn kameraet');
   assert.match(app.get('onboarding-copy').textContent,/Slå på begge kameraa, vel ENTROPI under Wi-Fi/);
-  assert.equal(app.get('onboarding-next').textContent,'Prøv igjen');
+  assert.equal(app.get('onboarding-next').getAttribute('aria-label'),'Prøv igjen');
   assert.match(html,/vel ENTROPI under Wi-Fi og hald tilkoplinga utan internett/);
   assert.equal(app.get('password'),undefined);
   assert.equal(app.get('copy-password'),undefined);
@@ -652,7 +653,7 @@ test('VATHOgraphy checks phone preparation before capture and retains its mode w
   assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,0);
 });
 
-test('VATHOgraphy preserves the last frame through capture, processing, visible failure and retry',async()=>{
+test('VATHOgraphy preserves the last frame through capture, processing, accessible failure and icon retry',async()=>{
   const capture=deferred(),processing=deferred();let attempts=0;
   const app=await connectedCamera({vathography:true,fetch:url=>url.startsWith('/capture')?capture.promise:undefined,art:()=>++attempts===1?processing.promise:Promise.resolve({model:'ready'})});
   assert.equal(app.modelChecks.length,1);assert.equal(app.get('onboarding').open,false);
@@ -667,8 +668,8 @@ test('VATHOgraphy preserves the last frame through capture, processing, visible 
   processing.reject(new Error('Klarte ikkje å lese djupna.'));await app.tick(0);
   assert.equal(app.get('review-finder').hidden,false);assert.equal(app.get('scene-progress').hidden,true);
   assert.equal(app.get('scene-status').hidden,false);assert.match(app.get('scene-status').textContent,/lese djupna/);
-  assert.equal(app.get('retry-scene').hidden,false);assert.equal(app.get('retry-scene').textContent,'Prøv igjen');
-  assert.doesNotMatch(html,/<p id="scene-status" class="sr"/);
+  assert.equal(app.get('retry-scene').hidden,false);assert.equal(app.get('retry-scene').getAttribute('aria-label'),'Prøv djupnekunst på nytt');
+  assert.match(html,/<p id="scene-status" class="review-status sr"/);
   await app.get('retry-scene').emit('click');await app.tick(0);
   assert.equal(app.artCalls.length,2);assert.equal(app.get('marigold-view').hidden,false);
   assert.equal(app.get('review-finder').hidden,true);assert.equal(app.get('scene-status').hidden,true);
@@ -1052,8 +1053,8 @@ test('the visible onboarding close button cancels preparation without a late tak
 
 test('phone setup identifies its actions and preserves progress and actionable errors',async()=>{
   const pending=deferred(),app=await connectedCamera({modelsReady:false,prepare:()=>pending.promise});await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
-  assert.equal(app.get('onboarding-title').textContent,'Klargjer 3D');assert.match(app.get('onboarding-copy').textContent,/internett éin gong/);assert.equal(app.get('onboarding-copy').hidden,false);assert.equal(app.get('onboarding-next').textContent,'Fullfør');assert.equal(app.get('close-onboarding').getAttribute('aria-label'),'Tilbake til biletet');assert.equal(app.get('onboarding-help').open,false);
-  await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-title').textContent,'Fullfører 3D');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
+  assert.equal(app.get('onboarding-title').textContent,'Klargjer 3D');assert.match(app.get('onboarding-copy').textContent,/internett éin gong/);assert.equal(app.get('onboarding-copy').hidden,false);assert.equal(app.get('onboarding-next').getAttribute('aria-label'),'Fullfør');assert.equal(app.get('close-onboarding').getAttribute('aria-label'),'Tilbake til biletet');assert.equal(app.get('onboarding-help').open,false);
+  await app.get('onboarding-next').emit('click');assert.equal(app.get('onboarding-title').textContent,'Fullfører 3D');assert.equal(app.get('onboarding-progress').hidden,false);assert.equal(app.get('onboarding-copy').textContent,'');assert.equal(app.get('onboarding-copy').hidden,true);assert.equal(app.get('onboarding-feedback').textContent,'');app.preparations[0].onProgress({percent:37});assert.equal(app.get('onboarding-progress').value,37);assert.equal(app.get('onboarding-feedback').textContent,'');pending.reject(new Error('Internett manglar. Prøv igjen.'));await app.tick(0);assert.equal(app.get('onboarding-progress').hidden,true);assert.match(app.get('onboarding-feedback').textContent,/Internett manglar/);assert.equal(app.get('onboarding-next').hidden,false);assert.match(html,/<h1 id="onboarding-title" class="sr">/);assert.doesNotMatch(html,/class="eyebrow"|Fullfører klargjeringa på telefonen|Opnar skrivaren …/);
 });
 
 test('a suspended capture cannot reopen review or clear a newer capture while finishing late',async()=>{
@@ -1094,11 +1095,43 @@ test('a cold phone and blocked cache still allow camera use without a file choos
   assert.doesNotMatch(html,/<input\b[^>]*\btype=["']file["']/i);
 });
 
-test('a model check failure explains setup only after requesting splats',async()=>{
-  const app=await connectedCamera({modelsReady:async()=>{throw new Error('Manifest unavailable')}});
+test('a failed model check retries locally without asking for setup or replacing the photo',async()=>{
+  let fail=true;
+  const app=await connectedCamera({modelsReady:async()=>{if(fail)throw new Error('Manifest unavailable');return true},scene:async()=>({dispose(){}})});
+  await app.get('capture-plane').emit('click');const original=app.get('photo').src;app.changeStudio('image',1);await app.tick(0);
+  assert.equal(app.get('onboarding').open,false);assert.match(app.get('scene-status').textContent,/Manifest unavailable/);
+  assert.equal(app.get('photo').src,original);assert.equal(app.opened.length,0);assert.equal(app.preparations.length,0);
+  assert.equal(app.get('retry-scene').hidden,false);assert.equal(app.get('retry-scene').getAttribute('aria-label'),'Prøv 3D på nytt');
+  fail=false;await app.get('retry-scene').emit('click');await app.tick(0);
+  assert.equal(app.modelChecks.length,2);assert.equal(app.sceneCalls.length,1);assert.equal(app.get('onboarding').open,false);
+  assert.equal(app.get('retry-scene').hidden,true);assert.equal(app.get('scene-status').hidden,true);
+});
+
+test('a VATHOgraphy startup check failure exposes an accessible camera retry without setup',async()=>{
+  let fail=true;
+  const app=await connectedCamera({vathography:true,modelsReady:async()=>{if(fail)throw new Error('Manifest unavailable');return true}});
+  assert.equal(app.get('onboarding').open,false);assert.equal(app.get('retry-capture').hidden,false);
+  assert.match(app.get('retry-capture').getAttribute('aria-label'),/Manifest unavailable/);assert.equal(app.preparations.length,0);
+  fail=false;await app.get('retry-capture').emit('click');await app.tick(0);
+  assert.equal(app.modelChecks.length,2);assert.equal(app.get('retry-capture').hidden,true);assert.equal(app.get('onboarding').open,false);
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.artCalls.length,1);assert.equal(app.preparations.length,0);
+});
+
+test('a genuine missing model error still opens setup',async()=>{
+  const app=await connectedCamera({modelsReady:async()=>{throw Object.assign(new Error('Model missing'),{code:'PHONE_SETUP_REQUIRED'})}});
   await app.get('capture-plane').emit('click');app.changeStudio('image',1);await app.tick(0);
-  assert.equal(app.get('onboarding').open,true);assert.match(app.get('onboarding-feedback').textContent,/Manifest unavailable/);
-  assert.equal(app.get('photo').src,app.get('photo').src);assert.equal(app.opened.length,0);
+  assert.equal(app.get('onboarding').open,true);assert.equal(app.get('retry-scene').getAttribute('aria-label'),'Klargjer telefonen');
+});
+
+test('a failed cache recheck preserves verified readiness for the next capture',async()=>{
+  let fail=false;
+  const app=await connectedCamera({vathography:true,modelsReady:async()=>{if(fail)throw new Error('Manifest unavailable');return true}});
+  fail=true;await app.checkModels();
+  assert.equal(app.get('onboarding').open,false);assert.equal(app.modelChecks.length,2);
+  await app.get('retry-capture').emit('click');await app.tick(0);
+  assert.equal(app.artCalls.length,1);assert.equal(app.modelChecks.length,2);assert.equal(app.preparations.length,0);
+  assert.equal(app.get('onboarding').open,false);assert.equal(app.get('retry-capture').hidden,true);
 });
 
 test('the legacy Wi-Fi entry shows only handoff and makes no camera or model requests',async()=>{

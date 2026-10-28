@@ -95,5 +95,3 @@
 .review .image-rail{right:calc(69px + env(safe-area-inset-right));z-index:4}
 .review .access-control.right{z-index:9}
 }
-#photo-dialog #print-status.print-feedback{position:absolute;z-index:12;left:50%;bottom:calc(109px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(330px,calc(100% - 48px));padding:8px 10px;background:#080808e9;border:1px solid #333;color:#eee;font-size:12px;line-height:1.55;text-align:center;pointer-events:none;white-space:normal;clip-path:none;height:auto;opacity:1}
-@media(orientation:landscape) and (max-height:550px){#photo-dialog #print-status.print-feedback{left:52%;bottom:calc(6px + env(safe-area-inset-bottom));max-width:50%;font-size:10px;padding:6px 9px}}

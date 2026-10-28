@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
+import {createEntropiDocument} from '../vendor/entropi-document.mjs';
 
 const html=await readFile(new URL('../device/EntropiCamera/camera_ui.html',import.meta.url),'utf8');
 const section=(start,end)=>{
@@ -16,6 +17,103 @@ const modelNeedSource=section('function needsPhoneModels(','function renderOnboa
 const printSource=section('async function printCurrent(','function notifyCamera(');
 const saveSource=html.split('\n').find(line=>line.startsWith("$('save-photo').addEventListener('click',"));
 const jpeg=new Blob(['camera-jpeg'],{type:'image/jpeg'});
+const enhancement=await readFile(new URL('../device/EntropiCamera/camera-ui-v2.js',import.meta.url),'utf8');
+const persistSource=enhancement.slice(enhancement.indexOf('async function persistCurrentMaster('),enhancement.indexOf('async function openEntropiMaster('));
+
+test('embedded import restores saved values and recipe without running depth inference',async()=>{
+  const original=new Blob(['png'],{type:'image/png'}),rendered=new Blob(['frame'],{type:'image/png'}),calls=[],elements=new Map();
+  const master=createEntropiDocument({left:original,result:{depth:Float32Array.of(1,2,3,4),width:2,height:2},recipe:{preset:4,position:.1,width:1.5},preview:rendered});
+  const state=vm.createContext({
+    Blob,photoUrl:null,photoBlob:null,photoOriginal:null,photoPair:null,captureDocument:null,captureArchiveId:null,photoReceivedAt:null,photoName:'',
+    URL:{createObjectURL:()=> 'blob:import',revokeObjectURL(){}},Image:class {naturalWidth=2;naturalHeight=2;async decode(){}},
+    finder:{capture(){return {width:2,height:2,toBlob(callback){callback(rendered)}}}},
+    $:id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)},clearScene(){},printFeedback(){},
+    photoDialog:{open:false,showModal(){this.open=true}},photoView:{setSource(){}},photoGestures:{reset(){}},refreshReview(){},studioControls:{image:2},
+    marigoldView:{async restore(...args){calls.push(args)}},makeArt(){throw new Error('Unexpected inference')},makeScene(){throw new Error('Unexpected scene')}
+  });
+  vm.runInContext(section('async function showPhoto(','async function takePhoto('),state);
+  const signal=new AbortController().signal;
+  await state.showPhoto(original,signal,null,master,'stored-master');
+  assert.equal(calls.length,1);assert.equal(calls[0][0],original);assert.equal(calls[0][1],master.result);assert.equal(calls[0][2],master.recipe);assert.equal(calls[0][3],signal);
+  assert.equal(state.photoOriginal,original);assert.equal(state.captureDocument,master);assert.equal(state.captureArchiveId,'stored-master');assert.equal(state.photoDialog.open,true);
+});
+
+test('embedded master preserves both originals and updates the original archive record with the editable recipe',async()=>{
+  const writes=[],right=new Blob(['right-jpeg'],{type:'image/jpeg'}),preview=new Blob(['preview'],{type:'image/png'});
+  const result={depth:Float32Array.of(1.25,NaN,3.5,4),width:2,height:2,polarity:'near',model:'Depth Anything V2'};
+  const state=vm.createContext({
+    photoBlob:preview,photoOriginal:jpeg,photoPair:{left:jpeg,right},photoReceivedAt:'2026-10-28T13:00:00Z',
+    captureDocument:null,captureArchiveId:'original-record',masterSaveTimer:0,clearTimeout(){},cameraStatus:{camera_id:'primary'},secondId:'secondary',
+    createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:()=>preview,printFeedback(){},
+    marigoldView:{ready:true,result,recipe:{preset:1,position:0,width:1},snapshot(){return preview}},
+    archiveStore:{async saveDocument(master,id){writes.push({master,id});return {id}}}
+  });
+  vm.runInContext(persistSource,state);
+  const first=await state.persistCurrentMaster();
+  assert.equal(first.left,jpeg);assert.equal(first.right,right);assert.equal(writes[0].id,'original-record');
+  assert.deepEqual([...first.result.depth],[1.25,NaN,3.5,4]);assert.deepEqual([...first.result.validity],[1,0,1,1]);
+  assert.equal(first.result.units,'relative');assert.equal(first.geometry.calibration,null);assert.equal(first.capture.capturedAt,null);
+  state.marigoldView.recipe={preset:4,position:.25,width:1.5};
+  const second=await state.persistCurrentMaster();
+  assert.notEqual(first,second);assert.equal(first.id,second.id);assert.equal(first.recipe.preset,1);assert.equal(writes[1].id,'original-record');assert.equal(second.recipe.preset,4);
+  state.archiveStore.saveDocument=async()=>{throw Object.assign(new Error('full'),{name:'QuotaExceededError'})};
+  assert.equal((await state.persistCurrentMaster()).id,first.id);
+});
+
+test('a late master archive write cannot attach its record to a replacement capture',async()=>{
+  let finish;const preview=new Blob(['preview'],{type:'image/png'});
+  const state=vm.createContext({
+    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:null,masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
+    createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:()=>preview,printFeedback(){},
+    marigoldView:{ready:true,result:{depth:Float32Array.of(1),width:1,height:1},recipe:{preset:1,position:0,width:1},snapshot(){}},
+    archiveStore:{saveDocument:()=>new Promise(resolve=>{finish=resolve})}
+  });
+  vm.runInContext(persistSource,state);
+  const pending=state.persistCurrentMaster();state.photoBlob=new Blob(['new']);state.captureArchiveId='new-record';
+  await Promise.resolve();finish({id:'old-record'});await pending;assert.equal(state.captureArchiveId,'new-record');
+});
+
+test('embedded master writes serialize immutable edits and deleted captures remain exportable without recreation',async()=>{
+  const writes=[],finishes=[],preview=new Blob(['preview'],{type:'image/png'});
+  const state=vm.createContext({
+    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
+    createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:()=>preview,printFeedback(){},
+    marigoldView:{ready:true,result:{depth:Float32Array.of(1),width:1,height:1},recipe:{preset:1,position:0,width:1},snapshot(){}},
+    archiveStore:{saveDocument(master,id){writes.push({master,id});return new Promise(resolve=>finishes.push(()=>resolve({id})))}}
+  });
+  vm.runInContext(persistSource,state);
+  const first=state.persistCurrentMaster();await Promise.resolve();assert.equal(writes.length,1);
+  state.marigoldView.recipe={preset:4,position:.2,width:1.2};
+  const second=state.persistCurrentMaster();await Promise.resolve();assert.equal(writes.length,1);assert.equal(writes[0].master.recipe.preset,1);
+  finishes[0]();await first;await Promise.resolve();assert.equal(writes.length,2);assert.equal(writes[1].master.recipe.preset,4);
+  assert.equal(writes[0].id,writes[1].id);assert.equal(writes[0].master.id,writes[1].master.id);finishes[1]();await second;
+  state.captureArchiveSuppressed=true;
+  const exported=await state.persistCurrentMaster();assert.equal(exported.recipe.preset,4);assert.equal(writes.length,2);
+});
+
+test('archived master export offers its developed preview and numerical document',async()=>{
+  const options=[],originals=[],master={preview:new Blob(['preview'],{type:'image/png'}),result:{depth:Float32Array.of(1)}};
+  const record={left:jpeg,right:jpeg,document:master},state=vm.createContext({
+    archiveSelected:'master-1',archiveStore:{async get(){return record}},$:()=>({hidden:false}),
+    async showExportOptions(value){options.push(value)},async savePhoto(...args){originals.push(args)}
+  });
+  vm.runInContext(enhancement.slice(enhancement.indexOf('async function exportArchived('),enhancement.indexOf("for(const kind of ['left','right'])")),state);
+  await state.exportArchived('left');assert.equal(options.length,1);assert.equal(originals.length,0);assert.equal(options[0].image(),master.preview);assert.equal(options[0].document(),master);
+  await state.exportArchived('right');assert.equal(originals.length,1);assert.equal(originals[0][0],jpeg);
+  state.archiveSelected='replacement';assert.equal(options[0].isCurrent(),false);
+});
+
+test('deleting the current archive entry settles its queued writes before removal and suppresses autosaving',async()=>{
+  let finish,handler;const blob=new Blob(['capture']),removed=[],writes=new WeakMap();
+  writes.set(blob,new Promise(resolve=>{finish=resolve}));
+  const state=vm.createContext({
+    archiveSelected:'capture',captureArchiveId:'capture',archiveDeleteArmed:true,photoBlob:blob,captureArchiveSuppressed:false,masterSaveTimer:1,masterWrites:writes,
+    clearTimeout(){},$:()=>({addEventListener(_,callback){handler=callback}}),archiveStore:{async remove(id){removed.push(id)}},showArchive(){}
+  });
+  vm.runInContext(enhancement.slice(enhancement.indexOf("$('archive-delete').addEventListener"),enhancement.indexOf("window.addEventListener('keydown'")),state);
+  const deleting=handler();assert.equal(state.captureArchiveSuppressed,true);assert.equal(state.masterSaveTimer,0);assert.deepEqual(removed,[]);
+  finish();await deleting;assert.deepEqual(removed,['capture']);assert.equal(state.captureArchiveSuppressed,true);
+});
 
 test('side-by-side stereo export is removed from review and archive',async()=>{
   assert.doesNotMatch(html,/save-stereo|archive-pair|stereoPairImage|Lagar VATHOgraphy/);
@@ -45,8 +143,8 @@ function artHarness(options={}){
   const context=vm.createContext({
     photoBlob:new Blob(['framed']),photoOriginal:new Blob(['original']),photoPair:null,
     photoDialog:{open:true},studioControls:{image:2,setImage(value){this.image=value}},
-    sceneGeneration:1,artTask:null,artError:'',artProvider:'auto',phoneReady:true,phoneTask:null,secondEnabled:false,needsSetup:false,AbortController,DOMException,
-    $:()=>progress,refreshReview(){},controls(){},showOnboarding(){},checkPhone(){},
+    sceneGeneration:1,artTask:null,artError:'',phoneReady:true,phoneTask:null,secondEnabled:false,needsSetup:false,AbortController,DOMException,
+    $:()=>progress,refreshReview(){},controls(){},showOnboarding(){},checkPhone(){},async persistCurrentMaster(){},printFeedback(){},
     marigoldView:{
       ready:false,result:null,resets:0,
       async process(blob,signal,settings){
@@ -113,13 +211,9 @@ test('art uses the original capture or original left frame and reuses its cached
   await state.makeArt();assert.equal(app.inputs[1].blob,state.photoPair.left);
 });
 
-test('explicit Marigold selection replaces auto cache and persists for retry',async()=>{
-  const app=artHarness(),state=app.context;
-  await state.makeArt();assert.equal(app.inputs[0].settings.provider,'auto');
-  await state.makeArt('marigold');assert.equal(app.inputs.length,2);assert.equal(state.marigoldView.resets,1);
-  assert.equal(app.inputs[1].settings.provider,'marigold');
-  await state.makeArt();assert.equal(app.inputs.length,2);
-  state.marigoldView.reset();await state.makeArt();assert.equal(app.inputs[2].settings.provider,'marigold');
+test('art exposes no cloud refinement action or provider selection',async()=>{
+  const app=artHarness();await app.context.makeArt();
+  assert.equal(app.inputs[0].settings,undefined);assert.doesNotMatch(html,/onMarigoldRequest|artProvider/);
 });
 
 test('pending art is deduplicated and an old cancellation cannot clear a newer task',async()=>{
@@ -135,11 +229,11 @@ test('pending art is deduplicated and an old cancellation cannot clear a newer t
   assert.equal(state.artTask,null);assert.equal(state.marigoldView.result.model,'new');assert.equal(state.artError,'');
 });
 
-test('depth failures remain actionable while declined cloud consent returns to photo',async()=>{
+test('depth failures remain actionable while cancelled processing returns to photo',async()=>{
   const failed=artHarness({process:async()=>{throw new Error('Depth unavailable')}});
   await failed.context.makeArt();assert.equal(failed.context.artError,'Depth unavailable');assert.equal(failed.context.artTask,null);assert.equal(failed.context.studioControls.image,2);
   const cancelled=artHarness({process:async()=>{throw new DOMException('Declined','AbortError')}});
-  await cancelled.context.makeArt('marigold');assert.equal(cancelled.context.studioControls.image,0);assert.equal(cancelled.context.artError,'');
+  await cancelled.context.makeArt();assert.equal(cancelled.context.studioControls.image,0);assert.equal(cancelled.context.artError,'');
 });
 
 test('portable art requires the phone model even with a complete stereo pair; the local bridge bypasses it',async()=>{
@@ -151,11 +245,11 @@ test('portable art requires the phone model even with a complete stereo pair; th
   assert.equal(state.needsPhoneModels(),false);await state.makeArt();assert.equal(checks,1);assert.equal(app.inputs.length,1);
 });
 
-test('a failed cloud fallback with missing assets selects portable setup instead of repeating cloud inference',async()=>{
+test('missing model assets select portable setup instead of repeating inference',async()=>{
   const app=artHarness({process:async()=>{throw Object.assign(new Error('Model cache missing'),{code:'PHONE_SETUP_REQUIRED'})}}),state=app.context;
   let prompts=0;state.showOnboarding=()=>{prompts++};
-  await state.makeArt('marigold');
-  assert.equal(state.artProvider,'auto');assert.equal(state.phoneReady,false);assert.equal(state.needsSetup,true);
+  await state.makeArt();
+  assert.equal(state.phoneReady,false);assert.equal(state.needsSetup,true);
   assert.equal(state.needsPhoneModels(),true);assert.equal(prompts,1);assert.equal(state.artTask,null);
 });
 
@@ -166,14 +260,14 @@ test('art print and save use rendered snapshots and invalidate a replaced result
     printBusy:false,sceneVisible:false,artVisible:true,sceneViewer:null,connectGeneration:0,connecting:false,retryTimer:null,
     clearTimeout(){},stopStream(){},controls(){},printFeedback(){},resumeStream(){},
     printClient:{async print(image,isCurrent){prints.push({image,isCurrent})}},
-    photoName:'entropi-test.png',snapshotBlob:image=>image,async savePhoto(image,name,isCurrent){saves.push({image,name,isCurrent})}
+    photoName:'entropi-test.png',snapshotBlob:image=>image,async savePhoto(image,name,isCurrent){saves.push({image,name,isCurrent})},async showExportOptions({image,document,name,isCurrent}){saves.push({image:image(),document,name,isCurrent,master:true})}
   });
   vm.runInContext(printSource,state);await state.printCurrent();
   assert.equal(prints[0].image.depthArt,true);assert.equal(prints[0].image.native,false);assert.equal(prints[0].isCurrent(),true);
   let save;
   state.$=()=>({addEventListener:(_,callback)=>{save=callback}});
   assert.ok(saveSource);vm.runInContext(saveSource,state);await save();
-  assert.equal(saves[0].image.depthArt,true);assert.equal(saves[0].image.native,true);assert.equal(saves[0].isCurrent(),true);
+  assert.equal(saves[0].master,true);assert.equal(typeof saves[0].document,'function');assert.equal(saves[0].image.depthArt,true);assert.equal(saves[0].image.native,true);assert.equal(saves[0].isCurrent(),true);
   state.marigoldView.result={model:'replacement'};
   assert.equal(prints[0].isCurrent(),false);assert.equal(saves[0].isCurrent(),false);
 });

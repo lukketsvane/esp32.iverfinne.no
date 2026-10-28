@@ -42,8 +42,20 @@ export function sha256(bytes) {
   return Array.from(state, value => value.toString(16).padStart(8,'0')).join('');
 }
 
+let persistence;
+export function requestModelPersistence() {
+  const storage = globalThis.navigator?.storage;
+  if (!storage?.persist) return Promise.resolve(false);
+  return persistence ??= Promise.resolve().then(async () => await storage.persisted?.() || await storage.persist()).catch(() => false);
+}
+
+function storageUnavailable() {
+  const error = new Error('Telefonen kunne ikkje opne modellageret. Prøv igjen.');error.code = 'MODEL_STORAGE_UNAVAILABLE';return error;
+}
+
 async function cached(hash, value) {
-  if (!globalThis.indexedDB) return null;
+  void requestModelPersistence();
+  if (!globalThis.indexedDB) throw storageUnavailable();
   let db;
   try {
     db = await new Promise((resolve, reject) => {
@@ -58,7 +70,7 @@ async function cached(hash, value) {
       transaction.oncomplete = () => resolve(value || request.result || null);
       transaction.onerror = transaction.onabort = () => reject(new Error('Cache unavailable'));
     });
-  } catch { return null; }
+  } catch { throw storageUnavailable(); }
   finally { db?.close(); }
 }
 
@@ -89,8 +101,9 @@ export async function storeAsset(asset, bytes) {
   checkAsset(asset);
   if (!(bytes instanceof Uint8Array) || !await verified(bytes, asset)) throw new Error('Modellfila kunne ikkje kontrollerast.');
   const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer : bytes.slice().buffer;
-  if (!await cached(asset.sha256, buffer)) throw setupRequired('Telefonen kunne ikkje lagre modellen. Opne klargjeringa i Safari og prøv igjen.');
-  return loadCachedAsset(asset);
+  await cached(asset.sha256, buffer);
+  try { return await loadCachedAsset(asset); }
+  catch (error) { if (error.code === 'PHONE_SETUP_REQUIRED') throw storageUnavailable(); throw error; }
 }
 
 export async function loadAsset(asset, onProgress = () => {}, signal, fetcher = fetch) {
@@ -113,7 +126,7 @@ export async function loadAsset(asset, onProgress = () => {}, signal, fetcher = 
             if (done) break;
             if (written + value.length > bytes.length) throw new Error('Ugyldig modellfil.');
             bytes.set(value, written); written += value.length;
-            onProgress(Math.round(written / bytes.length * 100));
+            onProgress(Math.min(99, Math.round(written / bytes.length * 100)));
           }
         } finally { await reader.cancel().catch(() => {}); }
       } else {
@@ -123,10 +136,10 @@ export async function loadAsset(asset, onProgress = () => {}, signal, fetcher = 
       }
       if (written !== asset.bytes || !await verified(bytes, asset)) throw new Error('Modellfila kunne ikkje kontrollerast.');
       signal?.throwIfAborted();
-      await cached(asset.sha256, bytes.buffer);
+      const saved = await storeAsset(asset, bytes);
       onProgress(100);
-      return bytes;
-    } catch (error) { if (signal?.aborted) throw signal.reason || error; }
+      return saved;
+    } catch (error) { if (signal?.aborted) throw signal.reason || error; if (error.code === 'MODEL_STORAGE_UNAVAILABLE') throw error; }
   }
   throw setupRequired();
 }

@@ -17,7 +17,8 @@ function openArchive(){
 function transact(db,stores,mode,action){
   return new Promise((resolve,reject)=>{
     const transaction=db.transaction(stores,mode);
-    const result=action(transaction);
+    let result;
+    try{result=action(transaction)}catch(error){transaction.abort();reject(error);return}
     transaction.oncomplete=()=>resolve(result?.result);
     transaction.onerror=()=>reject(transaction.error);
     transaction.onabort=()=>reject(transaction.error||new Error('Lagringa vart avbroten.'));
@@ -64,6 +65,18 @@ export function createArchive(){
     async list(){
       const db=await connect(),records=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').getAll());
       return records.sort((a,b)=>b.created-a.created);
+    },
+    async saveDocument(document,id=document.id){
+      requestPersistence();
+      if(!id||!(document.left instanceof Blob)||!document.result?.depth||!(document.preview instanceof Blob))throw new Error('Ugyldig Entropi-dokument.');
+      const db=await connect(),existing=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').get(id));
+      const preview=await thumbnail(document.preview).catch(()=>existing?.preview??null);
+      const info={id,created:existing?.created??Date.parse(document.created),stereo:!!document.right,preview};
+      await transact(db,['photos','index'],'readwrite',tx=>{
+        tx.objectStore('photos').put({id,left:document.left,right:document.right,document});
+        tx.objectStore('index').put(info);
+      });
+      return info;
     },
     async get(id){
       const db=await connect();return await transact(db,['photos'],'readonly',tx=>tx.objectStore('photos').get(id));

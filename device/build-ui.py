@@ -37,10 +37,16 @@ bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replac
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
 bridge = "const { requestPhoneModels, phoneModelsReady } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady };\n})();"
 source = source.replace("__ENTROPI_VIEWFINDER__", palettes + "\n" + renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_PRINT_CLIENT__", printing).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
-marigold = "\n".join((shared / name).read_text(encoding="utf-8").replace("export ", "") for name in ["pointcloud/math.mjs", "vendor/vathography.mjs", "vendor/depth-source.mjs", "vendor/marigold-v2.mjs", "vendor/marigold-view.mjs"])
+marigold = "\n".join((shared / name).read_text(encoding="utf-8").replace("export ", "") for name in ["pointcloud/math.mjs", "vendor/vathography.mjs", "vendor/depth-source.mjs", "vendor/marigold-view.mjs"])
 marigold = re.sub(r"^import .*?;\s*", "", marigold, flags=re.MULTILINE)
 marigold = "const createMarigoldView = (() => {\n" + marigold + "\nreturn createMarigoldView;\n})();"
 source = source.replace("__ENTROPI_MARIGOLD__", marigold)
+documents = []
+for module, names in [("entropi-document", "createEntropiDocument, encodeEntropiDocument, decodeEntropiDocument"), ("entropi-export", "encodeDepthTiff, encodeDepthDng"), ("entropi-ui", "showExportOptions, pickEntropiDocument")]:
+    code = (shared / ("vendor/" + module + ".mjs")).read_text(encoding="utf-8").replace("export ", "")
+    code = re.sub(r"^import .*?;\s*", "", code, flags=re.MULTILINE)
+    documents.append("const { " + names + " } = (() => {\n" + code + "\nreturn { " + names + " };\n})();")
+source = source.replace("__ENTROPI_DOCUMENT__", "\n".join(documents))
 source = source.replace("__ENTROPI_APP_ENHANCEMENTS__", (sketch / "camera-ui-v2.js").read_text(encoding="utf-8"))
 source = source.replace("__ENTROPI_ICON__", "data:image/svg+xml," + quote((shared / "favicon.svg").read_text(encoding="utf-8"), safe=""))
 

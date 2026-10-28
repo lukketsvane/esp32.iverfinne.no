@@ -6,13 +6,13 @@ Den aktive kameraflata skal vere heilt svart utan dekorative titlar, statussetni
 
 VATHOgraphy brukar relativ djupn til å lage svartkvite bilete. Søkjaren viser gråtonar, og siste ramme blir ståande gjennom opptak og berekning. Depth Anything V2 Small og ONNX Runtime WASM køyrer på telefonen; resultatet er estimert monokulær djupn, ikkje metrisk stereokalibrering.
 
-Kameraet treng ikkje minnekort. Lagring gir eit vanleg PNG-bilete av den synlege foto-, splat- eller djupnevisinga; ingen 3D-fil blir eksportert. Standardflyten behandlar foto på telefonen eller den lokale PC-en. Den valfrie Marigold-knappen sender foto til Hugging Face etter samtykke.
+Kameraet treng ikkje minnekort. Lagring tilbyr PNG av den synlege kunsten, ei redigerbar `.entropi`-fil og 16-bits TIFF eller eksperimentell DNG av dei numeriske verdiane. Standardflyten behandlar foto på telefonen eller den lokale PC-en.
 
 ## Nettapp
 
 [esp32.iverfinne.no](https://esp32.iverfinne.no) brukar telefonkameraet. Første trykk opnar kameraet; neste trykk tek foto. ESP32-kameraet har den same VATHOgraphy-flyten på si lokale side.
 
-Normal vising har ein liten optisk søkjar, diskrete ikon og ei éinpiksels framdriftslinje. Siste ramme frys ved opptak og blir erstatta når djupnebiletet er klart. Ingen prosesseringstekst eller flytande modusikon blir viste. Feil gir ei synleg melding og nytt forsøk. Siste bilete og arkiv er tilgjengelege frå kameraet. Lagring og utskrift brukar den synlege kunsten; stereopar blir ikkje eksporterte side om side. Originalane blir framleis bevarte i arkivet.
+Normal vising har ein liten optisk søkjar, diskrete ikon og ei éinpiksels framdriftslinje. Siste ramme frys ved opptak og blir erstatta når djupnebiletet er klart. Kameravising, fotoarkiv og lagringsvising er utan synleg tekst. Status- og feilmeldingar er tilgjengelege for skjermlesar; feil gir eit ikon for nytt forsøk. Siste bilete og arkiv er tilgjengelege frå kameraet. Lagring og utskrift brukar den synlege kunsten; stereopar blir ikkje eksporterte side om side. Originalane, rå flyttalsdjupn og uttrykksval blir bevarte saman i arkivet. Importknappen i arkivet opnar `.entropi`; framkallingsknappen opnar lagra verdiar utan ny modellkøyring.
 
 På trygg HTTPS brukar støtta nettlesarar delingsarket. På iPhone eller lokal HTTP blir PNG-biletet opna i ei lagringsvising med native biletmeny ved langt trykk. Manglande modell opnar klargjering før opptak; modell og WASM blir kontrollerte med SHA-256 og mellomlagra i IndexedDB. Kalibrering har ingen synlege kontrollar.
 
@@ -69,13 +69,13 @@ VATHOgraphy brukar flyttalsdjupn med fem svartkvite tonekurver: Lysband, Dis, Dj
 
 På telefonen brukar modusen den eksisterande Depth Anything V2 Small-modellen med opptil 518 pikslar på lengste side. Tonekurva blir brukt etter interpolering av flyttalsdjupna til fotooppløysinga. Manglande modell opnar den same klargjeringa også når begge kameraa er tilkopla. Den [lokale USB-brua](local/README.md) brukar 770 pikslar og tek eit reelt par via riggen sin `stereo-snap`-kommando. Djupnekunsten brukar venstre original; begge kameraoriginalane blir bevarte. To tilkopla kamera stadfestar ikkje at bileta er kalibrerte eller maskinvaresynkroniserte.
 
-Marigold V2 er valfri. Når tenesta er tilgjengeleg, blir See-through Depth omsett frå Spectral-visinga til relativ djupn før same tonebehandling. Dette er ei tilnærming frå den fargelagde modellvisinga. Ved kvote- eller tenestefeil går appen tilbake til den lokale modellen og bevarer korrekt modellinformasjon i resultatet.
-
 ## Bygg og kontroll
 
 Nettappen er statiske filer utan byggjesteg. `pointcloud/` og `vendor/` er felles kjelde for nettappen og firmware; firmwarebyggjet legg den vesle koden inn i flash. Modell og WASM blir haldne utanfor flash.
 
 Ved endring av appskalet må cacheversjonen i `sw.js` aukast; klargjeringa har eigne cachefamiliar for `/prepare/` og `/start/` i `prepare/sw.js`. Dette held den mellomlagra offline-versjonen samla ved oppdatering.
+
+Modell og WASM har inga utløpstid. Dei blir lagra under SHA-256 i `entropi-depth-v1`, lesne tilbake før klargjeringa er ferdig og gjenbrukte på tvers av appoppdateringar. HTTPS-appen ber om varig nettlesarlagring ved oppstart og modellbruk. Mellombelse nettverks- eller lagringsfeil utløyser ny prøving, ikkje ny modellklargjering. Lokal HTTP støttar ikkje denne førespurnaden om varig lagring, og Safari og heimskjermappen kan ha skilde lager. iOS kan framleis avslå varig lagring; sletting av appdata fjernar også modellen.
 
 ```powershell
 python prepare-models.py
@@ -89,3 +89,9 @@ ESP32 core **3.3.12**, AI Thinker ESP32-CAM, 4 MB flash, `huge_app`. Ta full bac
 Automatiske testar dekkjer opptaksflyt, feilhandtering, avbrot, meldingsopphav, djupnegeometri, Gaussian-data, modellintegritet og at lagring gir same svartkvitt, utsnitt eller splatstil som visinga. GitHub Actions køyrer testane ved push og pull request; Linux-byggjemiljøet køyrer òg den native C++-testen av JPEG-parseren. Lokalt blir denne testen eksplisitt hoppa over dersom ein C++-vertskompilator manglar. Ekte modellkøyring og WebGL er kontrollerte i Chromium på PC. Brukaren sitt iPhone-opptak stadfestar søkjar og JPEG-opptak; den nye klargjeringa og 3D utan internett må òg kontrollerast på fysisk iPhone/Safari.
 
 Søkjar og djupneprojeksjon er tilpassa [entropi.iverfinne.no](https://github.com/lukketsvane/entropi.iverfinne.no), commit `4f2aa4ce11349350d4b924e2a876655f0502f65b`. Modellrevisjon, storleik og kontrollsummar ligg i `pointcloud/models/manifest.json`. Modell- og runtime-lisensar følgjer filene. Espressif-lisensen er bevart i firmware.
+
+## Redigerbar Entropi-fil
+
+[Formatet](docs/entropi-format.md) bevarer originalbileta byte for byte, dei uendra float32-verdiane før normalisering og tonekurve, ei separat gyldigheitsmaske, kjeldeinformasjon og uttrykksval. Dokumentidentiteten følgjer fila ved opning, redigering og ny lagring. Ho er ein ZIP med JSON og binære flyttalsdata, med SHA-256-kontroll og avgrensa innlesing. Dette er nettlesarprofilen `numerical-float32` versjon 1; den tidlegare eksperimentelle OpenEXR-prototypen er ikkje same profil.
+
+PNG brukar den synlege kunsten. TIFF og DNG mappar dei opphavlege numeriske verdiane direkte til 16 bit, utan eit 8-bits mellomsteg; verdiområde, retning og einingar ligg i metadata. Dei to eksportane er alternative utgangspunkt for framkalling i annan programvare. DNG er eit eksperimentelt monokromt LinearRaw-bilete, ikkje sensor-RAW eller ei lovnad om at Lightroom brukar eit innebygd djupnekart. Uavhengig TIFF- og LibRaw-innlesing er testa; faktisk Lightroom- og iPhone-import må kontrollerast separat.

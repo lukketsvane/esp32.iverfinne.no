@@ -88,7 +88,7 @@ test('a partial transfer, abort or timeout never reports a prepared phone',async
 test('failed phone storage cannot acknowledge a model or report completion',async()=>{
   await withDatabase(async()=>{
     const app=harness(),session=await app.ready();await app.emit(app.asset('asset',session));
-    await assert.rejects(app.promise,{code:'PHONE_SETUP_REQUIRED'});assert.equal(app.messages.length,1);
+    await assert.rejects(app.promise,{code:'MODEL_STORAGE_UNAVAILABLE'});assert.equal(app.messages.length,1);
   },{failWrites:true});
 });
 

@@ -1,4 +1,4 @@
-const archiveStore=createArchive();
+const archiveStore=createArchive(),masterWrites=new WeakMap();
 let archiveRecords=[],archiveSelected=null,archiveViewer=null,archiveUrls=[],archiveDeleteArmed=false;
 let selfTimer=0,countdown=0,countdownTimer=null,peerPreviewBusy=false,peerFinder=null;
 
@@ -30,12 +30,41 @@ $('timer-cycle').addEventListener('click',()=>{
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelCountdown()});
 
+function scheduleMasterSave(){
+  clearTimeout(masterSaveTimer);const blob=photoBlob,result=marigoldView.result;
+  masterSaveTimer=setTimeout(()=>{masterSaveTimer=0;if(blob===photoBlob&&result===marigoldView.result)void persistCurrentMaster().catch(error=>printFeedback(error.message))},300);
+}
+async function persistCurrentMaster(){
+  clearTimeout(masterSaveTimer);masterSaveTimer=0;
+  if(!marigoldView.ready||!photoOriginal)throw new Error('Djupnebiletet er ikkje klart.');
+  const blob=photoBlob,result=marigoldView.result,preview=snapshotBlob(marigoldView.snapshot(true));
+  const master=createEntropiDocument(captureDocument?{...captureDocument,recipe:marigoldView.recipe,preview}:{left:photoPair?.left??photoOriginal,right:photoPair?.right??null,result,recipe:marigoldView.recipe,preview,geometry:{referenceCamera:'left',calibration:null},capture:{capturedAt:photoPair?.captured_at??null,receivedAt:photoReceivedAt,hardwareSynchronized:photoPair?.hardware_synchronized??false,transport:photoPair?.transport??'wifi',leftCameraId:cameraStatus?.camera_id??null,rightCameraId:secondId||null}});
+  captureDocument=master;if(captureArchiveSuppressed)return master;const id=captureArchiveId??master.id;
+  const write=(masterWrites.get(blob)??Promise.resolve()).then(async()=>{const record=await archiveStore.saveDocument(master,id);if(blob===photoBlob&&result===marigoldView.result)captureArchiveId=record.id}).catch(error=>{if(blob===photoBlob&&result===marigoldView.result)printFeedback('Biletet er ikkje arkivert. Lagre Entropi-fila manuelt. '+(error?.name==='QuotaExceededError'?'Lagringa er full.':''))});
+  masterWrites.set(blob,write);await write;return master;
+}
+async function openEntropiMaster(master,id=null){
+  if(busy||printBusy)return;
+  ++connectGeneration;clearTimeout(retryTimer);stopStream();stopSecond();
+  const task=new AbortController();captureTask=task;busy=true;controls();
+  try{
+    if(marigoldView.ready)await persistCurrentMaster();task.signal.throwIfAborted();
+    closeArchive();onboarding.close();
+    await showPhoto(master.left,task.signal,master.right?{left:master.left,right:master.right}:null,master,id);
+    studioControls.setImage(2);refreshReview();
+    await persistCurrentMaster().catch(error=>printFeedback(error.message));
+  }catch(error){if(!task.signal.aborted)notice(error.message,true)}
+  finally{if(captureTask===task){captureTask=null;busy=false;controls();resumeStream()}}
+}
+$('archive-import').addEventListener('click',async()=>{try{const master=await pickEntropiDocument();if(master)await openEntropiMaster(master)}catch(error){$('archive-notice').textContent=error.message}});
+$('archive-edit').addEventListener('click',async()=>{const id=archiveSelected;if(!id)return;try{const record=await archiveStore.get(id);if(archiveSelected===id&&record?.document)await openEntropiMaster(record.document,id)}catch(error){$('archive-notice').textContent=error.message}});
+
 async function archiveCapture(original,pair){
   try{
-    await archiveStore.save(pair?.left??original,pair?.right??null);
-    return '';
+    const record=await archiveStore.save(pair?.left??original,pair?.right??null);
+    return {id:record.id,warning:''};
   }catch(error){
-    return 'Biletet er ikkje arkivert automatisk. Lagre det manuelt før du tek eit nytt. '+(error?.name==='QuotaExceededError'?'Lagringa er full.':'');
+    return {id:null,warning:'Biletet er ikkje arkivert automatisk. Lagre det manuelt før du tek eit nytt. '+(error?.name==='QuotaExceededError'?'Lagringa er full.':'')};
   }
 }
 
@@ -59,9 +88,11 @@ async function showArchive(){
   clearArchiveUrls();
   const grid=$('archive-grid');grid.replaceChildren();
   try{
+    if(marigoldView.ready)await persistCurrentMaster();
+    if($('archive').hidden)return;
     archiveRecords=await archiveStore.list();
     if(!archiveRecords.length){
-      const empty=document.createElement('p');empty.className='vault-empty';empty.textContent='Ingen bilete enno.';grid.append(empty);
+      const empty=document.createElement('p');empty.className='vault-empty sr';empty.textContent='Ingen bilete enno.';grid.append(empty);
     }
     for(const record of archiveRecords){
       const button=document.createElement('button');button.className='vault-item';button.type='button';
@@ -72,7 +103,7 @@ async function showArchive(){
       grid.append(button);
     }
   }catch(error){
-    const empty=document.createElement('p');empty.className='vault-empty';empty.textContent=error?.message||'Lagringa kunne ikkje opnast.';grid.append(empty);
+    const empty=document.createElement('p');empty.className='vault-empty sr';empty.textContent=error?.message||'Lagringa kunne ikkje opnast.';grid.append(empty);
   }
 }
 async function openArchivedPhoto(id){
@@ -80,12 +111,13 @@ async function openArchivedPhoto(id){
   const record=await archiveStore.get(id).catch(()=>null);
   if(!record||archiveSelected!==id)return;
   if(archiveViewer)URL.revokeObjectURL(archiveViewer);
-  archiveViewer=URL.createObjectURL(record.left);
+  archiveViewer=URL.createObjectURL(record.document?.preview??record.left);
   $('archive-photo').src=archiveViewer;
   $('archive-detail-info').textContent=archiveDate(archiveRecords.find(entry=>entry.id===id)?.created??Date.now())+'  ·  '+(record.right?'STEREO':'FOTO');
-  $('archive-left').textContent=record.right?'Lagre venstre':'Lagre original';
+  $('archive-left').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':record.right?'Lagre venstre':'Lagre original');
   $('archive-right').hidden=!record.right;
-  $('archive-delete').textContent='Slett';
+  $('archive-edit').hidden=!record.document;
+  $('archive-delete').setAttribute('aria-label','Slett');$('archive-delete').dataset.armed='false';
   $('archive-notice').textContent='';
   $('archive-grid').hidden=true;$('archive-detail').hidden=false;
 }
@@ -103,9 +135,12 @@ async function exportArchived(kind){
   const id=archiveSelected;if(!id)return;
   const record=await archiveStore.get(id);
   if(!record||archiveSelected!==id)return;
+  const isCurrent=()=>archiveSelected===id&&!$('archive').hidden;
+  if(kind==='left'&&record.document){await showExportOptions({image:()=>record.document.preview,document:()=>record.document,name:'entropi-'+id,isCurrent});return}
   const blob=kind==='right'?record.right:record.left;
   if(!blob)return;
-  await savePhoto(blob,'entropi-'+id+'-'+kind+'.jpg',()=>archiveSelected===id&&!$('archive').hidden);
+  const extension=blob.type==='image/png'?'png':blob.type==='image/webp'?'webp':'jpg';
+  await savePhoto(blob,'entropi-'+id+'-'+kind+'.'+extension,isCurrent);
 }
 for(const kind of ['left','right']){
   $('archive-'+kind).addEventListener('click',()=>void exportArchived(kind).catch(error=>{$('archive-notice').textContent=error.message}));
@@ -113,10 +148,11 @@ for(const kind of ['left','right']){
 $('archive-delete').addEventListener('click',async()=>{
   const id=archiveSelected;if(!id)return;
   if(!archiveDeleteArmed){
-    archiveDeleteArmed=true;$('archive-delete').textContent='Trykk igjen for å slette';return;
+    archiveDeleteArmed=true;$('archive-delete').setAttribute('aria-label','Trykk igjen for å slette');$('archive-delete').dataset.armed='true';return;
   }
-  await archiveStore.remove(id);
-  void showArchive();
+  const current=id===captureArchiveId,blob=photoBlob;
+  if(current){captureArchiveSuppressed=true;clearTimeout(masterSaveTimer);masterSaveTimer=0;await masterWrites.get(blob)}
+  try{await archiveStore.remove(id);void showArchive()}catch(error){if(current&&blob===photoBlob)captureArchiveSuppressed=false;$('archive-notice').textContent=error.message}
 });
 window.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&!$('archive').hidden){event.preventDefault();if(!$('archive-detail').hidden)void showArchive();else closeArchive()}

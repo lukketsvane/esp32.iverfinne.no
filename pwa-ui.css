@@ -21,13 +21,13 @@
 .phone-vault-top{display:flex;justify-content:flex-end;margin-bottom:12px}
 .phone-vault button{font:inherit;touch-action:manipulation;background:#151515;color:#ddd;border:1px solid #393939;padding:10px 13px;min-height:44px}
 .phone-vault #phone-vault-close{display:grid;place-items:center;width:44px;height:44px;padding:0;border:0;background:none}
-#phone-vault-close svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5}
+.phone-vault button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 .phone-vault-grid{overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;align-content:start;flex:1;padding-bottom:30px}
 .phone-vault-grid button{padding:0;border:1px solid #242424;text-align:left;min-width:0}
 .phone-vault-grid img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;filter:grayscale(1)}
 .phone-vault-detail{display:flex;flex-direction:column;flex:1;gap:12px;min-height:0;padding-top:16px}
 .phone-vault-detail img{width:100%;flex:1;min-height:0;object-fit:contain;filter:grayscale(1)}
-.phone-vault-toolbar{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.phone-vault-toolbar{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.phone-vault-toolbar button{display:grid;place-items:center}.phone-vault-toolbar button.armed{color:#fff;background:#572323;border-color:#d47777}
 .phone-vault-toolbar #phone-vault-save{grid-column:1/-1;border-color:#888}
 @media(orientation:landscape) and (max-height:550px){
 .pwa-heading{top:calc(12px + env(safe-area-inset-top));left:calc(20px + env(safe-area-inset-left));gap:5px}
@@ -72,5 +72,3 @@
 .pwa-bottom #open-gallery{left:12px;bottom:calc(8px + env(safe-area-inset-bottom))}
 .studio .access-control.device-link{top:calc(6px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right))}
 }
-
-#phone-vault-status{font-size:12px;line-height:1.6;color:#aaa;margin:12px 0}#phone-vault-status:empty{display:none}

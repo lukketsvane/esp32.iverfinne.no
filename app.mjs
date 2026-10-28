@@ -10,14 +10,17 @@ import { PX10Printer } from './vendor/print/printer.mjs';
 import { cloudPrintJob } from './vendor/print/cloud-raster.mjs';
 import { createPrintClient } from './vendor/print-client.mjs';
 import { createArchive } from './vendor/archive.mjs';
+import { createEntropiDocument } from './vendor/entropi-document.mjs';
+import { showExportOptions, pickEntropiDocument } from './vendor/entropi-ui.mjs';
 
 const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder=new Viewfinder($('viewfinder'));
 const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 const gallery=createArchive();
+let currentDocument=null,archiveState={id:null,pending:null,suppressed:false},documentTimer=0,photoReceivedAt=null;
 let facingMode='environment',shutterDelay=0,shutterTimer=null,shutterCountdown=0,galleryOpen=false;
 let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,artTask=null,generation=0,captureGeneration=0,cameraGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
 const photoView=createPhotoView(photo);
-const depthArt=createMarigoldView($('marigold-view'),{onStatus:progress,onGesture:()=>{pointer=null;lastTap=0;captureAfter=performance.now()+400},onMarigoldRequest:()=>void makeDepthArt('marigold')});
+const depthArt=createMarigoldView($('marigold-view'),{onStatus:progress,onGesture:()=>{pointer=null;lastTap=0;captureAfter=performance.now()+400},onChange:()=>{clearTimeout(documentTimer);documentTimer=setTimeout(()=>void persistDocument().catch(error=>printFeedback(error.message)),400)}});
 const paletteSelection={photo:readColorScheme('photo'),depth:readColorScheme('depth')};
 const profileIndex=kind=>Math.max(0,COLOR_SCHEMES.findIndex(scheme=>scheme.id===paletteSelection[kind]));
 const studioControls=attachStudioControls([$('studio')],(kind,level)=>{
@@ -58,7 +61,7 @@ function state(next,message='',sceneFailure=false){
 }
 function stopCamera(){++cameraGeneration;openingCamera=false;$('studio').classList.remove('opening');stream?.getTracks().forEach(track=>track.stop());stream=null;video.pause();video.srcObject=null}
 function clearScene(){task?.abort();task=null;scene?.dispose();scene=null;$('scene').replaceChildren()}
-function clearPhoto(){artTask?.abort();artTask=null;depthArt.reset();if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=null;photoBlob=null;photoReady=false;photo.removeAttribute('src');$('thumbnail').removeAttribute('src')}
+function clearPhoto(){clearTimeout(documentTimer);currentDocument=null;archiveState={id:null,pending:null,suppressed:false};photoReceivedAt=null;artTask?.abort();artTask=null;depthArt.reset();if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=null;photoBlob=null;photoReady=false;photo.removeAttribute('src');$('thumbnail').removeAttribute('src')}
 function progress(update){if(studioControls.image===0||mode==='camera'||capturing)return;const known=Number.isFinite(update.percent);$('progress').classList.toggle('indeterminate',!known);$('progress').firstElementChild.style.width=known?Math.max(0,Math.min(100,update.percent))+'%':'';$('status').textContent=''}
 
 async function startCamera(){
@@ -88,14 +91,13 @@ async function makeScene(){
   finally{if(task===processing)task=null}
 }
 
-async function makeDepthArt(provider='auto'){
+async function makeDepthArt(){
   if(!photoReady||studioControls.image!==2||mode==='camera')return;
-  if(provider==='marigold'){artTask?.abort();artTask=null;depthArt.reset()}
   if(depthArt.ready){state('done');return}
   state('working');if(artTask)return;
   const current=generation,blob=photoBlob,processing=artTask=new AbortController();progress({phase:'reading'});
   try{
-    await depthArt.process(blob,processing.signal,{provider});
+    await depthArt.process(blob,processing.signal);
     if(current!==generation||blob!==photoBlob)return;
     if(studioControls.image===2&&mode!=='camera'&&!capturing)state('done');else $('marigold-view').hidden=true;
   }catch(error){
@@ -104,12 +106,28 @@ async function makeDepthArt(provider='auto'){
   }finally{if(artTask===processing)artTask=null}
 }
 
-async function acceptPhoto(blob,name='entropi.jpg'){
+function makeDocument(){
+  if(!photoReady||!depthArt.ready)throw new Error('Djupnebiletet er ikkje klart.');
+  currentDocument=createEntropiDocument({...currentDocument,left:photoBlob,result:depthArt.result,recipe:depthArt.recipe,preview:snapshotBlob(depthArt.snapshot(true)),capture:currentDocument?.capture??{receivedAt:photoReceivedAt}});
+  return currentDocument;
+}
+async function persistDocument(){
+  clearTimeout(documentTimer);documentTimer=0;
+  if(!photoReady||!depthArt.ready)return;
+  const document=makeDocument(),session=archiveState,pending=session.pending;
+  if(session.suppressed)return document;
+  const write=(async()=>{await pending;if(session.suppressed)return;const record=await gallery.saveDocument(document,session.id??document.id);session.id=record.id;return record})();
+  session.pending=write.catch(()=>null);await write;return document;
+}
+async function acceptPhoto(blob,name='entropi.jpg',stored=null,recordId=null){
   if(!(blob instanceof Blob)||!blob.type.startsWith('image/')||!blob.size||blob.size>40*1024*1024){state('error','Kamerafotoet kunne ikkje lesast.');return}
+  if(depthArt.ready)void persistDocument().catch(error=>printFeedback(error.message));
   const current=++generation;++captureGeneration;capturing=false;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
   state('working');
-  void gallery.save(blob).catch(()=>printFeedback('Fotoet er ikkje arkivert automatisk. Bruk lagreknappen før du går vidare.'));
-  try{await photo.decode();if(current!==generation)return;photoView.setSource();photoReady=true;photoGestures.reset();if(studioControls.image===1)await makeScene();else if(studioControls.image===2)await makeDepthArt();else state('done')}
+  currentDocument=stored;photoReceivedAt=new Date().toISOString();
+  const session=archiveState;session.id=recordId??stored?.id??null;
+  session.pending=(recordId?Promise.resolve({id:recordId}):stored?gallery.saveDocument(stored):gallery.save(blob)).then(record=>{session.id=record?.id??session.id;return record}).catch(()=>{printFeedback('Fotoet er ikkje arkivert automatisk. Bruk lagreknappen før du går vidare.');return null});
+  try{await photo.decode();if(current!==generation)return;photoView.setSource();photoReady=true;photoGestures.reset();if(stored){const processing=artTask=new AbortController();await depthArt.restore(blob,stored.result,stored.recipe,processing.signal);if(current!==generation)return;artTask=null;studioControls.setImage(2);state('done')}else if(studioControls.image===1)await makeScene();else if(studioControls.image===2)await makeDepthArt();else state('done')}
   catch(error){if(current===generation)state('error',error.message||'Fotoet kunne ikkje lesast.')}
 }
 
@@ -134,6 +152,7 @@ async function printCurrent(){const source=scene,blob=photoBlob,image=studioCont
 async function save(){
   if(!photoBlob||!photoReady||mode!=='done'||studioControls.image===1&&!scene||studioControls.image===2&&!depthArt.ready)return;
   const blob=photoBlob,source=scene,image=studioControls.image,result=depthArt.result;
+  if(image===2){showExportOptions({image:()=>snapshotBlob(depthArt.snapshot(true)),document:async()=>{const document=makeDocument();void persistDocument().catch(error=>printFeedback(error.message));return document},name:photoName,isCurrent:()=>photoBlob===blob&&mode==='done'&&image===studioControls.image&&result===depthArt.result});return}
   try{const rendered=snapshotBlob(image===1?source.snapshot(true):image===2?depthArt.snapshot(true):photoView.snapshot(photoGestures.state,true));await savePhoto(rendered,photoName.replace(/\.[^.]+$/,'')+'.png',()=>photoBlob===blob&&mode==='done'&&studioControls.image===image&&(image===0||image===1&&scene===source||image===2&&result===depthArt.result))}catch(error){printFeedback(error.message)}
 }
 
@@ -205,9 +224,10 @@ async function openPhoneGallery(){
   galleryCurrent=null;clearGalleryUrls();
   const grid=$('phone-vault-grid');grid.replaceChildren();
   try{
+    if(depthArt.ready)await persistDocument().catch(error=>{$('phone-vault-status').textContent=error.message});
     galleryItems=await gallery.list();
     if(!galleryItems.length){
-      const empty=document.createElement('p');empty.textContent='Ingen foto enno.';empty.style.cssText='color:#888;font-size:13px';grid.append(empty);
+      const empty=document.createElement('p');empty.className='sr-only';empty.textContent='Ingen foto enno.';grid.append(empty);
     }
     for(const item of galleryItems){
       const button=document.createElement('button'),image=document.createElement('img');
@@ -224,12 +244,13 @@ async function showPhoneRecord(id){
   try{record=await gallery.get(id);if(!record)throw new Error('Fotoet er ikkje tilgjengeleg.')}
   catch(error){$('phone-vault-status').textContent=error.message||'Kunne ikkje opne fotoet.';return}
   if(galleryCurrent!==id)return;
+  $('phone-vault-edit').hidden=!record.document;
   if(galleryImageUrl)URL.revokeObjectURL(galleryImageUrl);
-  galleryImageUrl=URL.createObjectURL(record.left);
+  galleryImageUrl=URL.createObjectURL(record.document?.preview??record.left);
   $('phone-vault-image').src=galleryImageUrl;
   $('phone-vault-grid').hidden=true;
   $('phone-vault-detail').hidden=false;
-  $('phone-vault-remove').textContent='Slett';
+  $('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed');
 }
 function closePhoneGallery(){
   if(!galleryOpen)return;galleryOpen=false;galleryCurrent=null;
@@ -239,20 +260,30 @@ function closePhoneGallery(){
 $('open-gallery').addEventListener('click',()=>void openPhoneGallery());
 $('phone-vault-close').addEventListener('click',closePhoneGallery);
 $('phone-vault-back').addEventListener('click',()=>void openPhoneGallery());
+$('phone-vault-import').addEventListener('click',async()=>{
+  try{const document=await pickEntropiDocument();if(!document)return;closePhoneGallery();await acceptPhoto(document.left,document.id+'.entropi',document)}catch(error){$('phone-vault-status').textContent=error.message||'Kunne ikkje opne Entropi-fila.'}
+});
+$('phone-vault-edit').addEventListener('click',async()=>{
+  const id=galleryCurrent;if(!id)return;
+  try{const record=await gallery.get(id);if(id!==galleryCurrent||!record?.document)return;closePhoneGallery();await acceptPhoto(record.left,record.document.id+'.entropi',record.document,id)}catch(error){printFeedback(error.message)}
+});
 $('phone-vault-save').addEventListener('click',async()=>{
   const id=galleryCurrent;if(!id)return;
   $('phone-vault-status').textContent='';
   try{
     const record=await gallery.get(id);if(!record)throw new Error('Fotoet er ikkje tilgjengeleg.');if(id!==galleryCurrent)return;
+    if(record.document){showExportOptions({image:()=>record.document.preview,document:()=>record.document,name:record.document.id,isCurrent:()=>id===galleryCurrent&&galleryOpen});return}
     await savePhoto(record.left,'entropi-'+id+'.png',()=>id===galleryCurrent&&galleryOpen);
   }catch(error){$('phone-vault-status').textContent=error.message||'Kunne ikkje lagre fotoet.'}
 });
 $('phone-vault-remove').addEventListener('click',async()=>{
   if(!galleryCurrent)return;
-  if(!galleryDeleteConfirm){galleryDeleteConfirm=true;$('phone-vault-remove').textContent='Trykk igjen for å slette';return}
+  if(!galleryDeleteConfirm){galleryDeleteConfirm=true;$('phone-vault-remove').setAttribute('aria-label','Trykk igjen for å slette');$('phone-vault-remove').classList.add('armed');return}
   $('phone-vault-status').textContent='';
-  try{await gallery.remove(galleryCurrent);galleryCurrent=null;void openPhoneGallery()}
-  catch(error){galleryDeleteConfirm=false;$('phone-vault-remove').textContent='Slett';$('phone-vault-status').textContent=error.message||'Kunne ikkje slette fotoet.'}
+  const id=galleryCurrent,session=archiveState,wasSuppressed=session.suppressed;
+  if(session.id===id)session.suppressed=true;
+  try{await session.pending;if(session.id===id)session.suppressed=true;await gallery.remove(id);if(galleryCurrent===id){galleryCurrent=null;void openPhoneGallery()}}
+  catch(error){if(archiveState===session)session.suppressed=wasSuppressed;if(galleryCurrent===id){galleryDeleteConfirm=false;$('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed');$('phone-vault-status').textContent=error.message||'Kunne ikkje slette fotoet.'}}
 });
 window.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&galleryOpen){event.preventDefault();if(!$('phone-vault-detail').hidden)void openPhoneGallery();else closePhoneGallery()}

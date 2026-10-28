@@ -80,7 +80,8 @@ test('SHA-256 works without a secure browser context, including padding boundari
   }
 });
 
-test('online preparation uses its own verified model before a pinned public fallback', async () => {
+test('online preparation uses its own verified model before a pinned public fallback', async t => {
+  const previous=globalThis.indexedDB;globalThis.indexedDB=memoryIndexedDB();t.after(()=>{if(previous===undefined)delete globalThis.indexedDB;else globalThis.indexedDB=previous});
   const bytes=new Uint8Array([1,2,3,4]),calls=[];
   const asset={local:'/pointcloud/model',url:'https://example.test/model',bytes:bytes.length,sha256:digest(bytes)};
   const result=await loadAsset(asset,()=>{},undefined,async url=>{calls.push(url);return new Response(bytes)});
@@ -88,7 +89,8 @@ test('online preparation uses its own verified model before a pinned public fall
   assert.deepEqual(calls,[asset.local]);
 });
 
-test('a corrupt online model falls back to a verified pinned download', async () => {
+test('a corrupt online model falls back to a verified pinned download', async t => {
+  const previous=globalThis.indexedDB;globalThis.indexedDB=memoryIndexedDB();t.after(()=>{if(previous===undefined)delete globalThis.indexedDB;else globalThis.indexedDB=previous});
   const bytes=new Uint8Array([1,2,3,4]),calls=[];
   const asset={local:'/pointcloud/model',url:'https://example.test/model',bytes:bytes.length,sha256:digest(bytes)};
   const result=await loadAsset(asset,()=>{},undefined,async url=>{calls.push(url);return new Response(url===asset.local?new Uint8Array([9,9,9,9]):bytes)});
@@ -96,7 +98,8 @@ test('a corrupt online model falls back to a verified pinned download', async ()
   assert.deepEqual(calls,[asset.local,asset.url]);
 });
 
-test('wrong checksums, truncated data and oversized streams never reach inference', async () => {
+test('wrong checksums, truncated data and oversized streams never reach inference', async t => {
+  const previous=globalThis.indexedDB;globalThis.indexedDB=memoryIndexedDB();t.after(()=>{if(previous===undefined)delete globalThis.indexedDB;else globalThis.indexedDB=previous});
   const bytes=new Uint8Array([1,2,3,4]),asset={local:'/model',bytes:4,sha256:digest(bytes)};
   for(const data of [new Uint8Array([1,2,3]),new Uint8Array([9,9,9,9]),new Uint8Array([1,2,3,4,5])]) {
     await assert.rejects(loadAsset(asset,()=>{},undefined,async()=>new Response(data)),{code:'PHONE_SETUP_REQUIRED'});

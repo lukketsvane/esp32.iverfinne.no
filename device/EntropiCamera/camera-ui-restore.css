@@ -1,7 +1,6 @@
 :root{letter-spacing:normal}
 .studio,.review,.vault,.sheet{background:#000}
 .review-finder{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:clamp(104px,30vw,148px);height:auto;aspect-ratio:2/3;box-shadow:0 0 0 1px #ffffff21;pointer-events:none}
-.review-status{position:absolute;z-index:6;left:50%;top:calc(50% + 130px);transform:translateX(-50%);width:min(320px,calc(100% - 72px));margin:0;color:#ccc;font-size:14px;line-height:1.6;text-align:center;pointer-events:none}
 .review-retry{position:absolute;z-index:7;left:50%;top:calc(50% + 198px);transform:translateX(-50%);min-width:120px;min-height:48px;padding:12px 20px;background:transparent;color:#eee;text-align:center}
 .rig-top{top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));display:block;width:44px;height:44px}
 .rig-timer{position:relative;display:grid;place-items:center;width:44px;height:44px;padding:0;margin:0;border:0;background:none;color:#969696;touch-action:manipulation}
@@ -32,11 +31,9 @@
 .sheet .sheet-head .icon{font-size:0;width:44px}
 .sheet .sheet-head .icon svg{width:22px}
 .vault{background:#000}
-.review #print-status.print-feedback{background:#000e;border-color:#333}
 @media(orientation:landscape) and (max-height:550px){
 .review.working .photo-frame,.review.error .photo-frame{position:absolute;left:32%;top:50%;transform:translate(-50%,-50%);width:min(17vw,112px);margin-left:0}
 .review-finder{width:min(17vw,112px)}
-.review-status{left:70%;top:35%;width:32%}
 .review-retry{left:70%;top:65%}
 .rig-top{top:calc(6px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left))}
 .studio .finder{left:32%;top:50%;width:min(17vw,112px);max-height:calc(100dvh - 54px)}
@@ -55,3 +52,8 @@
 .review .access-control.center{left:auto;right:calc(8px + env(safe-area-inset-right));bottom:calc(132px + env(safe-area-inset-bottom));transform:none}
 .review .access-control.right{bottom:calc(12px + env(safe-area-inset-bottom))}
 }
+
+.sr{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;border:0!important;overflow:hidden!important;clip-path:inset(50%)!important;white-space:nowrap!important;pointer-events:none!important}
+.vault-action{display:grid;place-items:center;min-width:44px;min-height:44px}
+.vault-action[data-armed="true"]{color:#fff;outline:1px solid #999}
+.review-retry{min-width:44px;padding:12px}

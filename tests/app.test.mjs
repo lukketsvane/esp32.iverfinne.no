@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { createEntropiDocument } from '../vendor/entropi-document.mjs';
 import { COLOR_SCHEMES } from '../vendor/color-schemes.mjs';
 
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
@@ -29,6 +30,7 @@ function harness(options={}){
     closest(selector){return selector.split(',').some(tag=>tag.trim().toUpperCase()===this.tagName)?this:null}
     replaceChildren(...children){this.children=children}
     appendChild(child){this.children.push(child);return child}
+    append(...children){this.children.push(...children)}
     async emit(name,details={}){for(const callback of this.listeners.get(name)??[])callback({type:name,target:this,currentTarget:this,isPrimary:true,pointerId:1,clientX:100,clientY:100,preventDefault(){},...details});await flush()}
     click(){void this.emit('click')}
     async decode(){if(options.decode)await options.decode()}
@@ -55,7 +57,8 @@ function harness(options={}){
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
     COLOR_SCHEMES,
-    createArchive:()=>({save:async()=>({}),list:async()=>[],get:async()=>null,remove:async()=>{}}),
+    createEntropiDocument,showExportOptions:options=>{saves.push({options})},pickEntropiDocument:async()=>options.importDocument??null,
+    createArchive:()=>options.archive??({saveDocument:async document=>({id:document.id}),save:async()=>({}),list:async()=>[],get:async()=>null,remove:async()=>{}}),
     location:{search:''},URLSearchParams,
     Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
@@ -65,7 +68,7 @@ function harness(options={}){
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
     PX10Printer:class{},cloudPrintJob:()=>new Uint8Array(),
     createPrintClient:()=>({print:(image,isCurrent)=>{printCalls.push({image,isCurrent});return Promise.resolve(true)},dispose(){printDisposed=true}}),
-    createMarigoldView:(host,binding)=>{const viewer={ready:false,result:null,resets:0,disposed:false,tones:0,snapshots:[],async process(blob,signal,settings){artCalls.push({blob,signal,settings});const result=options.art?await options.art(blob,signal,settings):{model:'Test raw model'};if(!signal.aborted){this.result=result;this.ready=true;host.hidden=false}return result},reset(){this.resets++;this.ready=false;this.result=null;host.hidden=true},resetTone(){this.tones++},snapshot(native){const result={width:native?640:384,height:native?960:1,data:new Uint8ClampedArray(native?640*960*4:384*4),depthArt:true};this.snapshots.push({native,result});return result},dispose(){this.disposed=true},binding};artViews.push(viewer);return viewer},
+    createMarigoldView:(host,binding)=>{const viewer={recipe:{preset:1,position:0,width:1},async restore(blob,result,recipe,signal){if(signal.aborted)throw signal.reason;this.result=result;this.recipe=recipe;this.ready=true;host.hidden=false;return result},ready:false,result:null,resets:0,disposed:false,tones:0,snapshots:[],async process(blob,signal,settings){artCalls.push({blob,signal,settings});const result=options.art?await options.art(blob,signal,settings):{model:'Test raw model',width:2,height:2,depth:Float32Array.of(.1,.2,.6,.9),polarity:'near'};if(!signal.aborted){this.result=result;this.ready=true;host.hidden=false}return result},reset(){this.resets++;this.ready=false;this.result=null;host.hidden=true},resetTone(){this.tones++},snapshot(native){const result={width:native?640:384,height:native?960:1,data:new Uint8ClampedArray(native?640*960*4:384*4),depthArt:true};this.snapshots.push({native,result});return result},dispose(){this.disposed=true},binding};artViews.push(viewer);return viewer},
     createDepthScene:async(host,blob,progress,signal,quality)=>{sceneCalls.push({host,blob,progress,signal,quality});return options.scene?{setPrimitiveLevel(){},setPalette(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,progress,signal,quality)}:{dispose(){},setPrimitiveLevel(){},setPalette(){},snapshot:native=>native?nativeSnapshot:snapshot}},
     performance:{now:()=>now},Date:class extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}},
     setTimeout:(callback,delay=0)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)
@@ -187,8 +190,8 @@ test('model failure requires selecting the retained photo before exporting its m
   assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].name,'entropi.png');assert.equal(app.encodedSnapshots[0].photo,true);assert.equal(app.urls.get(app.get('photo').src),blob);
 });
 
-test('normal processing uses only progress while actionable model errors remain visible',async()=>{
-  const pending=deferred(),app=harness({image:1,scene:()=>pending.promise});await photoFromDevice(app);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);app.sceneCalls[0].progress({phase:'loading-model',percent:35});assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').firstElementChild.style.width,'35%');pending.reject(new Error('Internett manglar. Klargjer telefonen først.'));await app.tick(0);assert.equal(app.get('studio').className,'studio error');assert.match(app.get('status').textContent,/Internett manglar/);const css=await readFile(new URL('../style.css',import.meta.url),'utf8');assert.match(css,/\.studio\.error #status\{/);assert.doesNotMatch(css,/\.studio\.(?:working|opening) #status/);
+test('normal processing uses only progress while model errors remain available to screen readers',async()=>{
+  const pending=deferred(),app=harness({image:1,scene:()=>pending.promise});await photoFromDevice(app);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);app.sceneCalls[0].progress({phase:'loading-model',percent:35});assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').firstElementChild.style.width,'35%');pending.reject(new Error('Internett manglar. Klargjer telefonen først.'));await app.tick(0);assert.equal(app.get('studio').className,'studio error');assert.match(app.get('status').textContent,/Internett manglar/);const css=await readFile(new URL('../style.css',import.meta.url),'utf8');assert.match(app.get('status').className,/sr-only/);assert.match(css,/\.sr-only\{[^}]*clip-path:inset\(50%\)/);assert.doesNotMatch(css,/\.studio\.(?:error|working|opening) #status/);
 });
 
 test('processing keeps the frozen finder through decoding and inference until the result is ready',async()=>{
@@ -450,7 +453,7 @@ test('an intentional live tone adjustment still defers accidental capture',async
 test('depth art uses the captured blob once and saves and prints the cached rendered pixels',async()=>{
   const app=harness({image:2}),blob=await photoFromDevice(app),view=app.artViews[0];
   assert.equal(app.artCalls.length,1);assert.equal(app.artCalls[0].blob,blob);assert.equal(app.sceneCalls.length,0);assert.equal(app.get('marigold-view').hidden,false);
-  await app.get('save').emit('click');await app.get('print').emit('click');assert.equal(app.encodedSnapshots[0].depthArt,true);assert.equal(app.printCalls[0].image.depthArt,true);assert.deepEqual(view.snapshots.map(call=>call.native),[true,false]);
+  await app.get('save').emit('click');assert.equal(app.encodedSnapshots.length,0);await app.saves[0].options.image();await app.get('print').emit('click');assert.equal(app.encodedSnapshots[0].depthArt,true);assert.equal(app.printCalls[0].image.depthArt,true);assert.deepEqual(view.snapshots.map(call=>call.native),[true,false]);
   app.changeStudio('image',0);app.changeStudio('image',2);await app.tick(0);assert.equal(app.artCalls.length,1);
   await app.get('recenter').emit('click');assert.equal(view.tones,1);
   await app.get('reset').emit('click');await app.get('last-photo').emit('click');assert.equal(app.artCalls.length,1);assert.equal(app.get('marigold-view').hidden,false);
@@ -461,8 +464,97 @@ test('a pending depth result cannot take over another mode and a new photo abort
   app.changeStudio('image',2);await app.tick(0);assert.equal(app.artCalls.length,1);assert.equal(app.get('marigold-view').hidden,false);
   const second=deferred(),other=harness({image:2,art:()=>second.promise});await photoFromDevice(other);other.changeStudio('image',0);await photoFromDevice(other,new Blob(['new'],{type:'image/jpeg'}));assert.equal(other.artCalls[0].signal.aborted,true);second.resolve({model:'Stale'});await other.tick(0);assert.equal(other.get('marigold-view').hidden,true);assert.equal(other.get('photo').hidden,false);
 });
-test('explicit cloud refinement replaces cached art and consent cancellation returns to the photo',async()=>{
-  let count=0;const app=harness({image:2,art:async()=>{if(++count===2)throw new DOMException('Cancelled','AbortError');return {model:'Local'}}});await photoFromDevice(app);
-  app.artViews[0].binding.onMarigoldRequest();await app.tick(0);assert.equal(app.artCalls[1].settings.provider,'marigold');assert.equal(app.studioControls.image,0);assert.equal(app.get('photo').hidden,false);
+test('depth art exposes no cloud refinement action and disposes on exit',async()=>{
+  const app=harness({image:2});await photoFromDevice(app);
+  assert.equal(app.artViews[0].binding.onMarigoldRequest,undefined);assert.equal(app.artCalls[0].settings,undefined);assert.equal(app.studioControls.image,2);
   await app.emit('pagehide');assert.equal(app.artViews[0].disposed,true);
+});
+
+test('master export retains raw values and identity while changing the expression',async()=>{
+  const app=harness({image:2}),blob=await photoFromDevice(app);
+  await app.get('save').emit('click');
+  const first=await app.saves[0].options.document();
+  assert.equal(first.left,blob);assert.equal(first.result.quantity,'relative-depth');assert.equal(first.result.units,'relative');
+  assert.deepEqual(first.result.depth,Float32Array.of(.1,.2,.6,.9));
+  app.artViews[0].recipe={preset:3,position:.25,width:1.5};
+  const changed=await app.saves[0].options.document();
+  assert.equal(first.id,changed.id);assert.equal(first.created,changed.created);assert.equal(changed.recipe.preset,3);
+  assert.deepEqual(first.result.depth,changed.result.depth);assert.equal(app.artCalls.length,1);
+  assert.equal(app.saves[0].options.isCurrent(),true);
+  await app.get('reset').emit('click');assert.equal(app.saves[0].options.isCurrent(),false);
+});
+
+test('importing a numerical master restores its expression without running a model',async()=>{
+  const left=new Blob(['source'],{type:'image/jpeg'}),preview=new Blob(['preview'],{type:'image/png'});
+  const stored=createEntropiDocument({left,preview,result:{width:2,height:2,depth:Float32Array.of(1.25,2.75,4.5,NaN),polarity:'near'},recipe:{preset:4,position:-.2,width:2}});
+  const app=harness({importDocument:stored});
+  await app.get('phone-vault-import').emit('click');
+  assert.equal(app.get('studio').className,'studio done');assert.equal(app.artCalls.length,0);assert.equal(app.sceneCalls.length,0);
+  assert.deepEqual(app.artViews[0].recipe,stored.recipe);
+  await app.get('save').emit('click');const exported=await app.saves[0].options.document();
+  assert.equal(exported.id,stored.id);assert.equal(exported.left,left);assert.deepEqual(exported.result.depth,stored.result.depth);
+});
+
+function archiveFixture(){
+  const records=new Map(),writes=[],removed=[];let nextId=0;
+  const state={failSave:false,failRemove:false,blockedSave:null,blockedRemove:null,records,writes,removed,archive:{
+    async save(left,right=null){const id='capture-'+ ++nextId;records.set(id,{id,left,right,created:nextId,preview:left});return {id}},
+    async saveDocument(document,id=document.id){writes.push({document,id});if(state.failSave)throw new DOMException('Storage full','QuotaExceededError');if(state.blockedSave)await state.blockedSave.promise;const previous=records.get(id);records.set(id,{id,left:document.left,right:document.right,document,created:previous?.created??nextId++,preview:document.preview});return {id}},
+    async list(){return [...records.values()].map(({id,created,preview})=>({id,created,preview}))},
+    async get(id){return records.get(id)},
+    async remove(id){if(state.failRemove)throw new Error('Delete failed');if(state.blockedRemove)await state.blockedRemove.promise;removed.push(id);records.delete(id);state.failSave=false}
+  }};return state;
+}
+
+test('failed autosave keeps the capture archive identity for the next successful update',async()=>{
+  const store=archiveFixture(),app=harness({archive:store.archive});await photoFromDevice(app);
+  store.failSave=true;app.artViews[0].binding.onChange();await app.tick(400);
+  store.failSave=false;app.artViews[0].binding.onChange();await app.tick(400);
+  assert.equal(store.writes.length,2);assert.equal(store.writes[0].id,'capture-1');assert.equal(store.writes[1].id,'capture-1');
+  assert.equal(store.records.size,1);assert.ok(store.records.get('capture-1').document);
+});
+
+test('deleting after a failed autosave does not resurrect the capture when space is freed',async()=>{
+  const store=archiveFixture(),app=harness({archive:store.archive});await photoFromDevice(app);
+  store.failSave=true;app.artViews[0].binding.onChange();await app.tick(400);
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  const writes=store.writes.length;
+  await app.get('phone-vault-remove').emit('click');await app.get('phone-vault-remove').emit('click');
+  assert.deepEqual(store.removed,['capture-1']);assert.equal(store.records.size,0);assert.equal(store.writes.length,writes);
+  app.artViews[0].binding.onChange();await app.tick(400);assert.equal(store.writes.length,writes);assert.equal(store.records.size,0);
+});
+
+test('failed deletion restores autosaving for the still-existing capture',async()=>{
+  const store=archiveFixture(),app=harness({archive:store.archive});await photoFromDevice(app);
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  store.failRemove=true;const writes=store.writes.length;
+  await app.get('phone-vault-remove').emit('click');await app.get('phone-vault-remove').emit('click');
+  assert.equal(app.get('phone-vault-status').textContent,'Delete failed');assert.equal(store.records.size,1);
+  app.artViews[0].recipe={preset:4,position:.3,width:2};app.artViews[0].binding.onChange();await app.tick(400);
+  assert.equal(store.writes.length,writes+1);assert.equal(store.writes.at(-1).id,'capture-1');assert.equal(store.records.get('capture-1').document.recipe.preset,4);
+});
+
+test('deletion waits for an in-flight autosave and cancels queued updates for that capture',async()=>{
+  const store=archiveFixture(),app=harness({archive:store.archive});await photoFromDevice(app);
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  store.blockedSave=deferred();app.artViews[0].binding.onChange();await app.tick(400);
+  app.artViews[0].binding.onChange();await app.tick(400);const writes=store.writes.length;
+  await app.get('phone-vault-remove').emit('click');await app.get('phone-vault-remove').emit('click');assert.equal(store.removed.length,0);
+  store.blockedSave.resolve();store.blockedSave=null;await flush();
+  assert.deepEqual(store.removed,['capture-1']);assert.equal(store.records.size,0);assert.equal(store.writes.length,writes);
+});
+
+test('a delayed deletion failure cannot resume autosaving a replacement capture that was deleted',async()=>{
+  const store=archiveFixture(),app=harness({archive:store.archive});await photoFromDevice(app);
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  const pending=store.blockedRemove=deferred();
+  await app.get('phone-vault-remove').emit('click');await app.get('phone-vault-remove').emit('click');store.blockedRemove=null;
+  await app.get('phone-vault-close').emit('click');await photoFromDevice(app,new Blob(['replacement'],{type:'image/jpeg'}));
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[1].emit('click');
+  await app.get('phone-vault-remove').emit('click');await app.get('phone-vault-remove').emit('click');
+  assert.deepEqual(store.removed,['capture-2']);const writes=store.writes.length;
+  pending.reject(new Error('Old deletion failed'));await flush();
+  assert.equal(app.get('phone-vault-status').textContent,'');
+  app.artViews[0].binding.onChange();await app.tick(400);
+  assert.equal(store.writes.length,writes);assert.equal(store.records.has('capture-2'),false);assert.equal(store.records.has('capture-1'),true);
 });
