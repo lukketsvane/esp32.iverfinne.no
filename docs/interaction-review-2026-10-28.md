@@ -22,6 +22,8 @@ The pair protocol starts the peer capture request before capturing locally, then
 
 The existing fixed alignment profile did not reliably fit the real pairs examined during this review. A proposed automatic row correction improved one pair but retained large disparity disagreements; it was not promoted to production. The strict acceptance criteria and estimated fallback remain. A fresh stationary scene must be checked after flashing; metric depth requires calibration beyond these changes.
 
+Three fresh pairs on the coordinated firmware passed capture validation but provided only 1.26–1.44% matched coverage in the original image, mostly in one quadrant. Independent feature checks did not establish good alignment. The shared depth path now rejects coverage below 5% after restoration to the original frame, so such sparse results use the estimated fallback in the processed view. This floor prevents nearly empty output; it does not validate calibration or guarantee that remaining matches are correct.
+
 ## Verification boundaries
 
 The browser walkthrough uses the actual root and generated device controllers, Chromium touch events and representative WebKit interactions. Camera and depth fixtures isolate the gestures; these checks do not prove physical iPhone behavior. The Windows WebKit harness cannot cover the archive's Blob persistence, which is checked in Chromium and the storage tests.

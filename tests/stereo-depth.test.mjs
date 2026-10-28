@@ -20,7 +20,7 @@ function shifted(left,disparity){
   for(let y=0;y<height-disparity;y++)for(let x=0;x<width;x++)right.data.set(left.data.subarray((y*width+x)*4,(y*width+x+1)*4),((y+disparity)*width+x)*4);
   return right;
 }
-function harness({hang=false,workerError=null}={}){
+function harness({hang=false,workerError=null,workerResult,profile=identity}={}){
   const urls=new Map(),revoked=[],workers=[],progress=[],transfers=[];let next=0;
   let workerStarted;const started=new Promise(resolve=>{workerStarted=resolve});
   class Image{
@@ -35,14 +35,14 @@ function harness({hang=false,workerError=null}={}){
       queueMicrotask(()=>{
         if(workerError){this.onmessage({data:{type:'error',message:workerError}});return}
         try{
-          const result=estimateStereoDepth(new Uint8ClampedArray(message.left),new Uint8ClampedArray(message.right),message.width,message.height);
+          const result=workerResult?workerResult(message):estimateStereoDepth(new Uint8ClampedArray(message.left),new Uint8ClampedArray(message.right),message.width,message.height);
           this.onmessage({data:{type:'result',depth:result.depth.buffer,valid:result.valid.buffer,width:result.width,height:result.height}});
         }catch(error){this.onmessage({data:{type:'error',message:error.message}})}
       });
     }
   }
   const context=vm.createContext({Image,Worker,Float32Array,Uint8Array,Uint8ClampedArray,DOMException,setTimeout,clearTimeout,
-    FIXED_STEREO_RIG,prepareFixedStereo:(left,right)=>prepareFixedStereo(left,right,identity),restoreFixedStereo:(prediction,width,height)=>restoreFixedStereo(prediction,width,height,identity),
+    FIXED_STEREO_RIG,prepareFixedStereo:(left,right)=>prepareFixedStereo(left,right,profile),restoreFixedStereo:(prediction,width,height)=>restoreFixedStereo(prediction,width,height,profile),
     URL:{createObjectURL:blob=>{const url='blob:'+(next++);urls.set(url,blob);return url},revokeObjectURL:url=>{revoked.push(url);urls.delete(url)}},
     document:{createElement:()=>({getContext(){let image;return {drawImage:next=>{image=next},getImageData:(_,__,width,height)=>({width,height,data:image.pixels.data.slice()})}}})}
   });
@@ -71,6 +71,27 @@ test('shared stereo depth preserves native dimensions while matching only bounde
   const result=await app.run({...left,width:1600,height:1200},{...right,width:1600,height:1200});
   assert.deepEqual([result.width,result.height,result.sourceWidth,result.sourceHeight],[320,240,1600,1200]);
   assert.ok(result.matchedFraction>.5);
+});
+
+test('a sparse worker result is rejected as insufficient full-frame coverage after restoration',async()=>{
+  const app=harness({workerResult:({width,height})=>({width,height,depth:new Float32Array(width*height).fill(12),valid:Uint8Array.from({length:width*height},(_,i)=>i%50===0?1:0)})}),left=texture(320,240);
+  await assert.rejects(app.run(left,shifted(left,12)),error=>error.code==='STEREO_COVERAGE_LOW'&&/under 5 %/.test(error.message));
+  assert.equal(app.urls.size,0);assert.equal(app.workers[0].terminated,true);
+});
+
+test('coverage uses the restored original-frame mask rather than the worker frame',async()=>{
+  const profile={...identity,left:[0,2,0,0,0,1]},left=texture(),prediction={width:72,height:96,depth:new Float32Array(72*96).fill(8),valid:new Uint8Array(72*96)};
+  for(let y=4;y<12;y++)for(let x=4;x<68;x++)prediction.valid[y*72+x]=1;
+  assert.ok(prediction.valid.reduce((sum,value)=>sum+value,0)/prediction.valid.length>.05);
+  assert.ok(restoreFixedStereo(prediction,96,72,profile).matchedFraction<.05);
+  const app=harness({profile,workerResult:()=>prediction});
+  await assert.rejects(app.run(left,shifted(left,8)),error=>error.code==='STEREO_COVERAGE_LOW');
+});
+
+test('the coverage floor includes exactly five percent without claiming calibration',async()=>{
+  const left=texture(320,240),app=harness({workerResult:({width,height})=>({width,height,depth:new Float32Array(width*height).fill(12),valid:Uint8Array.from({length:width*height},(_,i)=>i%20===0?1:0)})});
+  const result=await app.run(left,shifted(left,12));
+  assert.equal(result.matchedFraction,.05);assert.equal(result.provenance.metric,false);assert.equal(result.provenance.hardwareSynchronized,false);
 });
 
 test('unrelated views and worker failures remain rejected without a monocular substitute',async()=>{

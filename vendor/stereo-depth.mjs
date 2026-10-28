@@ -29,6 +29,7 @@ export async function runStereoDepth(left,right,{signal,onProgress=()=>{}}={}){
     if(signal?.aborted)abort();
   });
   signal?.throwIfAborted();
+  if(prediction.matchedFraction<.05)throw Object.assign(new Error('For lite stereodekning til eit heilt bilete (under 5 %).'),{code:'STEREO_COVERAGE_LOW'});
   const provenance={rigId:prediction.rigId,matchedFraction:prediction.matchedFraction,metric:FIXED_STEREO_RIG.metric,hardwareSynchronized:FIXED_STEREO_RIG.hardwareSynchronized};
   return {depth:prediction.depth,validity:prediction.valid,width:prediction.width,height:prediction.height,sourceWidth,sourceHeight,polarity:'near',source:'stereo',model:'Stereo census · fixed rig',quantity:'disparity',units:'px',...provenance,provenance,pixels:pixels[0],images:new Map()};
 }
