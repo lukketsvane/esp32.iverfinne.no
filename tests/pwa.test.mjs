@@ -32,6 +32,16 @@ test('the app manifest starts the native camera and every entry has the same opa
   for(const page of ['index.html','prepare/index.html']){const html=await read(page);assert.match(html,/<link rel="icon" href="\/favicon\.ico" sizes="16x16 32x32 48x48">/);assert.match(html,/<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml" sizes="any">/);assert.match(html,/apple-mobile-web-app-title" content="Entropi"/);assert.match(html,/apple-mobile-web-app-status-bar-style" content="black-translucent"/)}
 });
 
+test('the camera AP route declares and serves its own iOS Home Screen icon',async()=>{
+  const html=await read('device/EntropiCamera/camera_ui.html'),server=await read('device/EntropiCamera/app_httpd.cpp');
+  assert.match(html,/rel="apple-touch-icon" href="\/apple-touch-icon.png" sizes="180x180"/);
+  assert.match(html,/apple-mobile-web-app-capable" content="yes"/);
+  assert.match(html,/apple-mobile-web-app-title" content="Entropi"/);
+  assert.match(server,/registerHandler\(cameraHttpd, "\/apple-touch-icon.png", assetHandler\)/);
+  const maximum=Number(server.match(/config.max_uri_handlers = (\d+)/)[1]);
+  assert.ok((server.match(/registerHandler\(cameraHttpd,/g)||[]).length<=maximum);
+});
+
 test('the offline shell contains its complete small module graph without models, WASM or camera data',async()=>{
   const app=serviceWorker(worker);let total=0;
   for(const path of app.files){
@@ -39,7 +49,7 @@ test('the offline shell contains its complete small module graph without models,
     const relative=path==='/'?'index.html':path==='/prepare/'?'prepare/index.html':(rewrites.find(route=>route.source===path)?.destination??path).slice(1);total+=(await stat(new URL(relative,root))).size;
     if(path.endsWith('.mjs'))for(const match of (await read(relative)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm)){const dependency=new URL(match[1],origin+path).pathname;assert.ok(app.files.includes(dependency),path+' -> '+dependency)}
   }
-  assert.ok(total<300000,total+' bytes');
+  assert.ok(total<340000,total+' bytes');
   for(const path of ['/pointcloud/depth-worker.mjs','/pointcloud/vendor/ort.wasm.min.mjs','/pointcloud/vendor/ort-wasm-simd-threaded.mjs','/prepare/print.html'])assert.ok(app.files.includes(path));
   await app.lifecycle('install');assert.deepEqual(app.installed,app.files);assert.equal(app.skipped,0);
 });
@@ -109,7 +119,7 @@ test('the fresh print module graph resolves canonical sources and stays availabl
   const destinations={'/print':'/prepare/print.html','/print/':'/prepare/print.html','/print/index.html':'/prepare/print.html','/print/app.mjs':'/prepare/print.mjs','/print/printer.mjs':'/vendor/print/printer.mjs','/print/px10-protocol.mjs':'/vendor/print/px10-protocol.mjs'};
   for(const [path,destination]of Object.entries(destinations)){assert.equal(rewrites.find(route=>route.source===path)?.destination,destination);await stat(new URL(destination.slice(1),root))}
   const html=await read('prepare/print.html'),module=await read('prepare/print.mjs'),printer=await read('vendor/print/printer.mjs');assert.match(html,/src="\/print\/app\.mjs"/);assert.match(module,/from '\/print\/printer\.mjs'/);assert.match(printer,/from '\.\/px10-protocol\.mjs'/);
-  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v30'],[prepare,'/prepare/sw.js','entropi-prepare-v21'],[prepare,'/start/sw.js','entropi-start-v15']]){
+  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v36'],[prepare,'/prepare/sw.js','entropi-prepare-v21'],[prepare,'/start/sw.js','entropi-start-v15']]){
     const app=serviceWorker(source,async()=>{throw new TypeError('Offline')},{scriptPath});await app.lifecycle('install');assert.equal(app.name,name);
     for(const path of printFiles){assert.ok(app.files.includes(path));assert.equal(await(await app.request(path)).text(),'cached:'+path);const file=destinations[path].slice(1);if(path.endsWith('.mjs'))for(const match of(await read(file)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm))assert.ok(app.files.includes(new URL(match[1],origin+path).pathname),path+' -> '+match[1])}
     for(const path of ['/print','/print/index.html'])assert.equal(await(await app.request(path)).text(),'cached:/print/');

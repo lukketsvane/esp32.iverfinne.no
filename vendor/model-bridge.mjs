@@ -1,6 +1,16 @@
 import { loadCachedAsset, storeAsset } from '../pointcloud/assets.mjs';
 
-const modelManifest=signal=>fetch('/pointcloud/models/manifest.json',{cache:'force-cache',signal}).then(response=>{if(!response.ok)throw new Error('Modellmanifestet manglar.');return response.json()});
+async function modelManifest(signal){
+  const task=new AbortController(),cancel=()=>task.abort(signal.reason),timer=setTimeout(()=>task.abort(new Error('Kameraet svarte ikkje. Kontroller tilkoplinga og prøv igjen.')),10000);
+  signal?.addEventListener('abort',cancel,{once:true});
+  try{
+    signal?.throwIfAborted();
+    const response=await fetch('/pointcloud/models/manifest.json',{cache:'force-cache',signal:task.signal});
+    if(!response.ok)throw new Error('Modellmanifestet manglar.');
+    return await response.json();
+  }catch(error){throw task.signal.aborted?task.signal.reason:error}
+  finally{clearTimeout(timer);signal?.removeEventListener('abort',cancel)}
+}
 
 export async function phoneModelsReady(signal){
   const manifest=await modelManifest(signal);

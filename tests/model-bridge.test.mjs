@@ -13,13 +13,13 @@ const origin='https://esp32.iverfinne.no';
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 
 function harness(options={}){
-  const listeners=new Set(),messages=[],timers=new Map(),progress=[];let opened=false,closed=false,settled=false;
+  const listeners=new Set(),messages=[],timers=new Map(),progress=[];let opened=false,closed=false,settled=false,nextTimer=0;
   const helper={postMessage:(data,target)=>messages.push({data,target}),close(){closed=true}};
   const controller=new AbortController();
   const context=vm.createContext({
     window:{open(url){opened=url;return options.popupBlocked?null:helper},addEventListener:(name,listener)=>listeners.add(listener),removeEventListener:(name,listener)=>listeners.delete(listener)},
-    storeAsset:options.store??storeAsset,loadCachedAsset,fetch:options.fetch??(async()=>new Response(JSON.stringify(manifest))),crypto:webcrypto,Uint8Array,ArrayBuffer,DOMException,
-    setTimeout:(callback,delay)=>{timers.set(delay,callback);return delay},clearTimeout:id=>timers.delete(id)
+    storeAsset:options.store??storeAsset,loadCachedAsset,fetch:options.fetch??(async()=>new Response(JSON.stringify(manifest))),crypto:webcrypto,Uint8Array,ArrayBuffer,DOMException,AbortController,
+    setTimeout:callback=>{const id=++nextTimer;timers.set(id,callback);return id},clearTimeout:id=>timers.delete(id)
   });
   vm.runInContext(source,context);
   const promise=options.start===false?null:context.requestPhoneModels(controller.signal,update=>progress.push(update),options.existing?helper:null);promise?.then(()=>{settled=true},()=>{settled=true});
@@ -33,6 +33,15 @@ async function withDatabase(callback,options){
   const previous=globalThis.indexedDB;globalThis.indexedDB=memoryIndexedDB(options);
   try{await callback()}finally{if(previous===undefined)delete globalThis.indexedDB;else globalThis.indexedDB=previous}
 }
+
+test('phone model checks time out or abort when the camera manifest stops responding',async()=>{
+  for(const abort of [false,true]){
+    const app=harness({start:false,fetch:(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}))});
+    const checking=app.modelsReady(),failure=assert.rejects(checking,abort?{name:'AbortError'}:/Kameraet svarte ikkje/);
+    if(abort)app.controller.abort();else await app.expire();
+    await failure;
+  }
+});
 
 test('phone preparation requires the exact opened window and HTTPS origin before starting',async()=>{
   await withDatabase(async()=>{

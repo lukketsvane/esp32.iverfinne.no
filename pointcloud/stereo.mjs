@@ -20,7 +20,7 @@ function bitCount(value){
 }
 
 export function estimateStereoDepth(left,right,width,height){
-  if(!Number.isInteger(width)||!Number.isInteger(height)||width<24||height<16||width>320||height>240)throw new Error('Ugyldig stereooppløysing.');
+  if(!Number.isInteger(width)||!Number.isInteger(height)||width<24||height<16||width>320||height>320||width*height>76800)throw new Error('Ugyldig stereooppløysing.');
   const count=width*height;
   if(!(left instanceof Uint8ClampedArray)||!(right instanceof Uint8ClampedArray)||left.length!==count*4||right.length!==count*4)throw new Error('Ugyldige stereobilete.');
   const a=census(left,width,height),b=census(right,width,height),limit=Math.min(64,Math.floor(width/3));
@@ -53,7 +53,7 @@ export function estimateStereoDepth(left,right,width,height){
     const i=y*width+x,d=disparities[0][i],j=i-d;
     if(d&&reliable(0,i)&&reliable(1,j)&&Math.abs(d-disparities[1][j])<=1)candidates[i]=1;
   }
-  let matched=0;
+  let matched=0,minX=width,minY=height,maxX=-1,maxY=-1;
   for(let y=4;y<height-4;y++)for(let x=5;x<width-4;x++){
     const i=y*width+x;if(!candidates[i])continue;
     const d=disparities[0][i];let neighbours=0;
@@ -61,8 +61,10 @@ export function estimateStereoDepth(left,right,width,height){
       if(!dx&&!dy)continue;
       const j=i+dy*width+dx;if(candidates[j]&&Math.abs(d-disparities[0][j])<=1)neighbours++;
     }
-    if(neighbours>=3){depth[i]=d;valid[i]=1;matched++}
+    if(neighbours>=3){depth[i]=d;valid[i]=1;matched++;minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)}
   }
-  if(matched<Math.max(64,count*.08))throw new Error('For få sikre samsvar. Hald motivet stille og rett inn kameraa.');
+  let textured=0;for(let i=0;i<count;i++)if(a.textured[i])textured++;
+  const required=Math.max(64,count*.01,textured*.08);
+  if(matched<required||maxX-minX<Math.max(12,width*.25)||maxY-minY<Math.max(8,height*.25))throw new Error('For få sikre samsvar. Hald kameraet i ro og bruk eit motiv med tydelege detaljar.');
   return {depth,width,height,valid,matchedFraction:matched/count};
 }

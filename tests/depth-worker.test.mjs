@@ -49,8 +49,10 @@ test('the worker keeps one model session across photographs while freeing per-im
   const context=vm.createContext({URL,location:{protocol:'https:'},env:{wasm:{}},self:{postMessage:message=>messages.push(message)},Float32Array,Uint8ClampedArray,
     InferenceSession:{async create(){created++;return session}},Tensor:class{dispose(){disposed++}},normalizedImage:()=>new Float32Array(588),fetch:async()=>({ok:true,json:async()=>manifest}),loadAsset:async(asset,progress)=>{downloads++;progress(100);return new Uint8Array(asset.bytes)},loadCachedAsset:async()=>{throw Error('wrong source')}});
   vm.runInContext(worker,context);
-  for(let i=0;i<2;i++)await context.self.onmessage({data:{rgba:new Uint8ClampedArray(14*14*4).buffer,width:14,height:14}});
-  assert.equal(created,1);assert.equal(downloads,2);assert.equal(runs,2);assert.equal(disposed,4);
-  assert.deepEqual(messages.filter(message=>message.type==='result').map(message=>new Float32Array(message.depth)[0]),[1,2]);
+  for(const [width,height] of [[14,14],[14,14],[518,392]])await context.self.onmessage({data:{rgba:new Uint8ClampedArray(width*height*4).buffer,width,height}});
+  assert.equal(created,1);assert.equal(downloads,2);assert.equal(runs,3);assert.equal(disposed,6);
+  assert.deepEqual(messages.filter(message=>message.type==='result').map(message=>new Float32Array(message.depth)[0]),[1,2,3]);
   const progress=messages.filter(message=>message.type==='progress'&&Number.isFinite(message.percent)).map(message=>message.percent);assert.equal(progress.at(-1),100);assert.ok(progress.every((value,i)=>i===0||value>=progress[i-1]));
+  await context.self.onmessage({data:{rgba:new Uint8ClampedArray(532*392*4).buffer,width:532,height:392}});
+  assert.equal(runs,3);assert.equal(messages.at(-1).type,'error');assert.match(messages.at(-1).message,/biletoppløysing/);
 });

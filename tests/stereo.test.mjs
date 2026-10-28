@@ -59,7 +59,7 @@ test('unrelated, flat, transparent and reversed stereo pairs are rejected',()=>{
 
 test('malformed dimensions and pixel buffers are rejected before matching',()=>{
   const image=texture(32,24);
-  for(const [width,height] of [[0,24],[32,0],[23,24],[32,15],[321,24],[32,241],[32.5,24],[NaN,24]])assert.throws(()=>estimateStereoDepth(image,image,width,height),/oppløysing/);
+  for(const [width,height] of [[0,24],[32,0],[23,24],[32,15],[321,24],[32,321],[320,241],[32.5,24],[NaN,24]])assert.throws(()=>estimateStereoDepth(image,image,width,height),/oppløysing/);
   for(const other of [null,[],new Uint8Array(image),image.subarray(4)])assert.throws(()=>estimateStereoDepth(image,other,32,24),/stereobilete/);
 });
 

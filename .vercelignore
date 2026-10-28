@@ -4,6 +4,7 @@
 test-results
 tests
 device
+local
 firmware
 backups
 node_modules

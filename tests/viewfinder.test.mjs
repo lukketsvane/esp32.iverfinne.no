@@ -45,6 +45,20 @@ test('all four live photo styles remain strictly black and white',()=>{
   assert.equal(new Set(hashes).size,4);app.view.setTone({grain:4,contrast:2});app.view.draw();assert.notEqual(Buffer.from(app.painted.at(-1)).toString('base64'),hashes[3]);app.view.dispose();
 });
 
+test('depth preview keeps continuous grayscale detail independently of the photo palette and preserves color capture',()=>{
+  const app=finder();app.canvas.getBoundingClientRect=()=>({width:64});app.view.source={width:160,height:240};
+  app.view.setPalette('gameboy');app.view.setStyle(3);app.view.setTone({grain:8,contrast:3});app.view.monochrome=true;app.view.draw(1000);
+  const gray=app.painted.at(-1),tones=new Set();
+  for(let i=0;i<gray.length;i+=4){assert.equal(gray[i],gray[i+1]);assert.equal(gray[i],gray[i+2]);assert.equal(gray[i+3],255);tones.add(gray[i])}
+  assert.ok(tones.size>32);assert.equal(gray[0],0);
+  app.view.capture();const depthCapture=app.painted.at(-1);
+  assert.ok(depthCapture.some((value,i)=>i%4===0&&value!==depthCapture[i+1]));
+  app.view.monochrome=false;app.view.draw(1000);const photo=app.painted.at(-1);
+  assert.ok(photo.some((value,i)=>i%4===0&&value!==photo[i+1]));
+  assert.equal(app.view.palette,'gameboy');assert.equal(app.view.grain,8);assert.equal(app.view.contrast,3);
+  app.view.capture();assert.deepEqual(app.painted.at(-1),depthCapture);app.view.dispose();
+});
+
 test('live photo tone controls cannot produce gray pixels at any style or grain setting',()=>{
   const app=finder();app.canvas.getBoundingClientRect=()=>({width:24});app.view.source={width:320,height:240};
   for(let style=0;style<4;style++)for(let grain=1;grain<=8;grain++)for(const contrast of [.5,1,3]){

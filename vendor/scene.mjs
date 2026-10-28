@@ -1,5 +1,5 @@
 import { inferenceSize, imageToPointCloud, pointStride, gaussianSplats } from '../pointcloud/math.mjs';
-import { shiftStereoRows } from '../pointcloud/stereo-align.mjs';
+import { prepareFixedStereo, restoreFixedStereo } from '../pointcloud/stereo-rig.mjs';
 import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, primitiveDimensions, qualityPointBudget } from '../pointcloud/primitive.mjs';
 import { attachViewerGestures, progressiveIndices } from './viewer-gestures.mjs';
 import { resolveColorScheme, gaussianInk } from './color-schemes.mjs';
@@ -139,7 +139,7 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
     if(gl.isContextLost()){needsGPU=true;redraw();return}
     if(!host.clientWidth||!host.clientHeight){revealAt=null;if(!force)return false}
     if(reveal<1){if(revealAt!==null)reveal=Math.min(1,reveal+Math.max(0,now-revealAt)/4000);revealAt=now}
-    const ratio=Math.min(globalThis.devicePixelRatio||1,2),width=Math.max(1,Math.round(host.clientWidth*ratio)||canvas.width),height=Math.max(1,Math.round(host.clientHeight*ratio)||canvas.height);
+    const ratio=Math.min(globalThis.devicePixelRatio||1,2)*(1+.45*(definition-.5)),width=Math.max(1,Math.round(host.clientWidth*ratio)||canvas.width),height=Math.max(1,Math.round(host.clientHeight*ratio)||canvas.height);
     if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height}
     const size=primitiveDimensions(primitiveLevel,width,height);
     if(primitiveLevel&&(size.width!==targetWidth||size.height!==targetHeight)){targetWidth=size.width;targetHeight=size.height;gl.bindTexture(gl.TEXTURE_2D,texture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,targetWidth,targetHeight,0,gl.RGBA,gl.UNSIGNED_BYTE,null)}
@@ -177,7 +177,7 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
   mount();observer=globalThis.ResizeObserver?new ResizeObserver(redraw):null;observer?.observe(host);signal.addEventListener('abort',dispose,{once:true});redraw();if(signal.aborted)dispose();return api;
 }
 
-async function stereoScene(host,left,right,onProgress,signal,quality,verticalShift=0){
+async function stereoScene(host,left,right,onProgress,signal,quality){
   const urls=[],images=[];let pixels;
   try{
     for(const blob of [left,right]){
@@ -191,16 +191,17 @@ async function stereoScene(host,left,right,onProgress,signal,quality,verticalShi
     pixels=images.map(image=>{context.drawImage(image,0,0,width,height);return context.getImageData(0,0,width,height)});canvas.width=canvas.height=1;
   }finally{urls.forEach(url=>URL.revokeObjectURL(url))}
   onProgress({phase:'matching'});signal.throwIfAborted();
+  const prepared=prepareFixedStereo(pixels[0],pixels[1]);
   const prediction=await new Promise((resolve,reject)=>{
     const worker=new Worker('/pointcloud/stereo-worker.mjs',{type:'module'});let finished=false;
     const finish=(error,result)=>{if(finished)return;finished=true;clearTimeout(timer);signal.removeEventListener('abort',abort);worker.terminate();if(error)reject(error);else resolve(result)};
     const abort=()=>finish(signal.reason||new DOMException('Avbrote.','AbortError'));
     const timer=setTimeout(()=>finish(new Error('Stereoberekninga tok for lang tid.')),30000);
     signal.addEventListener('abort',abort,{once:true});
-    worker.onmessage=({data})=>{if(data.type==='result')finish(null,{depth:new Float32Array(data.depth),valid:new Uint8Array(data.valid),width:data.width,height:data.height});else if(data.type==='error')finish(new Error(data.message))};
+    worker.onmessage=({data})=>{try{if(data.type==='result')finish(null,restoreFixedStereo({depth:new Float32Array(data.depth),valid:new Uint8Array(data.valid),width:data.width,height:data.height},pixels[0].width,pixels[0].height));else if(data.type==='error')finish(new Error(data.message))}catch(error){finish(error)}};
     worker.onerror=()=>finish(new Error('Telefonen kunne ikkje kombinere kameraa.'));
-    const left=new Uint8ClampedArray(pixels[0].data),right=shiftStereoRows(new Uint8ClampedArray(pixels[1].data),pixels[1].width,pixels[1].height,Math.round(verticalShift*pixels[1].height/240));
-    try{worker.postMessage({left:left.buffer,right:right.buffer,width:pixels[0].width,height:pixels[0].height},[left.buffer,right.buffer])}catch(error){finish(error)}
+    const {left,right,width,height}=prepared;
+    try{worker.postMessage({left:left.buffer,right:right.buffer,width,height},[left.buffer,right.buffer])}catch(error){finish(error)}
     if(signal.aborted)abort();
   });
   signal.throwIfAborted();onProgress({phase:'rendering'});
@@ -208,9 +209,9 @@ async function stereoScene(host,left,right,onProgress,signal,quality,verticalShi
   return renderScene(host,cloud,gaussianSplats(cloud),signal,detail.data);
 }
 
-export async function createDepthScene(host, blob, onProgress = () => {}, signal = new AbortController().signal, quality = 2, right = null, verticalShift = 0) {
+export async function createDepthScene(host, blob, onProgress = () => {}, signal = new AbortController().signal, quality = 2, right = null) {
   signal.throwIfAborted();
-  if(right)return stereoScene(host,blob,right,onProgress,signal,quality,verticalShift);
+  if(right)return stereoScene(host,blob,right,onProgress,signal,quality);
   const image=new Image(),url=URL.createObjectURL(blob);let inference,detail;
   onProgress({phase:'reading'});
   try {

@@ -32,7 +32,7 @@ function maskFinderFrame(data,projection){for(let i=0;i<projection.warp.length;i
 
 export class Viewfinder {
   constructor(canvas){
-    this.canvas=canvas;this.active=true;this.disposed=false;this.source=null;this.style=0;this.palette='original';this.grain=1;this.contrast=1;
+    this.canvas=canvas;this.active=true;this.disposed=false;this.source=null;this.style=0;this.palette='original';this.grain=1;this.contrast=1;this.monochrome=false;
     this.context=canvas.getContext('2d');this.sampleCanvas=canvas.ownerDocument.createElement('canvas');this.sampleContext=this.sampleCanvas.getContext('2d',{willReadFrequently:true});
     this.fit();let previous=-Infinity;
     const frame=time=>{if(this.disposed)return;this.animation=requestAnimationFrame(frame);if(!this.active||document.hidden||time-previous<50)return;previous=time;this.draw(time)};
@@ -47,8 +47,8 @@ export class Viewfinder {
     const width=video?source.videoWidth:source.naturalWidth||source.width,height=video?source.videoHeight:source.naturalHeight||source.height;if(!width||!height)return;
     this.fit();
     try{
-      paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,false);this.time=time;
-      this.output.data.set(processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast,this.palette));maskFinderFrame(this.output.data,this.projection);this.context.putImageData(this.output,0,0);
+      paintFinderFrame(source,this.sampleContext,this.pixels,this.canvas.width,this.canvas.height,this.projection,time,this.monochrome);this.time=time;
+      this.output.data.set(this.monochrome?this.pixels:processPhoto(this.pixels,this.canvas.width,this.canvas.height,this.style,this.grain,this.contrast,this.palette));maskFinderFrame(this.output.data,this.projection);this.context.putImageData(this.output,0,0);
     }catch{}
   }
   fit(){

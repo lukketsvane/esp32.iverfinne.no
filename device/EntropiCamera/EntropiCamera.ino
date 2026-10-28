@@ -70,7 +70,11 @@ void networkEvent(arduino_event_id_t event, arduino_event_info_t info) {
 }
 
 void setup() {
+#if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST && !ENTROPI_SECONDARY_CAMERA
+  Serial.begin(460800);
+#else
   Serial.begin(115200);
+#endif
   WiFi.onEvent(networkEvent);
 #if ENTROPI_SECONDARY_CAMERA
   WiFi.mode(WIFI_STA);

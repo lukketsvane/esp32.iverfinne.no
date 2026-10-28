@@ -1,9 +1,6 @@
 :root{font-feature-settings:"tnum" 1}
 .studio.camera{background:radial-gradient(circle at 50% 46%,#0e0e0e 0,#030303 50%,#000 100%)}
 .pwa-heading{position:absolute;top:calc(24px + env(safe-area-inset-top));left:calc(24px + env(safe-area-inset-left));z-index:7;display:grid;gap:8px;pointer-events:none}
-.pwa-heading strong{font-weight:600;font-size:12px;letter-spacing:.22em}
-.pwa-heading small{font-size:9px;color:#858585;letter-spacing:.12em}
-.pwa-heading #phone-state{font-size:10px;color:#bbb;letter-spacing:.06em;max-width:230px}
 .pwa-camera-actions{display:flex;gap:13px;pointer-events:auto;margin-top:6px}
 .pwa-camera-actions button{min-height:36px;padding:4px 0;border:0;border-bottom:1px solid #333;background:none;color:#9d9d9d;font-size:10px;letter-spacing:.07em;touch-action:manipulation}
 .studio.camera .finder{width:clamp(140px,40vw,176px);box-shadow:0 0 0 1px #ffffff3a,0 0 0 6px #ffffff04}
@@ -14,17 +11,15 @@
 .pwa-shutter:active:before{transform:scale(.88)}
 .pwa-bottom #open-gallery{position:absolute;left:calc(24px + env(safe-area-inset-left));bottom:0;display:grid;gap:6px;justify-items:center;width:55px;min-height:58px;background:none;color:#ddd;border:0}
 .pwa-bottom #open-gallery svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.3}
-.pwa-bottom #open-gallery small{font-size:9px;letter-spacing:.08em;color:#999}
 .studio .access-control.device-link{left:auto;right:calc(22px + env(safe-area-inset-right));top:calc(18px + env(safe-area-inset-top));z-index:9}
 .studio .access-control#last-photo{left:auto;right:calc(27px + env(safe-area-inset-right));bottom:calc(26px + env(safe-area-inset-bottom))}
 .studio .access-control.recenter{top:calc(68px + env(safe-area-inset-top))}
 .studio .access-control.new-photo{top:calc(18px + env(safe-area-inset-top))}
 .studio.camera #phone-shutter{opacity:1}
-.studio.error #phone-state{color:#e7e7e7}
 .phone-vault{position:fixed;z-index:100;inset:0;padding:calc(22px + env(safe-area-inset-top)) calc(22px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(22px + env(safe-area-inset-left));display:flex;flex-direction:column;background:#080808;color:#e8e8e8;touch-action:pan-y}
 .phone-vault[hidden],.phone-vault-detail[hidden]{display:none!important}
 .phone-vault-top{display:flex;justify-content:space-between;align-items:start;gap:12px}
-.phone-vault-top>div{display:grid;gap:5px}.phone-vault-top strong{font-size:16px;letter-spacing:.16em;font-weight:500}.phone-vault-top small{font-size:10px;color:#777;letter-spacing:.06em}
+.phone-vault-top strong{font-size:16px;letter-spacing:.16em;font-weight:500}
 .phone-vault button{font:inherit;touch-action:manipulation;background:#151515;color:#ddd;border:1px solid #393939;padding:10px 13px;min-height:44px}
 .phone-vault #phone-vault-info{font-size:12px;line-height:1.7;max-width:500px;color:#949494;margin:22px 0 18px}
 .phone-vault-grid{overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;align-content:start;flex:1;padding-bottom:30px}
@@ -37,9 +32,6 @@
 .phone-vault-toolbar #phone-vault-save{grid-column:1/-1;border-color:#888}
 @media(orientation:landscape) and (max-height:550px){
 .pwa-heading{top:calc(12px + env(safe-area-inset-top));left:calc(20px + env(safe-area-inset-left));gap:5px}
-.pwa-heading strong{font-size:11px}
-.pwa-heading small{font-size:8px}
-.pwa-heading #phone-state{font-size:9px}
 .pwa-camera-actions{gap:11px;margin:0}
 .pwa-camera-actions button{min-height:32px;font-size:9px}
 .studio.camera .finder{left:39%;top:52%;width:min(23vw,178px)}
@@ -59,7 +51,6 @@
 
 .studio,.studio.camera{background:#000}
 .pwa-heading{top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));display:block;z-index:8}
-.pwa-heading>strong,.pwa-heading>small,#phone-state,.pwa-bottom #open-gallery small{position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
 .pwa-camera-actions{margin:0;display:flex;align-items:center;gap:2px}
 .pwa-camera-actions button{position:relative;display:grid;place-items:center;width:44px;height:44px;min-height:44px;padding:0;border:0;background:none;color:#999}
 .pwa-camera-actions button svg{display:block;width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
@@ -74,7 +65,6 @@
 .studio .access-control.device-link{top:calc(12px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right))}
 .studio:not(.camera) .pwa-heading,.studio:not(.camera) .pwa-bottom{display:none}
 .phone-vault{background:#000}
-.phone-vault-top small{display:none}
 @media(orientation:landscape) and (max-height:550px){
 .pwa-heading{top:calc(6px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left))}
 .pwa-camera-actions{gap:2px}
@@ -84,3 +74,5 @@
 .pwa-bottom #open-gallery{left:12px;bottom:calc(8px + env(safe-area-inset-bottom))}
 .studio .access-control.device-link{top:calc(6px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right))}
 }
+
+#phone-vault-status{font-size:12px;line-height:1.6;color:#aaa;margin:12px 0}#phone-vault-status:empty{display:none}

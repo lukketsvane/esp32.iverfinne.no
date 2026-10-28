@@ -173,14 +173,22 @@ void beginRigNetwork() {
 
 void pollRigNetwork() {
   uint32_t now = millis();
-#if ENTROPI_SECONDARY_CAMERA && defined(ENTROPI_WIFI_SSID) && defined(ENTROPI_WIFI_PASSWORD)
+#if ENTROPI_SECONDARY_CAMERA
   if (WiFi.status() == WL_CONNECTED) lastConnected = now;
-  else if (!usingFallback && uint32_t(now - lastConnected) >= 15000) {
-    usingFallback = true;
-    WiFi.setAutoReconnect(false);
-    WiFi.disconnect();
-    WiFi.begin("ENTROPI");
-    WiFi.setAutoReconnect(true);
+  else if (uint32_t(now - lastConnected) >= 15000) {
+    lastConnected = now;
+#if defined(ENTROPI_WIFI_SSID) && defined(ENTROPI_WIFI_PASSWORD)
+    if (!usingFallback) {
+      usingFallback = true;
+      WiFi.setAutoReconnect(false);
+      WiFi.disconnect();
+      WiFi.begin("ENTROPI");
+      WiFi.setAutoReconnect(true);
+    } else
+#endif
+    {
+      WiFi.reconnect();
+    }
     rememberPeer(IPAddress(), now);
   }
 #endif

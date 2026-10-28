@@ -21,7 +21,7 @@ function harness(options={}){
   const window={innerWidth:390,innerHeight:844,addEventListener(name,listener,options){if(!events.has(name))events.set(name,[]);events.get(name).push({listener,options})},removeEventListener(name,listener){events.set(name,(events.get(name)??[]).filter(item=>item.listener!==listener))}};
   const roots=[new Element(),new Element()],context=vm.createContext({document,window,Date:{now:()=>now},setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)});
   vm.runInContext(source,context);
-  const controls=context.attachStudioControls(roots,(kind,level)=>changes.push([kind,level]),options.enabled??(()=>true),()=>gestures++);
+  const controls=context.attachStudioControls(roots,(kind,level)=>changes.push([kind,level]),options.enabled??(()=>true),()=>gestures++,options.initial??{image:options.image});
   function emit(name,details={}){
     const event={pointerType:'touch',pointerId:1,isPrimary:true,clientX:195,clientY:422,target:roots[0],prevented:false,stopped:false,preventDefault(){this.prevented=true},stopImmediatePropagation(){this.stopped=true},...details};
     for(const {listener} of events.get(name)??[]){listener(event);if(event.stopped)break}
@@ -33,15 +33,17 @@ function harness(options={}){
   return {roots,controls,changes,document,window,emit,rail,click,advance,Element,get timers(){return timers.size},get gestures(){return gestures}};
 }
 
-test('two image modes and nine historical display profiles share the existing edge marks',()=>{
+test('depth is the default among three image modes and hides the historical profile rail',()=>{
   const app=harness();
-  assert.equal(app.controls.image,0);
+  assert.equal(app.controls.image,2);
   assert.equal(app.controls.photo,0);
   assert.equal(app.controls.primitive,0);
   for(let i=0;i<2;i++){
     const image=app.rail('image',i),profiles=app.rail('primitive',i);
-    assert.equal(image.children.length,2);
+    assert.equal(image.children.length,3);
+    assert.deepEqual(image.children.map(button=>button.getAttribute('aria-pressed')),['false','false','true']);
     assert.equal(profiles.children.length,9);
+    assert.equal(profiles.hidden,true);
     assert.equal(profiles.getAttribute('aria-label'),'Historisk skjermprofil');
     assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-label')),Array.from({length:9},(_,index)=>'Profil '+(index+1)));
     assert.deepEqual(profiles.children.map(button=>button.getAttribute('aria-pressed')),['true',...Array(8).fill('false')]);
@@ -49,22 +51,37 @@ test('two image modes and nine historical display profiles share the existing ed
   }
 });
 
+test('VATHOgraphy has no mode rails or edge gestures and retains internal photo recovery',()=>{
+  const app=harness({initial:{vathography:true,image:0,photo:3,primitive:5}});
+  assert.equal(app.controls.image,2);assert.equal(app.controls.vathography,true);
+  assert.equal(app.controls.photo,3);assert.equal(app.controls.primitive,5);
+  for(const root of app.roots)assert.equal(root.children.length,0);
+  for(const x of [2,388])assert.equal(app.emit('pointerdown',{clientX:x}).prevented,false);
+  assert.equal(app.controls.image,2);assert.equal(app.gestures,0);
+  app.controls.setImage(0);assert.equal(app.controls.image,0);
+  app.controls.setImage(2);assert.equal(app.controls.image,2);
+  app.controls.dispose();
+});
+
 test('native buttons select historical profiles for photo and depth independently',()=>{
-  const app=harness();
+  const app=harness({image:0});
   app.click('primitive',2);
   assert.equal(app.controls.photo,2);
   assert.deepEqual(app.changes,[['photo',2]]);
   app.click('image',1);
   app.click('primitive',1);
   assert.equal(app.controls.primitive,1);
+  app.click('image',2);
+  assert.equal(app.controls.photo,2);
+  assert.equal(app.controls.primitive,1);
   app.click('image',0);
   assert.equal(app.controls.photo,2);
-  assert.deepEqual(app.changes,[['photo',2],['image',1],['primitive',1],['image',0]]);
+  assert.deepEqual(app.changes,[['photo',2],['image',1],['primitive',1],['image',2],['image',0]]);
   assert.deepEqual(app.rail('primitive').children.map(button=>button.getAttribute('aria-pressed')),['false','false','true',...Array(6).fill('false')]);
 });
 
 test('the left edge scrubs profiles in top-to-bottom order without changing the image type',()=>{
-  const app=harness();
+  const app=harness({image:0});
   const down=app.emit('pointerdown',{clientX:4,clientY:100});
   assert.equal(down.prevented,true);
   for(const clientY of [300,500,800])app.emit('pointermove',{clientX:4,clientY});
@@ -85,24 +102,23 @@ test('the right edge changes image type and preserves independently selected pro
   assert.equal(app.controls.primitive,3);
 });
 
-test('profile selections have no visible labels or colored circles',()=>{
-  const app=harness();
+test('profile and mode selections have no floating indicator icons or labels',()=>{
+  const app=harness({image:0});
   for(const i of [1,4,6,7,8])app.click('primitive',i);
-  const hints=app.roots.map(root=>root.children.find(element=>element.tagName==='SPAN'));
-  assert.ok(hints.every(hint=>!hint.classList.contains('shown')));
-  assert.ok(hints.every(hint=>!hint.textContent));
+  const hints=()=>app.roots.flatMap(root=>root.children.filter(element=>element.tagName==='SPAN'));
+  assert.equal(hints().length,0);
   assert.equal(app.document.head.children.length,1);
   assert.equal(app.timers,0);
-  app.click('image',1);
-  assert.ok(hints.every(hint=>hint.innerHTML.includes('<svg')));
+  for(const image of [0,1,2])app.click('image',image);
+  assert.equal(hints().length,0);assert.equal(app.timers,0);
 });
 
 test('profile controls support keyboard focus without changing the selected value',()=>{
-  const app=harness(),button=app.rail('primitive').children[3];
-  button.listeners.get('focus')();
+  const app=harness({image:0}),button=app.rail('primitive').children[3];
+  button.listeners.get('focus')?.();
   assert.equal(app.controls.photo,0);
   const hint=app.roots[0].children.find(element=>element.tagName==='SPAN');
-  assert.ok(!hint.textContent);
+  assert.equal(hint,undefined);
   app.click('primitive',3,{detail:0});
   assert.equal(app.controls.photo,3);
 });
@@ -142,4 +158,11 @@ test('disposal clears the silent rails and event ownership',()=>{
   assert.equal(app.document.head.children.length,0);
   assert.ok(app.roots.every(root=>root.children.length===0));
   assert.equal(app.emit('pointerdown',{clientX:4}).prevented,false);
+});
+
+test('depth-art gestures and its controls are not consumed by the hidden profile rail',()=>{
+  const app=harness();app.click('image',2);assert.equal(app.rail('primitive').hidden,true);
+  assert.equal(app.emit('pointerdown',{clientX:4,clientY:100}).prevented,false);
+  for(const name of ['mg-variant','mg-compare','mg-quality']){const button=new app.Element('button');button.className=name;assert.equal(app.emit('pointerdown',{clientX:4,clientY:100,target:button}).prevented,false)}
+  assert.equal(app.controls.image,2);assert.equal(app.rail('image').children[2].getAttribute('aria-label'),'Djupnekunst');
 });

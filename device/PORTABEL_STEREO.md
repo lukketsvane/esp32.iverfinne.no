@@ -12,13 +12,15 @@ Etter oppstart lagar primærkameraet det opne Wi-Fi-nettet ENTROPI på 192.168.4
 4. Trykk ikonet med to rektangel i biletvisinga for å lagre eit side-ved-side-JPEG med begge kamerabileta, i full sensoroppløysing.
 5. På iPhone via lokalt HTTP: hald inne det opna biletet, og vel lagring til Bilder/Foto. Kontroller at fila er lagra før neste opptak.
 
-Ingen minnekortlagring eller automatisk varig arkiv er aktiv. Eit usikra biletepar kan gå tapt ved ny opplasting, omstart eller lukking av nettlesaren.
+Originalpara blir mellomlagra i nettlesaren sitt lokale arkiv. Lagre viktige bilete til Foto; sletting av nettstaddata kan fjerne arkivet.
 
-## Rett inn linsene
+## Fast montert rigg
 
-Opne http://192.168.4.1/?kalibrer=1 med telefonen på ENTROPI. Justeringsvisinga legg kamera 1 i raudt over kamera 2 i cyan. Sikt mot ein stilleståande gjenstand med rette vassrette kantar. Løysne kamerafesta og rett dei to optiske aksane slik at same kant ligg på same høgd i begge bileta. Sikre skruane. Opne «Til kameraet» når dei er rette.
+Kameraa brukar den målte riggprofilen frå 28.10.2026 automatisk. Den tidlegare justeringssida og høgdeglidebrytaren er fjerna; eldre lenkjer med `?kalibrer=1` opnar kameraet. Ikkje flytt kameraa i festet etter denne målinga. Originalfotoa blir bevarte utan korreksjon.
 
-Bileta er korrigerte til same rotasjonsretning i firmware. Den siste fysisk monterte prototypen hadde enno om lag 130 pikslar vertikal forskyving ved 640 × 480, og krev innretting for stabil 3D. Kameraa må peike parallelt og vere stive under opptak. Utløysingane er ikkje maskinvaresynkroniserte, så bruk helst stilleståande motiv og hald kameraet i ro.
+Berekninga tek omsyn til den vertikale disparitetsretninga og korrigerer samsvarslinjene før stereo. Resultatet er relativ djupn utan metrisk kalibrering eller synkroniserte eksponeringar. Hald riggen og motivet i ro og bruk godt lys. Manglande sikre samsvar gir fotoet tilbake, med originalparet tilgjengeleg for lagring.
+
+Kamera 2 prøver tilkoplinga på nytt kvart 15. sekund medan nettet er borte. Den lokale USB-brua kontrollerer at vald port tilhøyrer primærkameraet; Windows-portnummer kan endre seg.
 
 ## Verifisering 25.10.2026
 

@@ -4,13 +4,7 @@ let selfTimer=0,countdown=0,countdownTimer=null,peerPreviewBusy=false,peerFinder
 
 function updateCameraChrome(){
   const ready=connected&&!connecting&&!busy&&!printBusy;
-  const paired=secondEnabled;
   $('shutter').disabled=!ready||!$('archive').hidden||!!countdownTimer;
-  $('rig-state').textContent=!connected?'SER ETTER KAMERA':paired?'TO KAMERA · SAMANKOPLA':peerId()?'KOPLAR KAMERA 2':'EITT KAMERA · KLART';
-  $('rig-footnote').textContent=countdownTimer?String(countdown):busy?'TEK FOTO':paired?'STEREO · TO SENSORAR':'TRYKK FOR Å TA FOTO';
-  const wide=matchMedia('(orientation: landscape) and (max-height:550px)').matches;
-  $('rig-frame-label').textContent=paired?(wide?'01 · VENSTRE':'01 + 02 · STEREO'):'01 · OPTISK SØKJAR';
-  $('peer-frame-label').hidden=!paired||!wide;
 }
 
 function cancelCountdown(){
@@ -23,8 +17,8 @@ function shutterPress(){
   countdown=selfTimer;
   const tick=()=>{
     if(document.hidden||!connected||busy||!$('archive').hidden){cancelCountdown();return}
-    if(!countdown){countdownTimer=null;updateCameraChrome();void takePhoto();return}
-    updateCameraChrome();countdown--;countdownTimer=setTimeout(tick,1000);
+    if(!countdown){notice('');countdownTimer=null;updateCameraChrome();void takePhoto();return}
+    notice(String(countdown));updateCameraChrome();countdown--;countdownTimer=setTimeout(tick,1000);
   };
   tick();
 }
@@ -36,17 +30,9 @@ $('timer-cycle').addEventListener('click',()=>{
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelCountdown()});
 
-async function refreshArchiveCount(){
-  try{
-    const entries=await archiveStore.list();
-    $('archive-count').textContent=entries.length?entries.length+' I ARKIV':'ARKIV';
-  }catch{$('archive-count').textContent='ARKIV'}
-}
-
 async function archiveCapture(original,pair){
   try{
     await archiveStore.save(pair?.left??original,pair?.right??null);
-    void refreshArchiveCount();
     return '';
   }catch(error){
     return 'Biletet er ikkje arkivert automatisk. Lagre det manuelt før du tek eit nytt. '+(error?.name==='QuotaExceededError'?'Lagringa er full.':'');
@@ -69,16 +55,13 @@ async function showArchive(){
   cancelCountdown();stopStream();
   $('archive').hidden=false;
   $('archive-grid').hidden=false;$('archive-detail').hidden=true;$('vault-hint').hidden=false;
-  $('vault-count').textContent='HENTAR BILETE…';
   archiveSelected=null;
   clearArchiveUrls();
   const grid=$('archive-grid');grid.replaceChildren();
   try{
     archiveRecords=await archiveStore.list();
-    $('vault-count').textContent=archiveRecords.length+' OPPTAK · LAGRA PÅ DENNE EININGA';
-    $('archive-count').textContent=archiveRecords.length?archiveRecords.length+' I ARKIV':'ARKIV';
     if(!archiveRecords.length){
-      const empty=document.createElement('p');empty.className='vault-empty';empty.textContent='Ingen foto er lagra enno. Ta eit bilete for å byrje arkivet.';grid.append(empty);
+      const empty=document.createElement('p');empty.className='vault-empty';empty.textContent='Ingen bilete enno.';grid.append(empty);
     }
     for(const record of archiveRecords){
       const button=document.createElement('button');button.className='vault-item';button.type='button';
@@ -92,7 +75,6 @@ async function showArchive(){
       grid.append(button);
     }
   }catch(error){
-    $('vault-count').textContent='ARKIVET ER IKKJE TILGJENGELEG';
     const empty=document.createElement('p');empty.className='vault-empty';empty.textContent=error?.message||'Lagringa kunne ikkje opnast.';grid.append(empty);
   }
 }
@@ -104,10 +86,9 @@ async function openArchivedPhoto(id){
   archiveViewer=URL.createObjectURL(record.left);
   $('archive-photo').src=archiveViewer;
   $('archive-detail-info').textContent=archiveDate(archiveRecords.find(entry=>entry.id===id)?.created??Date.now())+'  ·  '+(record.right?'STEREO':'FOTO');
-  $('archive-left').textContent=record.right?'Venstre JPEG':'Original JPEG';
+  $('archive-left').textContent=record.right?'Lagre venstre':'Lagre original';
   $('archive-right').hidden=!record.right;
-  $('archive-pair').hidden=!record.right;
-  $('archive-delete').textContent='Slett frå arkivet';
+  $('archive-delete').textContent='Slett';
   $('archive-notice').textContent='';
   $('archive-grid').hidden=true;$('vault-hint').hidden=true;$('archive-detail').hidden=false;
 }
@@ -125,12 +106,11 @@ async function exportArchived(kind){
   const id=archiveSelected;if(!id)return;
   const record=await archiveStore.get(id);
   if(!record||archiveSelected!==id)return;
-  let blob=kind==='right'?record.right:record.left;
-  if(kind==='pair')blob=await stereoPairImage(record);
+  const blob=kind==='right'?record.right:record.left;
   if(!blob)return;
   await savePhoto(blob,'entropi-'+id+'-'+kind+'.jpg',()=>archiveSelected===id&&!$('archive').hidden);
 }
-for(const kind of ['left','right','pair']){
+for(const kind of ['left','right']){
   $('archive-'+kind).addEventListener('click',()=>void exportArchived(kind).catch(error=>{$('archive-notice').textContent=error.message}));
 }
 $('archive-delete').addEventListener('click',async()=>{
@@ -139,7 +119,7 @@ $('archive-delete').addEventListener('click',async()=>{
     archiveDeleteArmed=true;$('archive-delete').textContent='Trykk igjen for å slette';return;
   }
   await archiveStore.remove(id);
-  void refreshArchiveCount();void showArchive();
+  void showArchive();
 });
 window.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&!$('archive').hidden){event.preventDefault();if(!$('archive-detail').hidden)void showArchive();else closeArchive()}
@@ -161,6 +141,7 @@ async function updatePeerPreview(){
     if(!visible())return;
     if(!peerFinder){peerFinder=new Viewfinder(canvas);peerFinder.active=false}
     canvas.hidden=false;peerFinder.source=image;
+    peerFinder.monochrome=studioControls.image===2;
     peerFinder.setStyle(COLOR_SCHEMES[studioControls.photo].style);
     peerFinder.setPalette(paletteSelection.photo);
     peerFinder.setTone(photoGestures.state);
@@ -170,4 +151,3 @@ async function updatePeerPreview(){
   finally{if(url)URL.revokeObjectURL(url);peerPreviewBusy=false}
 }
 setInterval(()=>void updatePeerPreview(),1800);
-void refreshArchiveCount();

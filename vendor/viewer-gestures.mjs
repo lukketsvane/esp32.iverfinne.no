@@ -13,7 +13,7 @@ export function attachViewerGestures(canvas,{onRotate,onTransform,onDensity,onDe
   const reset=()=>{start=previous=pointers.size>0&&pointers.size<=3?measure():null;axis=null};
   const down=event=>{
     if(disposed||event.pointerType!=='touch')return;
-    if(pointers.size===0)onTouch(true);pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});canvas.setPointerCapture(event.pointerId);reset();if(pointers.size>1)event.preventDefault();
+    if(pointers.size===0)onTouch(true);pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});try{canvas.setPointerCapture(event.pointerId)}catch{}reset();event.preventDefault();
   };
   const move=event=>{
     const point=pointers.get(event.pointerId);if(!point)return;point.x=event.clientX;point.y=event.clientY;event.stopImmediatePropagation();event.preventDefault();
@@ -37,7 +37,8 @@ export function attachViewerGestures(canvas,{onRotate,onTransform,onDensity,onDe
     if(event.pointerType!=='touch'||!pointers.delete(event.pointerId))return;
     if(pointers.size===0)onTouch(false);reset();
   };
-  const listeners=[['pointerdown',down],['pointermove',move],['pointerup',up],['pointercancel',up],['lostpointercapture',up]];
+  const preventNative=event=>{if(pointers.size)event.preventDefault()};
+  const listeners=[['pointerdown',down],['pointermove',move],['pointerup',up],['pointercancel',up],['lostpointercapture',up],['gesturestart',preventNative],['gesturechange',preventNative]];
   for(const [name,listener] of listeners)canvas.addEventListener(name,listener,true);
   return {state,dispose(){if(disposed)return;disposed=true;const captured=[...pointers.keys()];if(pointers.size)onTouch(false);pointers.clear();for(const [name,listener] of listeners)canvas.removeEventListener(name,listener,true);for(const id of captured)if(canvas.hasPointerCapture?.(id))canvas.releasePointerCapture(id)}};
 }

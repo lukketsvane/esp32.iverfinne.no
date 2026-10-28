@@ -1,11 +1,11 @@
-export function inferenceSize(width, height) {
+export function inferenceSize(width, height, maximum = 420) {
   if (!(width > 0 && height > 0)) throw new Error('Ugyldig kamerabilete.');
-  const scale = 420 / Math.max(width, height);
+  const scale = maximum / Math.max(width, height);
   return { width: Math.max(140, Math.round(width * scale / 14) * 14), height: Math.max(140, Math.round(height * scale / 14) * 14) };
 }
 
 export function pointStride(width, height, budget = 42000) {
-  let stride = Math.max(2, Math.ceil(Math.sqrt(width * height / budget)));
+  let stride = Math.max(1, Math.ceil(Math.sqrt(width * height / budget)));
   while (Math.ceil(width / stride) * Math.ceil(height / stride) > budget) stride++;
   return stride;
 }

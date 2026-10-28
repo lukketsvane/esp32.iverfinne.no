@@ -24,12 +24,9 @@ for(const [name,url] of pages){
   });
 }
 
-test('camera chrome never visually exposes decorative headings or metadata',async()=>{
-  const camera=await readFile(new URL('../device/EntropiCamera/camera-ui-restore.css',import.meta.url),'utf8');
-  const pwa=await readFile(new URL('../pwa-ui.css',import.meta.url),'utf8');
-  for(const selector of ['.rig-title','.rig-subtitle','.rig-link','.rig-frame-label','.peer-frame-label','.rig-footnote','.rig-tool-label','.review-label','.review-tabs']){
-    assert.ok(camera.includes(selector),selector+' lacks minimalist visibility rule');
-  }
-  assert.match(camera,/rig-title[^{}]*\{display:none!important\}/);
-  assert.match(pwa,/\.pwa-heading>strong[^{}]*\{position:absolute;width:1px/);
+test('camera chrome omits decorative headings and duplicate mode labels',async()=>{
+  const camera=await readFile(pages[1][1],'utf8');
+  const pwa=await readFile(pages[0][1],'utf8');
+  assert.doesNotMatch(camera,/class="(?:rig-title|rig-subtitle|rig-link|rig-frame-label|peer-frame-label|rig-footnote|rig-tool-label|review-label|review-tabs|setup-meta)"/);
+  assert.doesNotMatch(pwa,/PHONE CAMERA \/ A1|<strong>ENTROPI<\/strong>/);
 });

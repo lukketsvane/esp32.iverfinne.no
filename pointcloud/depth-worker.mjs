@@ -14,7 +14,7 @@ self.onmessage = async event => {
   let input, outputs;
   const progress = (phase, percent) => self.postMessage({ type: 'progress', phase, percent });
   try {
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 14 || height < 14 || width > 420 || height > 420 || width % 14 || height % 14) throw new Error('Ugyldig biletoppløysing.');
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 14 || height < 14 || width > 518 || height > 518 || width % 14 || height % 14) throw new Error('Ugyldig biletoppløysing.');
     if(!session){
       const response = await fetch(new URL('./models/manifest.json', import.meta.url), { cache: 'force-cache' });
       if (!response.ok) throw new Error('Modellmanifestet manglar.');

@@ -455,11 +455,13 @@ void serialStereoPair() {
     for (size_t n = 0; n < firstSize; n += 512) {
       size_t chunk = firstSize - n < 512 ? firstSize - n : 512;
       Serial.write(first + n, chunk);
+      pollRigNetwork();
       delay(1);
     }
     for (size_t n = 0; n < secondSize; n += 512) {
       size_t chunk = secondSize - n < 512 ? secondSize - n : 512;
       Serial.write(second + n, chunk);
+      pollRigNetwork();
       delay(1);
     }
     Serial.print("PAIR_END\n");
@@ -628,17 +630,14 @@ void startCameraServer() {
   startPrinterBridge();
   cameraMutex = xSemaphoreCreateMutex();
   hasPsram = psramFound();
+  photoSize = hasPsram ? FRAMESIZE_UXGA : FRAMESIZE_QVGA;
   preferencesReady = preferences.begin("entropi", false);
   if (preferencesReady) {
     int savedPreview = preferences.getInt("framesize", FRAMESIZE_QVGA);
-    int savedPhoto = preferences.getInt("photo_framesize", hasPsram ? FRAMESIZE_UXGA : FRAMESIZE_QVGA);
     int savedBrightness = preferences.getInt("brightness", 0);
     if (previewAllowed(savedPreview)) previewSize = static_cast<framesize_t>(savedPreview);
-    photoSize = photoAllowed(savedPhoto) ? static_cast<framesize_t>(savedPhoto) : FRAMESIZE_QVGA;
     brightness = constrain(savedBrightness, -2, 2);
     ledDuty = constrain(preferences.getInt("led_intensity", 0), 0, 255);
-  } else if (!hasPsram) {
-    photoSize = FRAMESIZE_QVGA;
   }
 #if defined(LED_GPIO_NUM)
   ledcAttachChannel(LED_GPIO_NUM, 5000, 8, 7);
@@ -646,7 +645,7 @@ void startCameraServer() {
 #endif
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_open_sockets = 4;
-  config.max_uri_handlers = 12;
+  config.max_uri_handlers = 13;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
   config.send_wait_timeout = 3;
@@ -661,6 +660,7 @@ void startCameraServer() {
     registerHandler(cameraHttpd, "/peer/status", peerHandler);
     registerHandler(cameraHttpd, "/peer/preview", peerHandler);
     registerHandler(cameraHttpd, "/peer/capture", peerHandler);
+    registerHandler(cameraHttpd, "/apple-touch-icon.png", assetHandler);
     registerHandler(cameraHttpd, "/pointcloud/*", assetHandler);
     registerHandler(cameraHttpd, "/print", printerUploadHandler, HTTP_POST);
     registerHandler(cameraHttpd, "/print-status", printerStatusHandler);
