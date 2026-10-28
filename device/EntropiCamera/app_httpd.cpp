@@ -25,6 +25,7 @@
 #include "camera_ui.h"
 #include "camera_assets.h"
 #include "board_config.h"
+#include "capture_button.h"
 #include "jpeg_frame.h"
 #include "stereo_protocol.h"
 #include "px10_printer.h"
@@ -305,6 +306,11 @@ static String cameraStatusJson() {
   json += ",\"photo_framesize\":" + String(static_cast<int>(photoSize));
   json += ",\"brightness\":" + String(brightness);
   json += ",\"led_intensity\":" + String(ledDuty);
+  CaptureButtonSnapshot button;
+  if (captureButtonSnapshot(button)) {
+    json += ",\"button_presses\":" + String(static_cast<unsigned long>(button.presses));
+    json += ",\"button_age_ms\":" + String(static_cast<long>(button.ageMs));
+  }
   json += ",\"peer\":";
   json += rigIsPrimary() && rigPeerOrigin().length() ? "{\"camera_id\":" + quoted(rigPeerId()) + "}" : "null";
   json += "}";
@@ -330,6 +336,15 @@ static esp_err_t unavailable(httpd_req_t *request, const char *message) {
   httpd_resp_set_status(request, "503 Service Unavailable");
   httpd_resp_set_type(request, "text/plain");
   return httpd_resp_send(request, message, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t buttonHandler(httpd_req_t *request) {
+  CaptureButtonSnapshot button;
+  if (!captureButtonSnapshot(button)) return unavailable(request, "No capture button is configured");
+  String json = "{\"presses\":" + String(static_cast<unsigned long>(button.presses));
+  json += ",\"age_ms\":" + String(static_cast<long>(button.ageMs));
+  json += ",\"pressed\":" + String(button.pressed ? "true" : "false") + "}";
+  return sendJson(request, json);
 }
 
 static esp_err_t recoverHandler(httpd_req_t *request) {
@@ -909,7 +924,7 @@ void startCameraServer() {
 #endif
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_open_sockets = 4;
-  config.max_uri_handlers = 16;
+  config.max_uri_handlers = 17;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
   config.send_wait_timeout = 3;
@@ -918,6 +933,7 @@ void startCameraServer() {
   if (httpd_start(&cameraHttpd, &config) == ESP_OK) {
     registerHandler(cameraHttpd, "/", indexHandler);
     registerHandler(cameraHttpd, "/status", statusHandler);
+    registerHandler(cameraHttpd, "/button", buttonHandler);
     registerHandler(cameraHttpd, "/recover", recoverHandler, HTTP_POST);
     registerHandler(cameraHttpd, "/control", controlHandler);
     registerHandler(cameraHttpd, "/capture", captureHandler);

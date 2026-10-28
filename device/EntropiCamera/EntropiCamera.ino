@@ -5,6 +5,7 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_wifi_ap_get_sta_list.h"
+#include "capture_button.h"
 #include "px10_printer.h"
 #include "rig_network.h"
 
@@ -102,6 +103,7 @@ void setup() {
 #endif
   beginRigNetwork();
   startCameraServer();
+  beginCaptureButton();
 #if defined(ENTROPI_WIFI_SSID) && defined(ENTROPI_WIFI_PASSWORD)
   Serial.println("Entropi: joining local Wi-Fi");
 #elif ENTROPI_SECONDARY_CAMERA
@@ -129,6 +131,7 @@ void loop() {
       else if (!strcmp(command, "rig-check")) checkRigNetwork();
       else if (!strcmp(command, "camera-check")) serialCameraCheck();
       else if (!strcmp(command, "camera-retry")) serialCameraRetry();
+      else if (!strcmp(command, "button-check")) checkCaptureButton();
       else if (!strcmp(command, "peer-check")) serialPeerCheck();
       else if (!strcmp(command, "peer-retry")) serialPeerRetry();
 #if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST

@@ -63,6 +63,12 @@ Primærkameraet leverer også `/peer/status`, `/peer/preview` og `/peer/capture`
 
 For PC-utvikling kan primærkameraet i tillegg få `ENTROPI_WIFI_SSID` og `ENTROPI_WIFI_PASSWORD` frå den private headeren. Det held ENTROPI ope samtidig som det koplar til lokalnettet. Kamera 2 kan bli verande på ENTROPI, slik at riggen fungerer utan heimerutaren. Dersom også kamera 2 blir bygd med LAN-oppsett, går det over til ENTROPI etter 15 sekund utan LAN-tilkopling. USB blir brukt til straum, flashing og diagnostikk; bileta går over Wi-Fi. Private parings- og nettverksbygg skal ikkje publiserast.
 
+## Utløysarknapp
+
+Primærkameraet les ein valfri trykknapp mellom IO13 og GND. Begge punkta sit på same stiftrad på kamerasida: IO4, IO2, IO14, IO15, IO13, IO12, GND, 5V. Lodd to tynne leidningar til loddepunkta for IO13 og GND, og hald dei unna IO12, som styrer oppstarten. Bruk ein momentan trykknapp som er open i kvile; firmware slår på den interne pull-up-motstanden og filtrerer kontaktprell. RST-knappen på modulsida startar kameraet på nytt og er ikkje ein utløysar.
+
+Eit trykk tek same foto som utløysaren på skjermen når kamerasida er open og klar. Eit trykk medan eit bilete blir vist, går tilbake til søkjaren. Trykk under opptak eller framkalling blir ikkje utførte seinare. Kamerasida spør etter trykk fire gonger i sekundet, så knappen kan gi inntil eit kvart sekund ekstra forseinking. Utan open kameraside blir trykk berre talde. USB-kommandoen `button-check` viser om knappen er kopla rett. Bygg med `-DENTROPI_BUTTON_GPIO=14` for IO14 eller `-1` for å slå knappen av; sekundærkameraet les aldri knappen.
+
 ## Djupnekunst
 
 VATHOgraphy brukar flyttalsdjupn med fem svartkvite tonekurver: Lysband, Dis, Djup, Nærlys og To plan. Dis er standard. Dra med éin finger for å flytte lysbandet; knip med to for å endre breidda. Ferdig djupn blir mellomlagra for same opptak. Justering, vising, PNG-lagring og utskriftsgrunnlag brukar den same rasteren utan fotoets luminans eller splatgeometri.

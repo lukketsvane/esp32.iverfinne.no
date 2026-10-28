@@ -282,7 +282,7 @@ async function connect(){
     if(!hasFrame)throw new Error('Ingen kamerabilete. Prøver igjen …');
     connected=true;connectionProblem=null;retryCount=0;if(!captureFailed)notice('');if(onboarding.open){if(!needsPhoneModels())onboarding.close();else renderOnboarding()}
   }catch(error){if(generation===connectGeneration)loseConnection(error.name==='AbortError'?'Ingen kontakt. Kontroller Wi-Fi og straum.':error.message,statusReceived?(deviceStatus?.camera_ready?'stream':'sensor'):'network')}
-  finally{if(generation===connectGeneration){connecting=false;controls();if(connected)void connectSecond()}}
+  finally{if(generation===connectGeneration){connecting=false;controls();if(connected){void connectSecond();void watchButton()}}}
 }
 async function showPhoto(blob,signal,pair=null,master=null,archiveId=null){
   signal?.throwIfAborted();
@@ -322,6 +322,20 @@ async function takePhoto(){
   }catch{if(!task.signal.aborted){task.abort();captureFailed=true;notice('Fotoet kunne ikkje takast.')}}
   finally{if(captureTask===task){captureTask=null;busy=false;controls();resumeStream()}}
 }
+let buttonRun=0;
+async function watchButton(){
+  const run=++buttonRun;let seen=null;
+  while(run===buttonRun&&!document.hidden&&Number.isInteger(deviceStatus?.button_presses)){
+    if(busy||printBusy||connecting||!(connected||reviewing()))seen=null;
+    else try{
+      const state=await request('/button','json',2000);
+      if(run!==buttonRun)return;
+      if(Number.isInteger(state?.presses)){if(seen!==null&&state.presses!==seen&&state.age_ms>=0&&state.age_ms<1500)hardwareShutter();seen=state.presses}
+    }catch{seen=null}
+    await new Promise(resolve=>setTimeout(resolve,250));
+  }
+}
+function hardwareShutter(){if(!reviewing())void takePhoto();else if(!photoDialog.classList.contains('working'))photoDialog.close()}
 function clearScene(){
   clearTimeout(masterSaveTimer);masterSaveTimer=0;
   photoDialog.classList.remove('working','error');$('scene-progress').hidden=true;$('retry-scene').hidden=true;
@@ -414,7 +428,7 @@ photoDialog.addEventListener('close',()=>{void persistCurrentPreview().catch(err
 $('last-photo').addEventListener('click',()=>{if(photoUrl&&!busy){stopStream();photoDialog.showModal();refreshReview();if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt()}});
 onboarding.addEventListener('click',event=>{if(event.target===onboarding){const rect=onboarding.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeOnboarding()}});
 function suspend(){++connectGeneration;connecting=false;connected=false;clearTimeout(retryTimer);if(captureTask){captureTask.abort();captureTask=null;busy=false}stopSecond();stopStream();controls()}
-function resume(){if(!document.hidden){if(reviewing()){if(studioControls.image===0)photoGestures.refresh?.();else if(studioControls.image===2)void makeArt();else if(photoPair)void makeScene();else if(!phoneReady&&!phoneTask&&!sceneViewer)void checkPhone()}else connect()}}
+function resume(){if(!document.hidden){if(reviewing()){void watchButton();if(studioControls.image===0)photoGestures.refresh?.();else if(studioControls.image===2)void makeArt();else if(photoPair)void makeScene();else if(!phoneReady&&!phoneTask&&!sceneViewer)void checkPhone()}else connect()}}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});window.addEventListener('pagehide',()=>{notifyCamera('entropi-camera-left');parentReady=false;suspend();phoneTask?.abort();cancelArt()});window.addEventListener('pageshow',resume);window.addEventListener('online',resume);
 setInterval(async()=>{
   if(!connected||busy||printBusy||connecting||document.hidden||reviewing())return;

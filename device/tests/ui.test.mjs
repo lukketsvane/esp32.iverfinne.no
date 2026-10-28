@@ -1516,3 +1516,43 @@ test('callbacks from a retired stream cannot disconnect or satisfy a replacement
   replacement.naturalWidth=320;replacement.naturalHeight=240;await app.tick(150);assert.equal(app.get('capture-plane').disabled,false);
   await previous.emit('error');await app.tick(150);assert.equal(app.live,replacement);assert.equal(app.get('capture-plane').disabled,false);assert.equal(app.requests.filter(request=>request.url.startsWith('/status')).length,statusReads);
 });
+
+const buttonStatus={...verifiedStatus,peer:null,button_presses:0,button_age_ms:-1};
+function buttonFetch(button,next){return (url,count,response,...rest)=>url==='/button'?response({...button}):next?.(url,count,response,...rest)}
+
+test('the hardware button takes a photo only for fresh presses made while the page watches',async()=>{
+  const button={presses:4,age_ms:200};
+  const app=await connectedCamera({status:buttonStatus,fetch:buttonFetch(button)});
+  await app.tick(600);
+  assert.ok(app.requests.some(request=>request.url==='/button'));
+  assert.equal(app.requests.some(request=>request.url.startsWith('/capture')),false);
+  Object.assign(button,{presses:5,age_ms:5000});await app.tick(300);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/capture')),false);
+  Object.assign(button,{presses:6,age_ms:40});await app.tick(300);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
+  assert.equal(app.get('photo-dialog').open,true);
+});
+
+test('a hardware press returns from review, and a press during a capture is not replayed afterwards',async()=>{
+  const button={presses:0,age_ms:-1},pending=deferred();
+  const app=await connectedCamera({status:buttonStatus,fetch:buttonFetch(button,(url,count,response)=>url.startsWith('/capture')?pending.promise.then(()=>response(new Blob(['jpeg'],{type:'image/jpeg'}))):undefined)});
+  await app.tick(300);
+  const clicked=app.get('capture-plane').emit('click');
+  Object.assign(button,{presses:1,age_ms:10});await app.tick(500);
+  pending.resolve();await clicked;await app.tick(10);
+  assert.equal(app.get('photo-dialog').open,true);
+  await app.tick(1000);
+  assert.equal(app.get('photo-dialog').open,true);
+  Object.assign(button,{presses:2,age_ms:10});await app.tick(300);
+  assert.equal(app.get('photo-dialog').open,false);
+  await app.tick(300);assert.equal(app.get('capture-plane').disabled,false);
+  Object.assign(button,{presses:3,age_ms:10});await app.tick(600);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,2);
+  assert.equal(app.get('photo-dialog').open,true);
+});
+
+test('cameras without a hardware button are never polled for presses',async()=>{
+  const app=await connectedCamera();
+  await app.tick(3000);
+  assert.equal(app.requests.some(request=>request.url==='/button'),false);
+});
