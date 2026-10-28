@@ -67,15 +67,18 @@ test('browser inference preserves missing-model error codes for portable setup',
   finally{for(const [key,value]of Object.entries(original)){if(value===undefined)delete globalThis[key];else globalThis[key]=value}}
 });
 
-test('depth art sends a higher resolution original to inference and reports its actual model size',async()=>{
-  const original={Image:globalThis.Image,document:globalThis.document,Worker:globalThis.Worker};let request,terminated=0;
-  globalThis.Image=class{naturalWidth=640;naturalHeight=480;async decode(){}};
+test('depth art bypasses a cached 420px worker and sends higher resolution sensor pixels',async()=>{
+  const original={Image:globalThis.Image,document:globalThis.document,Worker:globalThis.Worker};let request,terminated=0;const workerUrls=[];
+  const legacy=message=>message.width>420||message.height>420?{type:'error',message:'Ugyldig biletoppløysing.'}:{type:'result',depth:new Float32Array(message.width*message.height).buffer,width:message.width,height:message.height};
+  const cached=new Map([['/pointcloud/depth-worker.mjs',legacy]]);
+  globalThis.Image=class{naturalWidth=1600;naturalHeight=1200;async decode(){}};
   globalThis.document={createElement:()=>({width:0,height:0,getContext:()=>({drawImage(){},getImageData:(_,__,width,height)=>({data:new Uint8ClampedArray(width*height*4)})})})};
-  globalThis.Worker=class{postMessage(message){request=message;queueMicrotask(()=>this.onmessage({data:{type:'result',depth:new Float32Array(message.width*message.height).buffer,width:message.width,height:message.height}}))}terminate(){terminated++}};
+  globalThis.Worker=class{constructor(url){this.url=url;workerUrls.push(url)}postMessage(message){request=message;const old=cached.get(new URL(this.url,'http://192.168.4.1').pathname);queueMicrotask(()=>this.onmessage({data:old?old(message):{type:'result',depth:new Float32Array(message.width*message.height).buffer,width:message.width,height:message.height}}))}terminate(){terminated++}};
   try{
     const result=await runBrowserDepth(photo);
     assert.equal(request.width,518);assert.equal(request.height,392);assert.equal(request.rgba.byteLength,518*392*4);
-    assert.equal(result.sourceWidth,640);assert.equal(result.sourceHeight,480);assert.equal(result.width,518);assert.equal(result.height,392);
+    assert.equal(legacy(request).type,'error');assert.deepEqual(workerUrls,['/pointcloud/depth-worker-v2.mjs']);
+    assert.equal(result.sourceWidth,1600);assert.equal(result.sourceHeight,1200);assert.equal(result.width,518);assert.equal(result.height,392);
     assert.match(result.model,/518 px/);assert.equal(terminated,1);
   }finally{for(const [key,value]of Object.entries(original)){if(value===undefined)delete globalThis[key];else globalThis[key]=value}}
 });

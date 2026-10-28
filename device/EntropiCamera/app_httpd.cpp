@@ -511,7 +511,7 @@ static esp_err_t assetHandler(httpd_req_t *request) {
     if (!asset.data || strlen(asset.uri) != length || strncmp(asset.uri, request->uri, length)) continue;
     httpd_resp_set_type(request, asset.type);
     httpd_resp_set_hdr(request, "Content-Encoding", "gzip");
-    httpd_resp_set_hdr(request, "Cache-Control", "public, max-age=86400");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-cache");
     return httpd_resp_send(request, reinterpret_cast<const char *>(asset.data), asset.length);
   }
   return httpd_resp_send_err(request, HTTPD_404_NOT_FOUND, "Asset was not found");

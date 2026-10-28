@@ -41,7 +41,7 @@ export async function runBrowserDepth(blob,{signal,onProgress=()=>{}}={}){
     context.drawImage(image,0,0,size.width,size.height);pixels=context.getImageData(0,0,size.width,size.height);
   }finally{URL.revokeObjectURL(url);canvas.width=canvas.height=1}
   return new Promise((resolve,reject)=>{
-    const worker=new Worker('/pointcloud/depth-worker.mjs',{type:'module'});
+    const worker=new Worker('/pointcloud/depth-worker-v2.mjs',{type:'module'});
     let finished=false;
     const finish=(error,result)=>{if(finished)return;finished=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);worker.terminate();if(error)reject(error);else resolve(result)};
     const abort=()=>finish(signal.reason||new DOMException('Avbrote.','AbortError'));

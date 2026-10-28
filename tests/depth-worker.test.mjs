@@ -7,7 +7,7 @@ const scene=(await readFile(new URL('../vendor/scene.mjs',import.meta.url),'utf8
 function host(){
   const workers=[],timers=new Map(),events=new Map();let id=0;
   class Worker{
-    constructor(){this.requests=[];this.stopped=false;workers.push(this)}
+    constructor(url){this.url=url;this.requests=[];this.stopped=false;workers.push(this)}
     postMessage(message){this.requests.push(message)}
     terminate(){this.stopped=true}
     result(value){this.onmessage({data:{type:'result',depth:new Float32Array([value]).buffer,width:1,height:1}})}
@@ -20,6 +20,7 @@ function host(){
 
 test('separate depth jobs reuse one warm worker and return distinct predictions',async()=>{
   const app=host(),first=app.run();app.workers[0].result(3);assert.equal((await first).depth[0],3);
+  assert.equal(app.workers[0].url,'/pointcloud/depth-worker-v2.mjs');
   const next=app.run();assert.equal(app.workers.length,1);assert.equal(app.workers[0].requests.length,2);
   app.workers[0].result(8);assert.equal((await next).depth[0],8);assert.equal(app.workers[0].stopped,false);
   app.expire(30000);assert.equal(app.workers[0].stopped,true);
@@ -42,7 +43,7 @@ test('backgrounding releases an idle engine and a background result is not retai
   const next=app.run();app.workers[1].result(2);await next;assert.equal(app.workers[1].stopped,true);
 });
 
-const worker=(await readFile(new URL('../pointcloud/depth-worker.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replaceAll('import.meta.url',"'https://example.test/pointcloud/depth-worker.mjs'");
+const worker=(await readFile(new URL('../pointcloud/depth-worker-v2.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replaceAll('import.meta.url',"'https://example.test/pointcloud/depth-worker-v2.mjs'");
 test('the worker keeps one model session across photographs while freeing per-image tensors',async()=>{
   let created=0,downloads=0,runs=0,disposed=0;const messages=[],manifest={asset:{bytes:4},runtime:{bytes:3}};
   const session={inputNames:['image'],outputNames:['depth'],async run(){runs++;return {depth:{data:new Float32Array(196).fill(runs),dims:[1,14,14],dispose(){disposed++}}}},async release(){}};

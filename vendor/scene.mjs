@@ -13,7 +13,7 @@ globalThis.document?.addEventListener?.('visibilitychange',()=>{if(document.hidd
 function estimateDepth(pixels,onProgress,signal){
   signal.throwIfAborted();depthCancel?.(new DOMException('Avbrote.','AbortError'));clearTimeout(depthIdle);
   return new Promise((resolve,reject)=>{
-    const worker=depthWorker??=new Worker('/pointcloud/depth-worker.mjs',{type:'module'});let finished=false;
+    const worker=depthWorker??=new Worker('/pointcloud/depth-worker-v2.mjs',{type:'module'});let finished=false;
     const finish=(error,result)=>{
       if(finished)return;finished=true;clearTimeout(timer);signal.removeEventListener('abort',abort);worker.onmessage=worker.onerror=null;if(depthCancel===finish)depthCancel=null;
       if(error||globalThis.document?.hidden)releaseDepthWorker();else depthIdle=setTimeout(releaseDepthWorker,30000);
