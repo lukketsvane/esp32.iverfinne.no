@@ -11,10 +11,10 @@ python device/build-ui.py
 Start med Python-miljøet som har PySerial, Pillow, NumPy, Torch og Transformers, og den lagra modellen `depth-anything/Depth-Anything-V2-Small-hf`:
 
 ```powershell
-python local/bridge.py --serial COM16 --cache C:\sti\til\hf_cache
+python local/bridge.py --serial COM13 --cache C:\sti\til\hf_cache
 ```
 
-Bruk USB-porten til primærkameraet. Etter siste USB-tilkopling 28.10.2026 vart `COM16` stadfesta som primærkamera `c0b62c0d5020` og `COM13` som sekundærkamera `c443180d5020`. Portnummer kan endre seg; brua kontrollerer kamera-ID og primærrolla med `rig-check` ved oppstart og avviser sekundærkameraet med ei konkret feilmelding. Eit nytt opptak kontrollerer også identiteten dersom han ikkje alt er stadfesta.
+Bruk USB-porten til primærkameraet. Ved kontroll 28.10.2026 kl. 23.45 svarte primærkameraet `c0b62c0d5020` på `COM13` og sekundærkameraet `c443180d5020` på `COM15`. Portnummer kan endre seg; brua kontrollerer kamera-ID og primærrolla med `rig-check` ved oppstart og avviser sekundærkameraet med ei konkret feilmelding. Eit nytt opptak kontrollerer også identiteten dersom han ikkje alt er stadfesta.
 
 Opne <http://127.0.0.1:19305> på PC-en. Brua lyttar berre lokalt. Den første modellkøyringa lastar den mellomlagra modellen; seinare justering av djupnekurva krev ikkje ny inferens. Modellen brukar 770 pikslar som arbeidsstorleik og returnerer flyttalsdjupn i fotoformatet. Nære flater har høge verdiar.
 
