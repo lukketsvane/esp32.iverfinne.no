@@ -39,6 +39,7 @@ static Preferences preferences;
 static bool preferencesReady = false;
 static volatile bool cameraReady = false;
 static volatile bool recovering = false;
+static volatile bool recoveryRequested = false;
 static bool hasPsram = false;
 static bool cameraInitialized = false;
 static framesize_t previewSize = FRAMESIZE_QVGA;
@@ -201,9 +202,28 @@ static bool initializeCamera() {
   return true;
 }
 
+static bool requestCameraRecovery() {
+  if (printerBusy() || recovering || recoveryRequested || !lockCamera(200)) return false;
+  if (printerBusy() || recovering || recoveryRequested) {
+    unlockCamera();
+    return false;
+  }
+  recoveryRequested = true;
+  cameraReady = false;
+  setLed(false);
+  cameraMessage("Camera is restarting");
+  unlockCamera();
+  return true;
+}
+
 void cameraMaintenance() {
-  if ((cameraReady && captureFailures < 3 && previewFailures < 3) || recoveryAttempts >= 3 || recovering || int32_t(millis() - nextRecovery) < 0) return;
-  if (!lockCamera(0)) return;
+  if (recovering || (!recoveryRequested && ((cameraReady && captureFailures < 3 && previewFailures < 3) ||
+      recoveryAttempts >= 3 || int32_t(millis() - nextRecovery) < 0))) return;
+  if (printerBusy() || !lockCamera(0)) return;
+  if (recoveryRequested) {
+    recoveryRequested = false;
+    recoveryAttempts = 0;
+  }
   recovering = true;
   recoveryAttempts++;
   setLed(false);
@@ -235,19 +255,19 @@ static bool queryValue(httpd_req_t *request, const char *key, char *value, size_
     httpd_query_key_value(query, key, value, capacity) == ESP_OK;
 }
 
-static esp_err_t statusHandler(httpd_req_t *request) {
-  httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "http://192.168.4.1");
+static String cameraStatusJson() {
   char cameraId[13];
   snprintf(cameraId, sizeof(cameraId), "%012llx", static_cast<unsigned long long>(ESP.getEfuseMac()));
   char error[sizeof(lastError)];
   portENTER_CRITICAL(&stateMux);
   snprintf(error, sizeof(error), "%s", serverError[0] ? serverError : lastError);
   portEXIT_CRITICAL(&stateMux);
-  String json = "{\"camera_ready\":" + String(cameraReady ? "true" : "false");
+  bool ready = cameraReady && !recovering && !recoveryRequested;
+  String json = "{\"camera_ready\":" + String(ready ? "true" : "false");
   json += ",\"camera_id\":" + quoted(cameraId);
-  json += ",\"stream_ready\":" + String(streamHttpd && cameraReady && !recovering ? "true" : "false");
+  json += ",\"stream_ready\":" + String(streamHttpd && ready ? "true" : "false");
   json += ",\"last_error\":" + quoted(error);
-  json += ",\"recovering\":" + String(recovering ? "true" : "false");
+  json += ",\"recovering\":" + String(recovering || recoveryRequested ? "true" : "false");
   json += ",\"recovery_attempts\":" + String(recoveryAttempts);
   json += ",\"psram\":" + String(hasPsram ? "true" : "false");
   json += ",\"framesize\":" + String(static_cast<int>(previewSize));
@@ -257,13 +277,34 @@ static esp_err_t statusHandler(httpd_req_t *request) {
   json += ",\"peer\":";
   json += rigIsPrimary() && rigPeerOrigin().length() ? "{\"camera_id\":" + quoted(rigPeerId()) + "}" : "null";
   json += "}";
-  return sendJson(request, json);
+  return json;
+}
+
+static esp_err_t statusHandler(httpd_req_t *request) {
+  httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "http://192.168.4.1");
+  return sendJson(request, cameraStatusJson());
+}
+
+void serialCameraCheck() {
+  Serial.print("CAMERA_STATUS ");
+  Serial.println(cameraStatusJson());
+}
+
+void serialCameraRetry() {
+  Serial.println(requestCameraRecovery() ? "CAMERA_RETRY queued" : "CAMERA_RETRY busy");
+  serialCameraCheck();
 }
 
 static esp_err_t unavailable(httpd_req_t *request, const char *message) {
   httpd_resp_set_status(request, "503 Service Unavailable");
   httpd_resp_set_type(request, "text/plain");
   return httpd_resp_send(request, message, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t recoverHandler(httpd_req_t *request) {
+  if (!requestCameraRecovery()) return unavailable(request, "Camera is busy");
+  httpd_resp_set_status(request, "202 Accepted");
+  return sendJson(request, cameraStatusJson());
 }
 
 static esp_err_t controlHandler(httpd_req_t *request) {
@@ -763,7 +804,7 @@ void startCameraServer() {
 #endif
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_open_sockets = 4;
-  config.max_uri_handlers = 14;
+  config.max_uri_handlers = 15;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
   config.send_wait_timeout = 3;
@@ -772,6 +813,7 @@ void startCameraServer() {
   if (httpd_start(&cameraHttpd, &config) == ESP_OK) {
     registerHandler(cameraHttpd, "/", indexHandler);
     registerHandler(cameraHttpd, "/status", statusHandler);
+    registerHandler(cameraHttpd, "/recover", recoverHandler, HTTP_POST);
     registerHandler(cameraHttpd, "/control", controlHandler);
     registerHandler(cameraHttpd, "/capture", captureHandler);
     registerHandler(cameraHttpd, "/stereo/capture", stereoCaptureHandler);

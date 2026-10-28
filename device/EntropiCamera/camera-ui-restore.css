@@ -64,3 +64,10 @@
 .progress.indeterminate rect{stroke-dasharray:22 78;animation:frame-progress 1.8s linear infinite}
 @keyframes frame-progress{to{stroke-dashoffset:-100}}
 @media(prefers-reduced-motion:reduce){.progress rect{animation:none!important;transition:none}}
+
+.camera-feedback{position:absolute;z-index:8;left:50%;top:calc(50% + 130px);transform:translateX(-50%);width:min(290px,calc(100% - 48px));text-align:center;color:#ddd;touch-action:manipulation}
+.camera-feedback p{margin:0;font-size:13px;line-height:1.5}
+.camera-feedback #camera-feedback-copy{margin-top:8px;color:#999;font-size:12px}
+.camera-feedback button{min-width:112px;min-height:44px;margin-top:10px;padding:10px 16px;color:#eee;background:#191919;border:1px solid #444;border-radius:4px;font:inherit;font-size:13px}
+.camera-feedback button:disabled{opacity:.55}
+@media(orientation:landscape) and (max-height:550px){.camera-feedback{left:68%;top:50%;transform:translate(-50%,-50%);width:29%;max-width:260px}}

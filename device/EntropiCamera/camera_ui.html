@@ -30,6 +30,7 @@
 <button id="capture-plane" class="capture-plane" aria-label="Ta foto" disabled></button>
 <button id="retry-capture" class="access-control capture-retry" aria-label="Ta foto på nytt" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v5h-5"/></svg></button>
 <p id="notice" class="sr" role="status" aria-live="polite"></p>
+<section id="camera-feedback" class="camera-feedback" aria-label="Kameratilkopling" hidden><p id="camera-feedback-title" role="status" aria-live="polite"></p><p id="camera-feedback-copy"></p><button id="retry-camera" type="button">Prøv igjen</button></section>
 <button id="connection" class="access-control top right" aria-label="Wi-Fi og tilkopling"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8a14 14 0 0 1 18 0M6 11a9 9 0 0 1 12 0m-9 3a4 4 0 0 1 6 0"/><circle cx="12" cy="18" r=".7"/></svg><span id="connection-label" class="sr"></span></button>
 <button id="last-photo" class="access-control" aria-label="Opne siste foto" hidden><img id="thumbnail" alt="" width="28" height="28" hidden></button>
 <footer class="rig-bottom"><div class="rig-bottom-side"><button id="open-archive" class="rig-tool" type="button" aria-label="Opne fotoarkivet"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="m3 10 6-3 6 3 6-3M8 14h8"/></svg></button></div><button id="shutter" class="rig-shutter" type="button" aria-label="Ta stereofoto" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="12" r="4"/></svg></button></footer>
@@ -78,7 +79,7 @@ const finder=new Viewfinder($('finder')),source=document.createElement('canvas')
 source.width=320;source.height=240;
 const sourceContext=source.getContext('2d');
 finder.source=source;
-let live=null,streamRevision=0;
+let live=null,streamRevision=0,connectionProblem=null,recoveryPending=false;
 const streamUrl=new URL('/stream',location.href);if(globalThis.__ENTROPI_RIG_BRIDGE!==true)streamUrl.port='81';
 let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',parentReady=false,parentPort=null,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,sceneError='',captureAfter=0,captureTask=null,captureFailed=false,printBusy=false,printTimer=0;
 let secondId='',secondEnabled=false,secondTask=null,secondSelected=false,secondAutoMode=false,imageRevision=0,photoPair=null,archiveWarning='';
@@ -125,14 +126,14 @@ function notifyCamera(type){
   }catch{parentPort?.close();parentPort=null;parentReady=false}
 }
 function controls(){
-  const disabled=busy||printBusy||!connected||connecting;
+  const disabled=busy||printBusy||!connected||connecting||!hasFrame||recoveryPending;
   $('capture-plane').disabled=disabled;$('retry-capture').disabled=disabled;$('retry-capture').hidden=!captureFailed||busy;
   $('retry-capture').setAttribute('aria-label',captureFailed&&phoneError?phoneError+' Prøv igjen.':'Ta foto på nytt');
   $('last-photo').disabled=busy;$('progress').hidden=!(busy||printBusy);
   studio.classList.toggle('connected',connected);studio.classList.toggle('reconnecting',connecting);
   studio.classList.toggle('capturing-splats',busy&&studioControls.image!==0);
   $('connection-label').textContent=connected?'Tilkopla':connecting?'Koplar til':deviceStatus?'Kamera ikkje klart':'Fråkopla';
-  updateCameraChrome();
+  updateCameraChrome();renderCameraFeedback();
   if(connected&&hasFrame&&!connecting&&!parentReady){parentReady=true;notifyCamera('entropi-camera-ready')}
 }
 function stopSecond(){secondTask?.abort();secondTask=null;secondEnabled=false}
@@ -195,7 +196,24 @@ async function request(path,type='json',timeout=8000,signal=null,method='GET'){
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',cancel)}
 }
 function validStatus(s){return s&&typeof s.camera_ready==='boolean'&&typeof s.stream_ready==='boolean'&&(globalThis.__ENTROPI_RIG_BRIDGE===true&&s.transport==='usb'?(!s.camera_ready||Number.isInteger(s.width)&&s.width>0&&Number.isInteger(s.height)&&s.height>0):typeof s.psram==='boolean'&&(!s.camera_ready||([6,10].includes(s.framesize)&&[6,10,15].includes(s.photo_framesize)&&Number.isInteger(s.brightness)&&s.brightness>=-2&&s.brightness<=2)))}
-function healthMessage(s){return !s?'Ser etter kameraet …':s.camera_ready&&s.stream_ready?'Kameraet er klart.':(s.last_error||'Kameraet er ikkje klart.')+(s.recovering?' Prøver å starte kameraet på nytt …':'')}
+function healthMessage(s){return !s?'Ser etter kameraet …':s.camera_ready&&s.stream_ready?'Kameraet er klart.':s.recovering?'Startar kamera 1 på nytt …':'Kamera 1 gir ikkje bilete.'}
+function renderCameraFeedback(){
+  const panel=$('camera-feedback');panel.hidden=!connectionProblem;
+  if(!connectionProblem)return;
+  const network=connectionProblem==='network',sensor=connectionProblem==='sensor';
+  $('camera-feedback-title').textContent=network?'Kople til ENTROPI-nettet':sensor?'Kamera 1 gir ikkje bilete':'Ingen førehandsvising frå kamera 1';
+  $('camera-feedback-copy').textContent=recoveryPending?'Startar kamera 1 på nytt …':network?'Vel ENTROPI under Wi-Fi og hald tilkoplinga utan internett.':sensor?'Kontroller at kameraet har straum, og prøv igjen.':'Prøv å kople til kameraet på nytt.';
+  $('retry-camera').disabled=connecting||recoveryPending||busy||printBusy;
+  $('retry-camera').textContent=connecting||recoveryPending?'Prøver …':'Prøv igjen';
+}
+async function retryCamera(){
+  if(connecting||recoveryPending||busy||printBusy||document.hidden||reviewing())return;
+  const restart=connectionProblem==='sensor'&&deviceStatus?.camera_ready===false&&globalThis.__ENTROPI_RIG_BRIDGE!==true;
+  ++connectGeneration;clearTimeout(retryTimer);retryCount=0;connected=false;stopStream();recoveryPending=true;controls();
+  try{if(restart){const status=await request('/recover','json',8000,null,'POST');if(validStatus(status))acceptStatus(status)}}
+  catch{} // The following status check distinguishes a busy sensor from a lost connection.
+  finally{recoveryPending=false;controls();void connect()}
+}
 function acceptStatus(status){deviceStatus=status;cameraStatus=status.camera_ready?status:null;controls()}
 function stopStream(){streaming=false;clearInterval(frameTimer);frameTimer=0;const previous=live;live=null;previous?.removeAttribute('src');hasFrame=false;stopSecond();finder.active=false}
 function startStream(){
@@ -207,7 +225,7 @@ function startStream(){
 }
 function resumeStream(){if(document.hidden||reviewing()||busy||printBusy)return;void connect()}
 function scheduleReconnect(){clearTimeout(retryTimer);if(document.hidden||reviewing()||printBusy)return;retryTimer=setTimeout(connect,Math.min(30000,1500*2**Math.min(retryCount++,4)))}
-function loseConnection(message){connected=false;cameraStatus=null;stopStream();stopSecond();controls();notice(message);if(onboarding.open){renderOnboarding();$('onboarding-feedback').textContent=message}scheduleReconnect()}
+function loseConnection(message,kind='stream'){connected=false;cameraStatus=null;connectionProblem=kind;if(kind==='network')deviceStatus=null;stopStream();stopSecond();controls();notice(message);if(onboarding.open){renderOnboarding();$('onboarding-feedback').textContent=message}scheduleReconnect()}
 let artNeedsModel=false;
 function needsPhoneModels(){return !phoneReady&&(studioControls.image===1&&!secondEnabled&&!photoPair||studioControls.image===2&&!captureDocument?.result&&globalThis.__ENTROPI_RIG_BRIDGE!==true&&(!secondEnabled&&!photoPair||artNeedsModel))}
 function renderOnboarding(){
@@ -249,21 +267,21 @@ async function checkPhone(silent=false){
   finally{if(phoneTask===task)phoneTask=null;controls();refreshReview()}
 }
 async function connect(){
-  if(connecting||busy||printBusy||document.hidden||reviewing())return;
+  if(connecting||recoveryPending||busy||printBusy||document.hidden||reviewing())return;
   clearTimeout(retryTimer);connecting=true;connected=false;controls();
-  const generation=++connectGeneration;stopStream();hasFrame=false;
+  const generation=++connectGeneration;stopStream();hasFrame=false;let statusReceived=false;
   try{
     const status=await request('/status');
     if(generation!==connectGeneration||document.hidden||reviewing())return;
     if(!validStatus(status))throw new Error('Ugyldig kamerastatus');
-    acceptStatus(status);
+    statusReceived=true;acceptStatus(status);
     if(!status.camera_ready||!status.stream_ready)throw new Error(healthMessage(status));
     startStream();const started=Date.now();
     while(!hasFrame&&Date.now()-started<8000&&generation===connectGeneration&&!document.hidden&&!reviewing())await new Promise(r=>setTimeout(r,100));
     if(generation!==connectGeneration||document.hidden||reviewing())return;
     if(!hasFrame)throw new Error('Ingen kamerabilete. Prøver igjen …');
-    connected=true;retryCount=0;if(!captureFailed)notice('');if(onboarding.open){if(!needsPhoneModels())onboarding.close();else renderOnboarding()}
-  }catch(error){if(generation===connectGeneration)loseConnection(error.name==='AbortError'?'Ingen kontakt. Kontroller Wi-Fi og straum.':error.message)}
+    connected=true;connectionProblem=null;retryCount=0;if(!captureFailed)notice('');if(onboarding.open){if(!needsPhoneModels())onboarding.close();else renderOnboarding()}
+  }catch(error){if(generation===connectGeneration)loseConnection(error.name==='AbortError'?'Ingen kontakt. Kontroller Wi-Fi og straum.':error.message,statusReceived?(deviceStatus?.camera_ready?'stream':'sensor'):'network')}
   finally{if(generation===connectGeneration){connecting=false;controls();if(connected)void connectSecond()}}
 }
 async function showPhoto(blob,signal,pair=null,master=null,archiveId=null){
@@ -383,7 +401,8 @@ __ENTROPI_APP_ENHANCEMENTS__
 $('capture-plane').addEventListener('click',takePhoto);$('retry-capture').addEventListener('click',takePhoto);
 bindExportGesture($('save-photo'),()=>{const blob=photoBlob,mode=studioControls.image,source=mode===2?marigoldView:sceneViewer,artResult=marigoldView.result;if(!blob||!photoDialog.open||mode===1&&!sceneVisible||mode===2&&!artVisible)return;const isCurrent=()=>photoBlob===blob&&photoDialog.open&&studioControls.image===mode&&(mode===0||mode===1&&sceneViewer===source&&sceneVisible||mode===2&&marigoldView.ready&&!artError&&marigoldView.result===artResult);return {image:()=>snapshotBlob(mode===0?photoView.snapshot(photoGestures.state,true):source.snapshot(true)),document:mode===2?persistCurrentMaster:undefined,name:photoName,isCurrent,onError:error=>printFeedback(error.message)}});
 $('connection').addEventListener('click',showOnboarding);
-$('onboarding-next').addEventListener('click',()=>{if(needsPhoneModels())void setupPhone();else if(connected)onboarding.close();else connect()});
+$('retry-camera').addEventListener('click',retryCamera);
+$('onboarding-next').addEventListener('click',()=>{if(needsPhoneModels())void setupPhone();else if(connected)onboarding.close();else void retryCamera()});
 $('onboarding').addEventListener('cancel',event=>{event.preventDefault();closeOnboarding()});$('close-onboarding').addEventListener('click',closeOnboarding);
 $('close-photo').addEventListener('click',()=>photoDialog.close());
 $('recenter-photo').addEventListener('click',()=>{reviewDown=reviewTap=null;if(studioControls.image===0)photoGestures.reset();else if(studioControls.image===2)marigoldView.resetTone();else sceneViewer?.resetView?.();updateRecenter()});
@@ -399,13 +418,13 @@ function resume(){if(!document.hidden){if(reviewing()){if(studioControls.image==
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});window.addEventListener('pagehide',()=>{notifyCamera('entropi-camera-left');parentReady=false;suspend();phoneTask?.abort();cancelArt()});window.addEventListener('pageshow',resume);window.addEventListener('online',resume);
 setInterval(async()=>{
   if(!connected||busy||printBusy||connecting||document.hidden||reviewing())return;
-  const generation=connectGeneration;
+  const generation=connectGeneration;let statusReceived=false;
   try{
     const status=await request('/status','json',5000);
     if(generation!==connectGeneration||document.hidden||busy||printBusy||reviewing())return;
     if(!validStatus(status))throw new Error('Ugyldig kamerastatus');
-    acceptStatus(status);if(!status.camera_ready||!status.stream_ready)throw new Error(healthMessage(status));void connectSecond();
-  }catch(error){if(generation===connectGeneration&&!document.hidden&&!busy&&!printBusy&&!reviewing()&&connected)loseConnection(error.name==='AbortError'?'Mista kontakten med kameraet. Koplar til på nytt …':error.message)}
+    statusReceived=true;acceptStatus(status);if(!status.camera_ready||!status.stream_ready)throw new Error(healthMessage(status));void connectSecond();
+  }catch(error){if(generation===connectGeneration&&!document.hidden&&!busy&&!printBusy&&!reviewing()&&connected)loseConnection(error.name==='AbortError'?'Mista kontakten med kameraet. Koplar til på nytt …':error.message,statusReceived?(deviceStatus?.camera_ready?'stream':'sensor'):'network')}
 },10000);
 window.addEventListener('keydown',event=>{if(event.code==='Space'&&!event.repeat&&!onboarding.open&&!reviewing()&&!['INPUT','BUTTON','A'].includes(document.activeElement.tagName)){event.preventDefault();takePhoto()}});
 controls();if(entry.has('setup'))showOnboarding();if(globalThis.__ENTROPI_RIG_BRIDGE!==true&&(entry.has('setup')||studioControls.vathography))void checkPhone(!entry.has('setup'));connect();
