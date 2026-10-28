@@ -1105,14 +1105,14 @@ test('the legacy Wi-Fi entry shows only handoff and makes no camera or model req
   const app=harness({search:'?wifi'});await app.tick(1000);
   assert.equal(app.get('safari-handoff').hidden,false);assert.equal(app.get('studio').hidden,true);
   assert.equal(app.requests.length,0);assert.equal(app.modelChecks.length,0);assert.equal(app.preparations.length,0);assert.equal(app.images.length,0);
-  assert.match(html,/<code>esp32\.iverfinne\.no\/start\/<\/code>/);assert.match(html,/id="onboarding-prepare"[^>]*href="https:\/\/esp32\.iverfinne\.no\/start\/"/);
+  assert.match(html,/id="onboarding-prepare"[^>]*href="https:\/\/esp32iverfinneno-iverfinnes-projects\.vercel\.app\/start\/"/);
 });
 
 test('the prepared opener hears readiness after a live frame without requiring models',async()=>{
   const app=harness({search:'?connect',opener:true,modelsReady:false,frames:false});await app.tick(150);
   assert.equal(app.messages.length,0);app.images[0].naturalWidth=320;app.images[0].naturalHeight=240;await app.tick(150);
   assert.equal(app.messages.length,1);assert.equal(app.messages[0].data.type,'entropi-camera-ready');
-  assert.equal(app.messages[0].origin,'https://esp32.iverfinne.no');assert.equal(app.modelChecks.length,0);
+  assert.equal(app.messages[0].origin,'https://esp32iverfinneno-iverfinnes-projects.vercel.app');assert.equal(app.modelChecks.length,0);
   await app.tick(10000);assert.equal(app.messages.length,1);
 });
 

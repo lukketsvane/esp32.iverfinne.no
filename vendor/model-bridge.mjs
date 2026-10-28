@@ -20,7 +20,7 @@ export async function phoneModelsReady(signal){
 
 export function requestPhoneModels(signal,onProgress=()=>{},source=null){
   signal?.throwIfAborted();
-  const origin='https://esp32.iverfinne.no',helper=source||window.open(origin+'/prepare/?transfer','entropi-models');
+  const origin='https://esp32iverfinneno-iverfinnes-projects.vercel.app',helper=source||window.open(origin+'/prepare/?transfer','entropi-models');
   if(!helper)return Promise.reject(new Error('Tillat opning av klargjeringa og prøv igjen.'));
   const random=new Uint8Array(16);crypto.getRandomValues(random);
   const session=Array.from(random,value=>value.toString(16).padStart(2,'0')).join('');
@@ -53,7 +53,7 @@ export function requestPhoneModels(signal,onProgress=()=>{},source=null){
         helper.postMessage({type:'entropi-model-ack',session,key:data.key},origin);
       }catch(error){finish(error)}
     };
-    let timer=setTimeout(()=>finish(new Error('Opne esp32.iverfinne.no/start/ med internett éin gong, og prøv igjen.')),10000);
+    let timer=setTimeout(()=>finish(new Error('Opne klargjeringa med internett éin gong, og prøv igjen.')),10000);
     window.addEventListener('message',message);signal?.addEventListener('abort',abort,{once:true});
     if(signal?.aborted){abort();return}
     if(source)helper.postMessage({type:'entropi-models-connect'},origin);

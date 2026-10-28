@@ -24,7 +24,7 @@ export function createPrintClient({printer,devicePrinter,buildJob,report=()=>{}}
         directImage=image;const accepted=printer.enqueue('entropi-'+fresh(),job);if(accepted)attempted.add(image);else directImage=null;return accepted;
       }
       try{completed?.close()}catch{}completed=null;
-      const origin='https://esp32.iverfinne.no',session=fresh(),popup=window.open(origin+'/print/#'+session,'entropi-print-'+session);
+      const origin='https://esp32iverfinneno-iverfinnes-projects.vercel.app',session=fresh(),popup=window.open(origin+'/print/#'+session,'entropi-print-'+session);
       if(!popup){feedback('Tillat opning av skrivarsida og prøv igjen.');return false}
       return await new Promise(resolve=>{
         let finished=false,sent=false,timer;

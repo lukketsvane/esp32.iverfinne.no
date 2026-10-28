@@ -12,7 +12,7 @@ function harness({printer,devicePrinter,buildJob=()=>new Uint8Array([1,2,3]),blo
   const popup={closed:false,postMessage:(data,origin,ports)=>messages.push({data,origin,ports}),close(){closed=true;this.closed=true}};
   const context=vm.createContext({WeakSet,Uint8Array,Uint8ClampedArray,crypto:webcrypto,window:{open:(url,name)=>{opened.push({url,name});popup.closed=false;return blocked?null:popup},addEventListener:(name,listener)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(listener)},removeEventListener:(name,listener)=>listeners.get(name)?.delete(listener)},setTimeout:(callback,delay)=>{timeouts.set(delay,callback);return delay},clearTimeout:id=>timeouts.delete(id),setInterval:(callback,delay)=>{polls.set(delay,callback);return delay},clearInterval:id=>polls.delete(id)});
   vm.runInContext(source,context);const client=context.createPrintClient({printer,devicePrinter,buildJob,report:message=>reports.push(message)});
-  async function emit(data,details={}){for(const listener of [...listeners.get('message')??[]])listener({data,source:popup,origin:'https://esp32.iverfinne.no',...details});await flush()}
+  async function emit(data,details={}){for(const listener of [...listeners.get('message')??[]])listener({data,source:popup,origin:'https://esp32iverfinneno-iverfinnes-projects.vercel.app',...details});await flush()}
   return {client,popup,opened,messages,reports,emit,expire:async delay=>{timeouts.get(delay)?.();await flush()},hide:async(persisted=false)=>{for(const listener of [...listeners.get('pagehide')??[]])listener({persisted});await flush()},poll:async()=>{for(const callback of [...polls.values()])callback();await flush()},get deadline(){return timeouts.get(300000)},get session(){return opened.at(-1)?.url.split('#')[1]},get closed(){return closed}};
 }
 function directPrinter(choose=async()=>true){
@@ -59,10 +59,10 @@ test('a failed direct job allows one explicit fresh attempt while active or succ
 });
 
 test('HTTP camera opens a session-bound HTTPS printer synchronously and authenticates every message',async()=>{
-  const app=harness(),snapshot=image(),printing=app.client.print(snapshot);assert.equal(app.opened.length,1);assert.match(app.opened[0].url,/^https:\/\/esp32\.iverfinne\.no\/print\/#/);assert.match(app.session,/^[a-f0-9]{32}$/);
+  const app=harness(),snapshot=image(),printing=app.client.print(snapshot);assert.equal(app.opened.length,1);assert.match(app.opened[0].url,/^https:\/\/esp32iverfinneno-iverfinnes-projects\.vercel\.app\/print\/#/);assert.match(app.session,/^[a-f0-9]{32}$/);
   const ready={type:'entropi-print-ready',session:app.session};
   await app.emit(ready,{origin:'https://untrusted.test'});await app.emit(ready,{source:{}});await app.emit({...ready,session:'wrong'});assert.equal(app.messages.length,0);
-  await app.emit(ready);await app.emit(ready);assert.equal(app.messages.length,1);assert.equal(app.messages[0].origin,'https://esp32.iverfinne.no');
+  await app.emit(ready);await app.emit(ready);assert.equal(app.messages.length,1);assert.equal(app.messages[0].origin,'https://esp32iverfinneno-iverfinnes-projects.vercel.app');
   assert.equal(app.messages[0].data.data.byteLength,384*4);assert.equal(snapshot.data.byteLength,384*4);
   await app.emit({type:'entropi-print-started',session:app.session});await app.emit({type:'entropi-print-result',session:app.session,ok:true});assert.equal(await printing,true);assert.equal(app.closed,false);
   assert.equal(await app.client.print(snapshot),false);assert.deepEqual(app.reports,['']);

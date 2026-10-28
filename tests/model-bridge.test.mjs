@@ -9,7 +9,7 @@ import { memoryIndexedDB } from './helpers/indexeddb.mjs';
 const source=(await readFile(new URL('../vendor/model-bridge.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
 const bytes={asset:new Uint8Array([1,2,3,4]),runtime:new Uint8Array([5,6,7])};
 const manifest=Object.fromEntries(Object.entries(bytes).map(([key,value])=>[key,{bytes:value.length,sha256:createHash('sha256').update(value).digest('hex')}]));
-const origin='https://esp32.iverfinne.no';
+const origin='https://esp32iverfinneno-iverfinnes-projects.vercel.app';
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 
 function harness(options={}){
