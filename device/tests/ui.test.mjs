@@ -1556,3 +1556,10 @@ test('cameras without a hardware button are never polled for presses',async()=>{
   await app.tick(3000);
   assert.equal(app.requests.some(request=>request.url==='/button'),false);
 });
+
+test('a working sensor without a stream is not reported as a missing image',async()=>{
+  const app=harness({status:{...verifiedStatus,stream_ready:false,last_error:''}});
+  await app.tick(150);
+  assert.match(app.get('notice').textContent,/^Kamera 1 har inga førehandsvising\.$/);
+  assert.equal(app.get('camera-feedback-title').textContent,'Ingen førehandsvising frå kamera 1');
+});

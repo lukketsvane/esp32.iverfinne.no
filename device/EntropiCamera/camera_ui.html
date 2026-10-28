@@ -196,7 +196,13 @@ async function request(path,type='json',timeout=8000,signal=null,method='GET'){
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',cancel)}
 }
 function validStatus(s){return s&&typeof s.camera_ready==='boolean'&&typeof s.stream_ready==='boolean'&&(globalThis.__ENTROPI_RIG_BRIDGE===true&&s.transport==='usb'?(!s.camera_ready||Number.isInteger(s.width)&&s.width>0&&Number.isInteger(s.height)&&s.height>0):typeof s.psram==='boolean'&&(!s.camera_ready||([6,10].includes(s.framesize)&&[6,10,15].includes(s.photo_framesize)&&Number.isInteger(s.brightness)&&s.brightness>=-2&&s.brightness<=2)))}
-function healthMessage(s){return !s?'Ser etter kameraet …':s.camera_ready&&s.stream_ready?'Kameraet er klart.':s.recovering?'Startar kamera 1 på nytt …':'Kamera 1 gir ikkje bilete.'}
+function healthMessage(s){
+  if(!s)return 'Ser etter kameraet …';
+  if(s.camera_ready&&s.stream_ready)return 'Kameraet er klart.';
+  const summary=s.recovering?'Startar kamera 1 på nytt …':s.camera_ready?'Kamera 1 har inga førehandsvising.':'Kamera 1 gir ikkje bilete.';
+  const detail=typeof s.last_error==='string'?s.last_error.trim().slice(0,96):'';
+  return detail?summary+' '+detail:summary;
+}
 function renderCameraFeedback(){
   const panel=$('camera-feedback');panel.hidden=!connectionProblem;
   if(!connectionProblem)return;
