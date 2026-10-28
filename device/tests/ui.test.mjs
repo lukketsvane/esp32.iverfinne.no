@@ -6,7 +6,7 @@ import { COLOR_SCHEMES } from '../../vendor/color-schemes.mjs';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','window.checkPhone=checkPhone;function updateCameraChrome(){} async function archiveCapture(){return {id:null,warning:null}} async function persistCurrentMaster(){}');
+const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','window.checkPhone=checkPhone;function updateCameraChrome(){} async function archiveCapture(){return {id:null,warning:null}} async function persistCurrentMaster(){} async function persistCurrentPreview(){} function schedulePreviewSave(){}');
 const verifiedStatus = { camera_id: 'aaaaaaaaaaaa', camera_ready: true, stream_ready: true, recovering: false, recovery_attempts: 0, last_error: '', framesize: 10, photo_framesize: 15, brightness: 0, psram: true };
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
@@ -208,7 +208,7 @@ function harness(options = {}) {
     photoSnapshot:(image,pose,native=false)=>({width:native?1600:384,height:native?1200:288,data:new Uint8ClampedArray((native?1600*1200:384*288)*4),photo:true,image,pose:{...pose},native}),
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},
     savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
-    showExportOptions:async({image,name,isCurrent})=>{saves.push({blob:await image(),name,isCurrent,master:true})},
+    bindExportGesture:(button,getOptions)=>button.addEventListener('click',async()=>{const options=getOptions();if(!options||!options.isCurrent())return;try{const blob=await options.image();if(options.isCurrent())saves.push({blob,name:options.name.replace(/\.[^.]+$/,'')+'.'+(options.imageExtension??'png'),isCurrent:options.isCurrent,options})}catch(error){options.onError?.(error)}}),
     createDepthScene: async (host, blob, onProgress, signal, quality, right, ...extra) => {
       sceneCalls.push({ host, blob, onProgress, signal, quality, right, extra });
       if (options.scene) {const viewer={setPrimitiveLevel(){},setPalette(id){this.palette=id},refresh(){return true},resetView(){},snapshot:native=>native?nativeSnapshot:snapshot,...await options.scene(host,blob,onProgress,signal,quality,right)};viewers.push(viewer);return viewer}
@@ -1018,13 +1018,16 @@ test('a stale GPU error cannot hide a newly captured scene',async()=>{
 test('loading uses only progress while failures retain an actionable retry',async()=>{
   const pending=deferred();let starts=0;
   const app=await connectedCamera({splats:true,scene:async(host,blob,report)=>{if(++starts===1){report({phase:'estimating',percent:42});return pending.promise}return {dispose(){}}}});
+  for(const id of ['progress','scene-progress']){assert.match(html,new RegExp('<div\\b[^>]*\\bid="'+id+'"[^>]*\\bhidden\\b[^>]*>\\s*<svg\\b[^>]*>\\s*<rect\\b[^>]*pathLength="100"[^>]*\\/>\\s*<\\/svg>\\s*<\\/div>'));assert.equal(app.get(id).tagName,'DIV');assert.equal(app.get(id).hidden,true)}
   await app.get('capture-plane').emit('click');await app.tick(0);
   assert.equal(app.get('scene-status').hidden,true);assert.equal(app.get('scene-status').textContent,'');assert.equal(app.get('scene-progress').hidden,false);
-  assert.equal(app.get('scene-progress-bar').style.width,'42%');assert.equal(app.get('print-photo').disabled,true);
+  assert.equal(app.get('scene-progress-bar').style.strokeDasharray,'42 100');assert.equal(app.get('print-photo').disabled,true);
   pending.reject(new Error('Berekninga vart avbroten.'));await app.tick(0);
+  assert.equal(app.get('scene-progress').hidden,true);
   assert.equal(app.get('scene-status').hidden,false);assert.match(app.get('scene-status').textContent,/Berekninga/);
   assert.equal(app.get('retry-scene').hidden,false);await app.get('retry-scene').emit('click');await app.tick(0);
   assert.equal(app.get('scene-status').hidden,true);assert.equal(app.get('retry-scene').hidden,true);
+  assert.equal(app.get('scene-progress').hidden,true);
   assert.equal(app.get('print-photo').disabled,false);assert.equal(app.sceneCalls.length,2);
 });
 

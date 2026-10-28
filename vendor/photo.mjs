@@ -1,28 +1,16 @@
+export function downloadFile(blob,name,isCurrent=()=>true){
+  if(!isCurrent())return;
+  if(!(blob instanceof Blob)||!blob.size)throw new Error('Fila er ikkje klar.');
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download=name;
+  try{document.body.append(link);link.click()}
+  finally{link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000)}
+}
+
 export async function savePhoto(blob,name='entropi.jpg',isCurrent=()=>true){
   if(!isCurrent())return;
   if(!blob?.size||!blob.type.startsWith('image/'))throw new Error('Fotoet er ikkje klart.');
-  const file=new File([blob],name,{type:blob.type});
-  try{if(globalThis.isSecureContext!==false&&navigator.canShare?.({files:[file]})){await navigator.share({files:[file]});return}}catch(error){if(error.name==='AbortError')return}
-  if(!isCurrent())return;
-  const apple=/iPad|iPhone|iPod/.test(navigator.userAgent||'')||navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1;
-  if(globalThis.isSecureContext===false||apple){
-    if(!isCurrent()||document.querySelector('dialog[data-photo-save]'))return;
-    const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Fotoet kunne ikkje opnast.'));reader.readAsDataURL(blob)});
-    if(!isCurrent()||document.querySelector('dialog[data-photo-save]'))return;
-    const dialog=document.createElement('dialog'),image=document.createElement('img'),back=document.createElement('button'),hint=document.createElement('p'),focus=document.activeElement;
-    dialog.setAttribute('data-photo-save','');dialog.setAttribute('aria-label','Lagre foto');
-    dialog.style.cssText='position:fixed;inset:0;margin:0;padding:0;border:0;width:100%;height:100%;max-width:none;max-height:none;background:#000;color:#aaa;overflow:hidden;touch-action:auto';
-    image.src=data;image.alt='Fotoet ditt';image.style.cssText='display:block;width:100%;height:100%;object-fit:contain;filter:none;touch-action:auto;-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto';
-    image.setAttribute('aria-description','Hald inne for å lagre');
-    back.type='button';back.setAttribute('aria-label','Tilbake til biletet');back.style.cssText='position:absolute;left:calc(12px + env(safe-area-inset-left));top:calc(12px + env(safe-area-inset-top));width:44px;height:44px;padding:0;border:0;outline:0;background:transparent;color:#aaa;box-shadow:none';
-    back.innerHTML='<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="m14 5-7 7 7 7"/></svg>';
-    back.addEventListener('click',()=>dialog.close());dialog.addEventListener('close',()=>{image.removeAttribute('src');dialog.remove();focus?.focus({preventScroll:true})},{once:true});
-    dialog.addEventListener('keydown',event=>{if(event.key==='Escape')event.stopPropagation()});
-    hint.textContent='Hald inne på biletet, og vel «Lagre bilete» eller «Lagre i Foto».';
-    hint.style.cssText='position:absolute;width:1px;height:1px;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;pointer-events:none';
-    dialog.append(image,back,hint);document.body.append(dialog);dialog.showModal();return;
-  }
-  const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+  downloadFile(blob,name,isCurrent);
 }
 
 export function snapshotBlob(image){

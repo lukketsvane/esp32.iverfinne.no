@@ -2,13 +2,13 @@
 .studio.camera{background:radial-gradient(circle at 50% 46%,#0e0e0e 0,#030303 50%,#000 100%)}
 .pwa-heading{position:absolute;top:calc(24px + env(safe-area-inset-top));left:calc(24px + env(safe-area-inset-left));z-index:7;display:grid;gap:8px;pointer-events:none}
 .pwa-camera-actions{display:flex;gap:13px;pointer-events:auto;margin-top:6px}
-.pwa-camera-actions button{min-height:36px;padding:4px 0;border:0;border-bottom:1px solid #333;background:none;color:#9d9d9d;font-size:10px;letter-spacing:.07em;touch-action:manipulation}
+.pwa-camera-actions button{min-height:36px;padding:4px 0;border:0;background:none;color:#9d9d9d;font-size:10px;letter-spacing:.07em;touch-action:manipulation}
 .studio.camera .finder{width:clamp(140px,40vw,176px);box-shadow:0 0 0 1px #ffffff3a,0 0 0 6px #ffffff04}
 .pwa-bottom{position:absolute;bottom:calc(18px + env(safe-area-inset-bottom));left:0;right:0;z-index:8;display:grid;place-items:center;pointer-events:none}
 .pwa-bottom button{pointer-events:auto;touch-action:manipulation}
-.pwa-shutter{height:68px;width:68px;display:grid;place-items:center;padding:0;border:1px solid #b7b7b7;border-radius:50%;background:none;box-shadow:0 0 0 6px #ffffff07}
-.pwa-shutter:before{content:"";width:54px;height:54px;border-radius:50%;background:#eee}
-.pwa-shutter:active:before{transform:scale(.88)}
+.pwa-shutter{height:54px;width:54px;display:grid;place-items:center;padding:0;border:0;background:none;color:#e9e9e9;box-shadow:none}
+.pwa-shutter svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
+.pwa-shutter:active svg{transform:scale(.88)}
 .pwa-bottom #open-gallery{position:absolute;left:calc(24px + env(safe-area-inset-left));bottom:0;display:grid;gap:6px;justify-items:center;width:55px;min-height:58px;background:none;color:#ddd;border:0}
 .pwa-bottom #open-gallery svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.3}
 .studio .access-control.device-link{left:auto;right:calc(22px + env(safe-area-inset-right));top:calc(18px + env(safe-area-inset-top));z-index:9}
@@ -19,16 +19,16 @@
 .phone-vault{position:fixed;z-index:100;inset:0;padding:calc(22px + env(safe-area-inset-top)) calc(22px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(22px + env(safe-area-inset-left));display:flex;flex-direction:column;background:#080808;color:#e8e8e8;touch-action:pan-y}
 .phone-vault[hidden],.phone-vault-detail[hidden]{display:none!important}
 .phone-vault-top{display:flex;justify-content:flex-end;margin-bottom:12px}
-.phone-vault button{font:inherit;touch-action:manipulation;background:#151515;color:#ddd;border:1px solid #393939;padding:10px 13px;min-height:44px}
+.phone-vault button{font:inherit;touch-action:none;background:transparent;color:#bbb;border:0;padding:0;min-height:48px;min-width:48px;border-radius:24px}
 .phone-vault #phone-vault-close{display:grid;place-items:center;width:44px;height:44px;padding:0;border:0;background:none}
 .phone-vault button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 .phone-vault-grid{overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;align-content:start;flex:1;padding-bottom:30px}
-.phone-vault-grid button{padding:0;border:1px solid #242424;text-align:left;min-width:0}
-.phone-vault-grid img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;filter:grayscale(1)}
+.phone-vault-grid button{padding:0;border:0;border-radius:6px;overflow:hidden;text-align:left;min-width:0}
+.phone-vault-grid img{width:100%;aspect-ratio:4/3;object-fit:contain;display:block;filter:none}
 .phone-vault-detail{display:flex;flex-direction:column;flex:1;gap:12px;min-height:0;padding-top:16px}
-.phone-vault-detail img{width:100%;flex:1;min-height:0;object-fit:contain;filter:grayscale(1)}
-.phone-vault-toolbar{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.phone-vault-toolbar button{display:grid;place-items:center}.phone-vault-toolbar button.armed{color:#fff;background:#572323;border-color:#d47777}
-.phone-vault-toolbar #phone-vault-save{grid-column:1/-1;border-color:#888}
+.phone-vault-detail img{width:100%;flex:1;min-height:0;object-fit:contain;filter:none}
+.phone-vault-toolbar{display:flex;align-items:center;justify-content:space-evenly;gap:4px}.phone-vault-toolbar button{display:grid;place-items:center}.phone-vault-toolbar button.armed{color:#fff}
+.phone-vault-toolbar #phone-vault-save{border:0}
 @media(orientation:landscape) and (max-height:550px){
 .pwa-heading{top:calc(12px + env(safe-area-inset-top));left:calc(20px + env(safe-area-inset-left));gap:5px}
 .pwa-camera-actions{gap:11px;margin:0}
@@ -45,7 +45,7 @@
 .phone-vault-detail{flex-direction:row}
 .phone-vault-toolbar{width:36%;align-content:center}
 }
-@media(prefers-reduced-motion:reduce){.pwa-shutter:before{transition:none}}
+@media(prefers-reduced-motion:reduce){.pwa-shutter svg{transition:none}}
 
 .studio,.studio.camera{background:#000}
 .pwa-heading{top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));display:block;z-index:8}
@@ -56,8 +56,6 @@
 .pwa-camera-actions #phone-timer[data-delay="10"]:after{width:8px;border-radius:2px}
 .studio.camera .finder{width:clamp(104px,30vw,148px);box-shadow:0 0 0 1px #ffffff21}
 .pwa-bottom{bottom:calc(12px + env(safe-area-inset-bottom));height:54px}
-.pwa-shutter{width:54px;height:54px;border:1px solid #ffffff80;box-shadow:none}
-.pwa-shutter:before{width:41px;height:41px;background:#e9e9e9}
 .pwa-bottom #open-gallery{left:calc(14px + env(safe-area-inset-left));bottom:4px;width:44px;min-height:44px;gap:0}
 .pwa-bottom #open-gallery svg{width:20px;height:20px}
 .studio .access-control.device-link{top:calc(12px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right))}

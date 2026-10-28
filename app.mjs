@@ -11,7 +11,7 @@ import { cloudPrintJob } from './vendor/print/cloud-raster.mjs';
 import { createPrintClient } from './vendor/print-client.mjs';
 import { createArchive } from './vendor/archive.mjs';
 import { createEntropiDocument } from './vendor/entropi-document.mjs';
-import { showExportOptions, pickEntropiDocument } from './vendor/entropi-ui.mjs';
+import { bindExportGesture, pickEntropiDocument } from './vendor/entropi-ui.mjs';
 
 const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder=new Viewfinder($('viewfinder'));
 const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
@@ -26,10 +26,10 @@ const profileIndex=kind=>Math.max(0,COLOR_SCHEMES.findIndex(scheme=>scheme.id===
 const studioControls=attachStudioControls([$('studio')],(kind,level)=>{
   if(kind==='primitive'){
     const scheme=COLOR_SCHEMES[level];paletteSelection.depth=scheme.id;saveColorScheme('depth',scheme.id);
-    scene?.setPalette(scheme.id);scene?.setPrimitiveLevel(scheme.primitive);
+    scene?.setPalette(scheme.id);scene?.setPrimitiveLevel(scheme.primitive);schedulePreview();
   }else if(kind==='photo'){
     const scheme=COLOR_SCHEMES[level];paletteSelection.photo=scheme.id;saveColorScheme('photo',scheme.id);
-    photoView.setPalette(scheme.id);finder.setPalette(scheme.id);photoView.setStyle(scheme.style);finder.setStyle(scheme.style);
+    photoView.setPalette(scheme.id);finder.setPalette(scheme.id);photoView.setStyle(scheme.style);finder.setStyle(scheme.style);schedulePreview();
   }else if(kind==='image'){
     finder.monochrome=level===2;
     if(mode!=='camera'){if(capturing)state('working');else if(photoReady){if(level===2)void makeDepthArt();else if(level===0||scene){state('done');if(level===1)scene?.refresh?.()}else void makeScene()}}
@@ -38,7 +38,7 @@ const studioControls=attachStudioControls([$('studio')],(kind,level)=>{
 finder.monochrome=studioControls.image===2;
 photoView.setStyle(COLOR_SCHEMES[studioControls.photo].style);finder.setStyle(COLOR_SCHEMES[studioControls.photo].style);
 photoView.setPalette(paletteSelection.photo);finder.setPalette(paletteSelection.photo);
-const photoGestures=attachPhotoGestures(photo,{enabled:()=>mode==='done'&&studioControls.image===0,onChange:pose=>{photoView.setTone(pose);finder.setTone(pose);Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter()}});
+const photoGestures=attachPhotoGestures(photo,{enabled:()=>mode==='done'&&studioControls.image===0,onChange:pose=>{photoView.setTone(pose);finder.setTone(pose);Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter();schedulePreview()}});
 const liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>mode==='camera'&&studioControls.image===0,onChange:pose=>{if(pose.grain!==photoGestures.state.grain||pose.contrast!==photoGestures.state.contrast)captureAfter=performance.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
 function updateRecenter(){$('recenter').hidden=mode!=='done'||(studioControls.image===0?photoGestures.state.scale<=1:studioControls.image===2?!depthArt.ready:!scene)}
 function printFeedback(message){clearTimeout(printTimer);$('print-status').textContent=message;printTimer=setTimeout(()=>{$('print-status').textContent=''},6000)}
@@ -56,13 +56,14 @@ function state(next,message='',sceneFailure=false){
   $('phone-shutter').disabled=openingCamera&&!stream;
   if(next!=='camera')$('phone-state').textContent='';
   if(next==='done'&&studioControls.image===0)photoGestures.refresh?.();
+  if(next==='done')void persistPreview().catch(error=>printFeedback(error.message));
   $('capture-plane').setAttribute('aria-label',stream?'Ta foto':'Opne kameraet');
   finder.active=next==='camera'&&!document.hidden;
 }
 function stopCamera(){++cameraGeneration;openingCamera=false;$('studio').classList.remove('opening');stream?.getTracks().forEach(track=>track.stop());stream=null;video.pause();video.srcObject=null}
 function clearScene(){task?.abort();task=null;scene?.dispose();scene=null;$('scene').replaceChildren()}
 function clearPhoto(){clearTimeout(documentTimer);currentDocument=null;archiveState={id:null,pending:null,suppressed:false};photoReceivedAt=null;artTask?.abort();artTask=null;depthArt.reset();if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=null;photoBlob=null;photoReady=false;photo.removeAttribute('src');$('thumbnail').removeAttribute('src')}
-function progress(update){if(studioControls.image===0||mode==='camera'||capturing)return;const known=Number.isFinite(update.percent);$('progress').classList.toggle('indeterminate',!known);$('progress').firstElementChild.style.width=known?Math.max(0,Math.min(100,update.percent))+'%':'';$('status').textContent=''}
+function progress(update){if(studioControls.image===0||mode==='camera'||capturing)return;const known=Number.isFinite(update.percent);$('progress').classList.toggle('indeterminate',!known);$('progress-bar').style.strokeDasharray=known?Math.max(0,Math.min(100,update.percent))+' 100':'';$('status').textContent=''}
 
 async function startCamera(){
   if(openingCamera||stream||mode!=='camera'||document.hidden)return;
@@ -119,14 +120,24 @@ async function persistDocument(){
   const write=(async()=>{await pending;if(session.suppressed)return;const record=await gallery.saveDocument(document,session.id??document.id);session.id=record.id;return record})();
   session.pending=write.catch(()=>null);await write;return document;
 }
+function schedulePreview(){clearTimeout(documentTimer);documentTimer=setTimeout(()=>void persistPreview().catch(error=>printFeedback(error.message)),300)}
+async function persistPreview(){
+  clearTimeout(documentTimer);documentTimer=0;
+  if(!photoReady||mode!=='done')return;
+  if(studioControls.image===2)return persistDocument();
+  const session=archiveState;if(session.suppressed)return;
+  const image=snapshotBlob(studioControls.image===1?scene.snapshot(true):photoView.snapshot(photoGestures.state,true)),pending=session.pending;
+  const write=(async()=>{await pending;if(session.suppressed||!session.id)return;await gallery.savePreview(session.id,image)})();
+  session.pending=write.catch(()=>null);await write;
+}
 async function acceptPhoto(blob,name='entropi.jpg',stored=null,recordId=null){
   if(!(blob instanceof Blob)||!blob.type.startsWith('image/')||!blob.size||blob.size>40*1024*1024){state('error','Kamerafotoet kunne ikkje lesast.');return}
-  if(depthArt.ready)void persistDocument().catch(error=>printFeedback(error.message));
+  if(photoReady&&mode==='done')void persistPreview().catch(error=>printFeedback(error.message));
   const current=++generation;++captureGeneration;capturing=false;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
   state('working');
   currentDocument=stored;photoReceivedAt=new Date().toISOString();
   const session=archiveState;session.id=recordId??stored?.id??null;
-  session.pending=(recordId?Promise.resolve({id:recordId}):stored?gallery.saveDocument(stored):gallery.save(blob)).then(record=>{session.id=record?.id??session.id;return record}).catch(()=>{printFeedback('Fotoet er ikkje arkivert automatisk. Bruk lagreknappen før du går vidare.');return null});
+  session.pending=(recordId?Promise.resolve({id:recordId}):stored?gallery.saveDocument(stored):gallery.save(blob,null,null)).then(record=>{session.id=record?.id??session.id;return record}).catch(()=>{printFeedback('Fotoet er ikkje arkivert automatisk. Bruk lagreknappen før du går vidare.');return null});
   try{await photo.decode();if(current!==generation)return;photoView.setSource();photoReady=true;photoGestures.reset();if(stored){const processing=artTask=new AbortController();await depthArt.restore(blob,stored.result,stored.recipe,processing.signal);if(current!==generation)return;artTask=null;studioControls.setImage(2);state('done')}else if(studioControls.image===1)await makeScene();else if(studioControls.image===2)await makeDepthArt();else state('done')}
   catch(error){if(current===generation)state('error',error.message||'Fotoet kunne ikkje lesast.')}
 }
@@ -147,16 +158,15 @@ async function capture(){
   finally{if(captureId===captureGeneration)capturing=false;if(frame)frame.width=frame.height=1}
 }
 
-function reset(){++captureGeneration;capturing=false;if(!photoReady){++generation;clearScene();clearPhoto()}stopCamera();finder.clear();pointer=null;lastTap=0;state('camera');if(hadCamera)void startCamera()}
+function reset(){if(photoReady&&mode==='done')void persistPreview().catch(error=>printFeedback(error.message));++captureGeneration;capturing=false;if(!photoReady){++generation;clearScene();clearPhoto()}stopCamera();finder.clear();pointer=null;lastTap=0;state('camera');if(hadCamera)void startCamera()}
 async function printCurrent(){const source=scene,blob=photoBlob,image=studioControls.image,result=depthArt.result;if(printing||mode!=='done'||!photoReady||image===1&&!source||image===2&&!depthArt.ready)return;printing=true;$('print').disabled=true;try{await printClient.print(image===0?photoView.snapshot(photoGestures.state):image===2?depthArt.snapshot(false):source.snapshot(),()=>mode==='done'&&blob===photoBlob&&image===studioControls.image&&(image===0||image===1&&source===scene||image===2&&result===depthArt.result))}catch(error){printFeedback(error.message)}finally{printing=false;$('print').disabled=false}}
-async function save(){
+function exportOptions(){
   if(!photoBlob||!photoReady||mode!=='done'||studioControls.image===1&&!scene||studioControls.image===2&&!depthArt.ready)return;
   const blob=photoBlob,source=scene,image=studioControls.image,result=depthArt.result;
-  if(image===2){showExportOptions({image:()=>snapshotBlob(depthArt.snapshot(true)),document:async()=>{const document=makeDocument();void persistDocument().catch(error=>printFeedback(error.message));return document},name:photoName,isCurrent:()=>photoBlob===blob&&mode==='done'&&image===studioControls.image&&result===depthArt.result});return}
-  try{const rendered=snapshotBlob(image===1?source.snapshot(true):image===2?depthArt.snapshot(true):photoView.snapshot(photoGestures.state,true));await savePhoto(rendered,photoName.replace(/\.[^.]+$/,'')+'.png',()=>photoBlob===blob&&mode==='done'&&studioControls.image===image&&(image===0||image===1&&scene===source||image===2&&result===depthArt.result))}catch(error){printFeedback(error.message)}
+  return {image:()=>snapshotBlob(image===1?source.snapshot(true):image===2?depthArt.snapshot(true):photoView.snapshot(photoGestures.state,true)),document:image===2?async()=>{const document=makeDocument();void persistDocument().catch(error=>printFeedback(error.message));return document}:undefined,name:photoName,onError:error=>printFeedback(error.message),isCurrent:()=>photoBlob===blob&&mode==='done'&&studioControls.image===image&&(image===0||image===1&&scene===source||image===2&&result===depthArt.result)};
 }
 
-$('capture-plane').addEventListener('click',()=>void capture());$('reset').addEventListener('click',reset);$('save').addEventListener('click',()=>void save());
+$('capture-plane').addEventListener('click',()=>void capture());$('reset').addEventListener('click',reset);bindExportGesture($('save'),exportOptions);
 $('last-photo').addEventListener('click',()=>{if(!photoReady)return;stopCamera();state('done');if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeDepthArt()});$('print').addEventListener('click',()=>void printCurrent());
 $('recenter').addEventListener('click',()=>{if(studioControls.image===0)photoGestures.reset();else if(studioControls.image===2)depthArt.resetTone();else scene?.resetView?.()});
 $('retry').addEventListener('click',()=>{if(retryScene&&photoReady&&studioControls.image===1)void makeScene();else if(retryScene&&photoReady&&studioControls.image===2)void makeDepthArt();else{reset();void startCamera()}});
@@ -175,7 +185,7 @@ window.addEventListener('pagehide',event=>{suspend();if(!event.persisted){++gene
 try{const origin=new URL(document.referrer).origin;if(window.opener&&allowedOrigins.has(origin))window.opener.postMessage({type:'entropi-ready'},origin)}catch{}
 if(!document.hidden&&(navigator.standalone||globalThis.matchMedia?.('(display-mode: standalone)')?.matches))void startCamera();
 
-let galleryItems=[],galleryCurrent=null,galleryUrls=[],galleryImageUrl=null,galleryDeleteConfirm=false;
+let galleryItems=[],galleryCurrent=null,galleryRecord=null,galleryUrls=[],galleryImageUrl=null,galleryDeleteConfirm=false;
 
 function clearShutterDelay(){
   if(shutterTimer)clearTimeout(shutterTimer);
@@ -224,7 +234,7 @@ async function openPhoneGallery(){
   galleryCurrent=null;clearGalleryUrls();
   const grid=$('phone-vault-grid');grid.replaceChildren();
   try{
-    if(depthArt.ready)await persistDocument().catch(error=>{$('phone-vault-status').textContent=error.message});
+    if(photoReady&&mode==='done')await persistPreview().catch(error=>{$('phone-vault-status').textContent=error.message});
     galleryItems=await gallery.list();
     if(!galleryItems.length){
       const empty=document.createElement('p');empty.className='sr-only';empty.textContent='Ingen foto enno.';grid.append(empty);
@@ -238,22 +248,23 @@ async function openPhoneGallery(){
   }catch(error){$('phone-vault-status').textContent=error.message||'Arkivet er ikkje tilgjengeleg'}
 }
 async function showPhoneRecord(id){
-  galleryCurrent=id;galleryDeleteConfirm=false;
+  galleryCurrent=id;galleryRecord=null;galleryDeleteConfirm=false;
   $('phone-vault-status').textContent='';
   let record;
   try{record=await gallery.get(id);if(!record)throw new Error('Fotoet er ikkje tilgjengeleg.')}
   catch(error){$('phone-vault-status').textContent=error.message||'Kunne ikkje opne fotoet.';return}
   if(galleryCurrent!==id)return;
+  galleryRecord=record;
   $('phone-vault-edit').hidden=!record.document;
   if(galleryImageUrl)URL.revokeObjectURL(galleryImageUrl);
-  galleryImageUrl=URL.createObjectURL(record.document?.preview??record.left);
+  galleryImageUrl=URL.createObjectURL(record.preview??record.document?.preview??record.left);
   $('phone-vault-image').src=galleryImageUrl;
   $('phone-vault-grid').hidden=true;
   $('phone-vault-detail').hidden=false;
   $('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed');
 }
 function closePhoneGallery(){
-  if(!galleryOpen)return;galleryOpen=false;galleryCurrent=null;
+  if(!galleryOpen)return;galleryOpen=false;galleryCurrent=null;galleryRecord=null;
   $('phone-vault').hidden=true;clearGalleryUrls();$('phone-vault-image').removeAttribute('src');
   if(mode==='camera'&&hadCamera&&!document.hidden)void startCamera();
 }
@@ -267,14 +278,10 @@ $('phone-vault-edit').addEventListener('click',async()=>{
   const id=galleryCurrent;if(!id)return;
   try{const record=await gallery.get(id);if(id!==galleryCurrent||!record?.document)return;closePhoneGallery();await acceptPhoto(record.left,record.document.id+'.entropi',record.document,id)}catch(error){printFeedback(error.message)}
 });
-$('phone-vault-save').addEventListener('click',async()=>{
-  const id=galleryCurrent;if(!id)return;
-  $('phone-vault-status').textContent='';
-  try{
-    const record=await gallery.get(id);if(!record)throw new Error('Fotoet er ikkje tilgjengeleg.');if(id!==galleryCurrent)return;
-    if(record.document){showExportOptions({image:()=>record.document.preview,document:()=>record.document,name:record.document.id,isCurrent:()=>id===galleryCurrent&&galleryOpen});return}
-    await savePhoto(record.left,'entropi-'+id+'.png',()=>id===galleryCurrent&&galleryOpen);
-  }catch(error){$('phone-vault-status').textContent=error.message||'Kunne ikkje lagre fotoet.'}
+bindExportGesture($('phone-vault-save'),()=>{
+  const id=galleryCurrent,record=galleryRecord;if(!id||!record||!galleryOpen)return;
+  const image=record.preview??record.document?.preview??record.left;
+  return {image:()=>image,document:record.document?()=>record.document:undefined,imageExtension:image.type==='image/jpeg'?'jpg':image.type==='image/webp'?'webp':'png',name:'entropi-'+id,isCurrent:()=>id===galleryCurrent&&galleryOpen,onError:error=>{$('phone-vault-status').textContent=error.message}};
 });
 $('phone-vault-remove').addEventListener('click',async()=>{
   if(!galleryCurrent)return;

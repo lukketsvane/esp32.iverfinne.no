@@ -13,8 +13,7 @@
 .rig-bottom-side{left:calc(14px + env(safe-area-inset-left));bottom:4px}
 .rig-tool{width:44px;height:44px;min-width:44px;min-height:44px;padding:0;color:#969696}
 .rig-tool svg{width:20px;height:20px}
-.rig-shutter{width:54px;height:54px;border:1px solid #ffffff80;box-shadow:none}
-.rig-shutter:before{width:41px;height:41px;background:#e9e9e9}
+.rig-shutter{width:54px;height:54px}
 .studio .access-control.top.right{top:calc(12px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right))}
 .studio #last-photo{bottom:calc(18px + env(safe-area-inset-bottom))}
 .peer-live{border:1px solid #ffffff21}
@@ -27,7 +26,7 @@
 .sheet-content{gap:16px}
 .sheet #onboarding-title{font-size:20px}
 .sheet #onboarding-copy{font-size:13px;line-height:1.6;color:#999}
-.sheet .primary{border:0;border-bottom:1px solid #444;background:none;min-height:44px}
+.sheet .primary{border:0;background:none;min-height:44px}
 .sheet .sheet-head .icon{font-size:0;width:44px}
 .sheet .sheet-head .icon svg{width:22px}
 .vault{background:#000}
@@ -55,5 +54,13 @@
 
 .sr{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;border:0!important;overflow:hidden!important;clip-path:inset(50%)!important;white-space:nowrap!important;pointer-events:none!important}
 .vault-action{display:grid;place-items:center;min-width:44px;min-height:44px}
-.vault-action[data-armed="true"]{color:#fff;outline:1px solid #999}
+.vault-action[data-armed="true"]{color:#fff}
+.vault-action[data-armed="true"] svg{transform:scale(1.08)}
 .review-retry{min-width:44px;padding:12px}
+
+.progress{position:absolute;inset:0;width:100%;height:100%;background:none;overflow:visible;pointer-events:none;fill:none;z-index:4}
+.progress svg{display:block;width:100%;height:100%;overflow:visible}
+.progress rect{stroke:#ffffffb3;stroke-width:1;vector-effect:non-scaling-stroke;stroke-dasharray:0 100;stroke-linecap:round;transition:stroke-dasharray .2s}
+.progress.indeterminate rect{stroke-dasharray:22 78;animation:frame-progress 1.8s linear infinite}
+@keyframes frame-progress{to{stroke-dashoffset:-100}}
+@media(prefers-reduced-motion:reduce){.progress rect{animation:none!important;transition:none}}

@@ -18,9 +18,8 @@
 <link rel="stylesheet" href="/style.css">
 <main id="studio" class="studio camera"><header class="pwa-heading"><div class="pwa-camera-actions"><button id="flip-camera" type="button" aria-label="Byt kamera"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13l-3-3m3 3-3 3M20 16H7l3-3m-3 3 3 3"/></svg></button><button id="phone-timer" type="button" data-delay="0" aria-label="Utløysar utan forsinking"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/></svg></button></div></header>
   <video id="video" autoplay muted playsinline aria-hidden="true" tabindex="-1"></video>
-  <div id="finder" class="finder" aria-hidden="true"><canvas id="viewfinder"></canvas><i class="cross"></i></div>
+  <div id="finder" class="finder" aria-hidden="true"><canvas id="viewfinder"></canvas><i class="cross"></i><div id="progress" class="progress indeterminate" aria-hidden="true" hidden><svg viewBox="0 0 100 150" preserveAspectRatio="none"><rect id="progress-bar" x=".5" y=".5" width="99" height="149" pathLength="100"/></svg></div></div>
   <img id="photo" class="photo" alt="Svart-kvitt foto" hidden>
-  <div id="progress" class="progress indeterminate" hidden><i></i></div>
   <button id="capture-plane" class="capture-plane" type="button" aria-label="Opne kameraet"></button>
   <div id="scene" class="cloud hidden" role="img" aria-label="3D-scene. Dra for å rotere, klyp for å zoome. Dobbelttrykk for eit nytt foto."></div>
 <div id="marigold-view" class="mg-view" role="group" aria-label="VATHOgraphy" hidden>
@@ -34,7 +33,7 @@
   <button id="save" class="access-control download" type="button" aria-label="Lagre biletet" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4"/></svg></button>
   <button id="print" class="access-control print" type="button" aria-label="Skriv ut" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8V3h10v5M7 17H4V9h16v8h-3M7 14h10v7H7z"/></svg></button>
   <a class="access-control device-link" href="/start/?camera" aria-label="Kople til ESP32-kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9a14 14 0 0 1 18 0M6 12a9 9 0 0 1 12 0M9 15a4 4 0 0 1 6 0M12 19h.01"/></svg></a>
-  <footer class="pwa-bottom"><button id="open-gallery" type="button" aria-label="Opne fotoarkivet"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="m3 10 6-3 6 3 6-3M8 14h8"/></svg></button><button id="phone-shutter" class="pwa-shutter" type="button" aria-label="Opne kameraet"></button></footer>
+  <footer class="pwa-bottom"><button id="open-gallery" type="button" aria-label="Opne fotoarkivet"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="m3 10 6-3 6 3 6-3M8 14h8"/></svg></button><button id="phone-shutter" class="pwa-shutter" type="button" aria-label="Opne kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="12" r="4"/></svg></button></footer>
   <span id="phone-state" class="sr-only" role="status" aria-live="polite"></span>
   <span id="status" class="sr-only" role="status" aria-live="polite"></span>
   <span id="print-status" class="sr-only" role="status" aria-live="polite"></span>

@@ -1,5 +1,5 @@
 const archiveStore=createArchive(),masterWrites=new WeakMap();
-let archiveRecords=[],archiveSelected=null,archiveViewer=null,archiveUrls=[],archiveDeleteArmed=false;
+let archiveRecords=[],archiveSelected=null,archiveRecord=null,archiveViewer=null,archiveUrls=[],archiveDeleteArmed=false;
 let selfTimer=0,countdown=0,countdownTimer=null,peerPreviewBusy=false,peerFinder=null;
 
 function updateCameraChrome(){
@@ -34,6 +34,17 @@ function scheduleMasterSave(){
   clearTimeout(masterSaveTimer);const blob=photoBlob,result=marigoldView.result;
   masterSaveTimer=setTimeout(()=>{masterSaveTimer=0;if(blob===photoBlob&&result===marigoldView.result)void persistCurrentMaster().catch(error=>printFeedback(error.message))},300);
 }
+function schedulePreviewSave(){clearTimeout(masterSaveTimer);masterSaveTimer=setTimeout(()=>{masterSaveTimer=0;void persistCurrentPreview().catch(error=>printFeedback(error.message))},300)}
+async function persistCurrentPreview(){
+  clearTimeout(masterSaveTimer);masterSaveTimer=0;
+  if(!photoBlob||captureArchiveSuppressed)return;
+  if(studioControls.image===2){if(marigoldView.ready)return persistCurrentMaster();return}
+  if(studioControls.image===1&&(!sceneViewer||sceneError))return;
+  const blob=photoBlob,id=captureArchiveId;if(!id)return;
+  const preview=snapshotBlob(studioControls.image===1?sceneViewer.snapshot(true):photoView.snapshot(photoGestures.state,true));
+  const write=(masterWrites.get(blob)??Promise.resolve()).then(()=>archiveStore.savePreview(id,preview));
+  masterWrites.set(blob,write.catch(()=>null));await write;
+}
 async function persistCurrentMaster(){
   clearTimeout(masterSaveTimer);masterSaveTimer=0;
   if(!marigoldView.ready||!photoOriginal)throw new Error('Djupnebiletet er ikkje klart.');
@@ -61,7 +72,7 @@ $('archive-edit').addEventListener('click',async()=>{const id=archiveSelected;if
 
 async function archiveCapture(original,pair){
   try{
-    const record=await archiveStore.save(pair?.left??original,pair?.right??null);
+    const record=await archiveStore.save(pair?.left??original,pair?.right??null,null);
     return {id:record.id,warning:''};
   }catch(error){
     return {id:null,warning:'Biletet er ikkje arkivert automatisk. Lagre det manuelt før du tek eit nytt. '+(error?.name==='QuotaExceededError'?'Lagringa er full.':'')};
@@ -88,7 +99,7 @@ async function showArchive(){
   clearArchiveUrls();
   const grid=$('archive-grid');grid.replaceChildren();
   try{
-    if(marigoldView.ready)await persistCurrentMaster();
+    await persistCurrentPreview();
     if($('archive').hidden)return;
     archiveRecords=await archiveStore.list();
     if(!archiveRecords.length){
@@ -107,11 +118,12 @@ async function showArchive(){
   }
 }
 async function openArchivedPhoto(id){
-  archiveSelected=id;archiveDeleteArmed=false;
+  archiveSelected=id;archiveRecord=null;archiveDeleteArmed=false;
   const record=await archiveStore.get(id).catch(()=>null);
   if(!record||archiveSelected!==id)return;
+  archiveRecord=record;
   if(archiveViewer)URL.revokeObjectURL(archiveViewer);
-  archiveViewer=URL.createObjectURL(record.document?.preview??record.left);
+  archiveViewer=URL.createObjectURL(record.preview??record.document?.preview??record.left);
   $('archive-photo').src=archiveViewer;
   $('archive-detail-info').textContent=archiveDate(archiveRecords.find(entry=>entry.id===id)?.created??Date.now())+'  ·  '+(record.right?'STEREO':'FOTO');
   $('archive-left').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':record.right?'Lagre venstre':'Lagre original');
@@ -123,7 +135,7 @@ async function openArchivedPhoto(id){
 }
 function closeArchive(){
   if($('archive').hidden)return;
-  $('archive').hidden=true;archiveSelected=null;archiveDeleteArmed=false;
+  $('archive').hidden=true;archiveSelected=null;archiveRecord=null;archiveDeleteArmed=false;
   $('archive-photo').removeAttribute('src');
   clearArchiveUrls();resumeStream();
 }
@@ -131,20 +143,12 @@ $('open-archive').addEventListener('click',()=>void showArchive());
 $('close-archive').addEventListener('click',closeArchive);
 $('archive-back').addEventListener('click',()=>void showArchive());
 
-async function exportArchived(kind){
-  const id=archiveSelected;if(!id)return;
-  const record=await archiveStore.get(id);
-  if(!record||archiveSelected!==id)return;
-  const isCurrent=()=>archiveSelected===id&&!$('archive').hidden;
-  if(kind==='left'&&record.document){await showExportOptions({image:()=>record.document.preview,document:()=>record.document,name:'entropi-'+id,isCurrent});return}
-  const blob=kind==='right'?record.right:record.left;
-  if(!blob)return;
-  const extension=blob.type==='image/png'?'png':blob.type==='image/webp'?'webp':'jpg';
-  await savePhoto(blob,'entropi-'+id+'-'+kind+'.'+extension,isCurrent);
+function archivedExportOptions(kind){
+  const id=archiveSelected,record=archiveRecord;if(!id||!record||$('archive').hidden)return;
+  const blob=kind==='right'?record.right:record.preview??record.document?.preview??record.left;if(!blob)return;
+  return {image:()=>blob,document:kind==='left'&&record.document?()=>record.document:undefined,imageExtension:blob.type==='image/png'?'png':blob.type==='image/webp'?'webp':'jpg',name:'entropi-'+id+'-'+kind,isCurrent:()=>archiveSelected===id&&!$('archive').hidden,onError:error=>{$('archive-notice').textContent=error.message}};
 }
-for(const kind of ['left','right']){
-  $('archive-'+kind).addEventListener('click',()=>void exportArchived(kind).catch(error=>{$('archive-notice').textContent=error.message}));
-}
+for(const kind of ['left','right'])bindExportGesture($('archive-'+kind),()=>archivedExportOptions(kind));
 $('archive-delete').addEventListener('click',async()=>{
   const id=archiveSelected;if(!id)return;
   if(!archiveDeleteArmed){

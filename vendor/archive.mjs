@@ -30,7 +30,9 @@ async function thumbnail(blob){
   try{
     const image=new Image();image.src=url;await image.decode();
     const canvas=document.createElement('canvas');
-    canvas.width=200;canvas.height=150;
+    if(!image.naturalWidth||!image.naturalHeight)throw new Error('Biletet kunne ikkje lesast.');
+    const scale=Math.min(200/image.naturalWidth,150/image.naturalHeight,1);
+    canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
     const context=canvas.getContext('2d');
     if(!context)return null;
     context.drawImage(image,0,0,canvas.width,canvas.height);
@@ -49,31 +51,51 @@ export function createArchive(){
     void navigator.storage.persist().catch(()=>{});
   };
   return {
-    async save(left,right=null){
+    async save(left,right=null,rendered=left){
       requestPersistence();
       if(!(left instanceof Blob)||!left.size||right&&(!(right instanceof Blob)||!right.size))throw new Error('Manglar gyldige originalbilete.');
+      if(rendered!==null&&(!(rendered instanceof Blob)||!rendered.size))throw new Error('Manglar gyldig framkalla bilete.');
       const db=await connect();
       const id=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
-      const preview=await thumbnail(left).catch(()=>null);
-      const info={id,created:Date.now(),stereo:!!right,preview};
+      const preview=rendered?await thumbnail(rendered).catch(()=>null)??rendered:null;
+      const info={id,created:Date.now(),stereo:!!right,preview,pending:rendered===null};
       await transact(db,['photos','index'],'readwrite',tx=>{
-        tx.objectStore('photos').put({id,left,right});
+        tx.objectStore('photos').put({id,left,right,preview:rendered});
         tx.objectStore('index').put(info);
       });
       return info;
     },
+    async savePreview(id,blob){
+      requestPersistence();
+      if(!id||!(blob instanceof Blob)||!blob.size)throw new Error('Manglar gyldig framkalla bilete.');
+      const preview=await thumbnail(blob).catch(()=>null)??blob,db=await connect();
+      return await new Promise((resolve,reject)=>{
+        const tx=db.transaction(['photos','index'],'readwrite'),photo=tx.objectStore('photos').get(id);let result=null;
+        tx.oncomplete=()=>resolve(result);
+        tx.onerror=tx.onabort=()=>reject(tx.error||new Error('Lagringa vart avbroten.'));
+        photo.onsuccess=()=>{
+          if(!photo.result)return;
+          const index=tx.objectStore('index').get(id);
+          index.onsuccess=()=>{
+            if(!index.result)return;
+            try{result={...index.result,preview,pending:false};tx.objectStore('photos').put({...photo.result,preview:blob});tx.objectStore('index').put(result)}
+            catch(error){reject(error);tx.abort()}
+          };
+        };
+      });
+    },
     async list(){
       const db=await connect(),records=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').getAll());
-      return records.sort((a,b)=>b.created-a.created);
+      return records.filter(record=>!record.pending).sort((a,b)=>b.created-a.created);
     },
     async saveDocument(document,id=document.id){
       requestPersistence();
       if(!id||!(document.left instanceof Blob)||!document.result?.depth||!(document.preview instanceof Blob))throw new Error('Ugyldig Entropi-dokument.');
       const db=await connect(),existing=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').get(id));
-      const preview=await thumbnail(document.preview).catch(()=>existing?.preview??null);
-      const info={id,created:existing?.created??Date.parse(document.created),stereo:!!document.right,preview};
+      const preview=await thumbnail(document.preview).catch(()=>null)??document.preview;
+      const info={id,created:existing?.created??Date.parse(document.created),stereo:!!document.right,preview,pending:false};
       await transact(db,['photos','index'],'readwrite',tx=>{
-        tx.objectStore('photos').put({id,left:document.left,right:document.right,document});
+        tx.objectStore('photos').put({id,left:document.left,right:document.right,document,preview:document.preview});
         tx.objectStore('index').put(info);
       });
       return info;

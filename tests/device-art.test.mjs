@@ -15,10 +15,24 @@ const statusSource=section('function validStatus(','function healthMessage(');
 const artSource=section('async function makeArt(','async function makeScene(');
 const modelNeedSource=section('function needsPhoneModels(','function renderOnboarding(');
 const printSource=section('async function printCurrent(','function notifyCamera(');
-const saveSource=html.split('\n').find(line=>line.startsWith("$('save-photo').addEventListener('click',"));
+const saveSource=html.split('\n').find(line=>line.startsWith("bindExportGesture($('save-photo'),"));
 const jpeg=new Blob(['camera-jpeg'],{type:'image/jpeg'});
 const enhancement=await readFile(new URL('../device/EntropiCamera/camera-ui-v2.js',import.meta.url),'utf8');
 const persistSource=enhancement.slice(enhancement.indexOf('async function persistCurrentMaster('),enhancement.indexOf('async function openEntropiMaster('));
+
+test('embedded archive previews use the current photo framing or native splat snapshot',async()=>{
+  const source=enhancement.slice(enhancement.indexOf('async function persistCurrentPreview('),enhancement.indexOf('async function persistCurrentMaster('));
+  for(const image of [0,1]){
+    const writes=[],frames=[],pose={scale:2,x:4,y:-8,grain:3,contrast:1.5},rendered=new Blob(['processed'],{type:'image/png'});
+    const state=vm.createContext({masterSaveTimer:1,clearTimeout(){},photoBlob:jpeg,captureArchiveId:'capture-1',captureArchiveSuppressed:false,studioControls:{image},sceneError:'',masterWrites:new WeakMap(),
+      photoGestures:{state:pose},photoView:{snapshot(value,native){frames.push({kind:'photo',value,native});return {kind:'photo'}}},sceneViewer:{snapshot(native){frames.push({kind:'splat',native});return {kind:'splat'}}},
+      snapshotBlob:()=>rendered,archiveStore:{async savePreview(id,blob){writes.push({id,blob})}},marigoldView:{ready:false},persistCurrentMaster(){throw new Error('Unexpected depth work')}
+    });
+    vm.runInContext(source,state);await state.persistCurrentPreview();
+    assert.equal(writes[0].id,'capture-1');assert.equal(writes[0].blob,rendered);assert.equal(frames[0].native,true);assert.equal(frames[0].kind,image?'splat':'photo');if(!image)assert.equal(frames[0].value,pose);
+    state.captureArchiveSuppressed=true;await state.persistCurrentPreview();assert.equal(writes.length,1);
+  }
+});
 
 test('embedded import restores saved values and recipe without running depth inference',async()=>{
   const original=new Blob(['png'],{type:'image/png'}),rendered=new Blob(['frame'],{type:'image/png'}),calls=[],elements=new Map();
@@ -91,16 +105,14 @@ test('embedded master writes serialize immutable edits and deleted captures rema
   const exported=await state.persistCurrentMaster();assert.equal(exported.recipe.preset,4);assert.equal(writes.length,2);
 });
 
-test('archived master export offers its developed preview and numerical document',async()=>{
-  const options=[],originals=[],master={preview:new Blob(['preview'],{type:'image/png'}),result:{depth:Float32Array.of(1)}};
-  const record={left:jpeg,right:jpeg,document:master},state=vm.createContext({
-    archiveSelected:'master-1',archiveStore:{async get(){return record}},$:()=>({hidden:false}),
-    async showExportOptions(value){options.push(value)},async savePhoto(...args){originals.push(args)}
-  });
-  vm.runInContext(enhancement.slice(enhancement.indexOf('async function exportArchived('),enhancement.indexOf("for(const kind of ['left','right'])")),state);
-  await state.exportArchived('left');assert.equal(options.length,1);assert.equal(originals.length,0);assert.equal(options[0].image(),master.preview);assert.equal(options[0].document(),master);
-  await state.exportArchived('right');assert.equal(originals.length,1);assert.equal(originals[0][0],jpeg);
-  state.archiveSelected='replacement';assert.equal(options[0].isCurrent(),false);
+test('archived export uses the latest processed preview and preserves the original right image',()=>{
+  const preview=new Blob(['latest processed preview'],{type:'image/png'}),master={preview:new Blob(['master preview'],{type:'image/png'}),result:{depth:Float32Array.of(1)}};
+  const record={left:jpeg,right:jpeg,preview,document:master},state=vm.createContext({archiveSelected:'master-1',archiveRecord:record,$:()=>({hidden:false})});
+  vm.runInContext(enhancement.slice(enhancement.indexOf('function archivedExportOptions('),enhancement.indexOf("for(const kind of ['left','right'])")),state);
+  const left=state.archivedExportOptions('left'),right=state.archivedExportOptions('right');
+  assert.equal(left.image(),preview);assert.equal(left.document(),master);assert.equal(left.imageExtension,'png');
+  assert.equal(right.image(),jpeg);assert.equal(right.document,undefined);assert.equal(right.imageExtension,'jpg');
+  state.archiveSelected='replacement';assert.equal(left.isCurrent(),false);assert.equal(right.isCurrent(),false);
 });
 
 test('deleting the current archive entry settles its queued writes before removal and suppresses autosaving',async()=>{
@@ -260,14 +272,14 @@ test('art print and save use rendered snapshots and invalidate a replaced result
     printBusy:false,sceneVisible:false,artVisible:true,sceneViewer:null,connectGeneration:0,connecting:false,retryTimer:null,
     clearTimeout(){},stopStream(){},controls(){},printFeedback(){},resumeStream(){},
     printClient:{async print(image,isCurrent){prints.push({image,isCurrent})}},
-    photoName:'entropi-test.png',snapshotBlob:image=>image,async savePhoto(image,name,isCurrent){saves.push({image,name,isCurrent})},async showExportOptions({image,document,name,isCurrent}){saves.push({image:image(),document,name,isCurrent,master:true})}
+    photoName:'entropi-test.png',snapshotBlob:image=>image,bindExportGesture(button,getOptions){button.addEventListener('click',async()=>{const options=getOptions();saves.push({...options,image:await options.image()})})}
   });
   vm.runInContext(printSource,state);await state.printCurrent();
   assert.equal(prints[0].image.depthArt,true);assert.equal(prints[0].image.native,false);assert.equal(prints[0].isCurrent(),true);
   let save;
   state.$=()=>({addEventListener:(_,callback)=>{save=callback}});
   assert.ok(saveSource);vm.runInContext(saveSource,state);await save();
-  assert.equal(saves[0].master,true);assert.equal(typeof saves[0].document,'function');assert.equal(saves[0].image.depthArt,true);assert.equal(saves[0].image.native,true);assert.equal(saves[0].isCurrent(),true);
+  assert.equal(typeof saves[0].document,'function');assert.equal(saves[0].image.depthArt,true);assert.equal(saves[0].image.native,true);assert.equal(saves[0].isCurrent(),true);
   state.marigoldView.result={model:'replacement'};
   assert.equal(prints[0].isCurrent(),false);assert.equal(saves[0].isCurrent(),false);
 });

@@ -42,7 +42,6 @@ function harness(options={}){
     for(const name of match[0].match(/\bclass="([^"]+)"/)?.[1].split(/\s+/)??[])element.classes.add(name);
     elements.set(element.id,element);
   }
-  elements.get('progress').firstElementChild=new Element('','I');
   Object.assign(elements.get('video'),{videoWidth:640,videoHeight:480,play:async()=>{if(options.play)await options.play(elements.get('video').srcObject)},pause(){}});
   const document={hidden:options.hidden??false,referrer:options.referrer??'http://192.168.4.1/',getElementById:id=>elements.get(id),addEventListener(name,callback){if(!events.has(name))events.set(name,[]);events.get(name).push(callback)},createElement(tag){
     const element=new Element('',tag.toUpperCase());
@@ -57,8 +56,8 @@ function harness(options={}){
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
     COLOR_SCHEMES,
-    createEntropiDocument,showExportOptions:options=>{saves.push({options})},pickEntropiDocument:async()=>options.importDocument??null,
-    createArchive:()=>options.archive??({saveDocument:async document=>({id:document.id}),save:async()=>({}),list:async()=>[],get:async()=>null,remove:async()=>{}}),
+    createEntropiDocument,bindExportGesture:(button,getOptions)=>button.addEventListener('click',async()=>{const options=getOptions();if(!options||!options.isCurrent())return;try{const blob=await options.image();if(options.isCurrent())saves.push({blob,name:options.name.replace(/\.[^.]+$/,'')+'.'+(options.imageExtension??'png'),isCurrent:options.isCurrent,options})}catch(error){options.onError?.(error)}}),pickEntropiDocument:async()=>options.importDocument??null,
+    createArchive:()=>options.archive??({saveDocument:async document=>({id:document.id}),save:async()=>({}),savePreview:async()=>null,list:async()=>[],get:async()=>null,remove:async()=>{}}),
     location:{search:''},URLSearchParams,
     Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
@@ -162,7 +161,7 @@ test('the result saves the displayed monochrome PNG and retains its source JPEG'
   const app=harness({image:0}),blob=await photoFromDevice(app);
   assert.equal(app.get('studio').className,'studio done');
   await app.get('save').emit('click');
-  assert.equal(app.saves.length,1);assert.equal(app.saves[0].name,'entropi.png');assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.encodedSnapshots[0].photo,true);assert.equal(app.encodedSnapshots[0].width,16);assert.equal(app.encodedSnapshots[0].height,12);assert.equal(app.urls.get(app.get('photo').src),blob);
+  assert.equal(app.saves.length,1);assert.equal(app.saves[0].name,'entropi.png');assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.encodedSnapshots.at(-1).photo,true);assert.equal(app.encodedSnapshots.at(-1).width,16);assert.equal(app.encodedSnapshots.at(-1).height,12);assert.equal(app.urls.get(app.get('photo').src),blob);
   assert.equal([...app.urls.values()].some(value=>value.type==='application/octet-stream'),false);
 });
 
@@ -187,11 +186,12 @@ test('model failure requires selecting the retained photo before exporting its m
   assert.equal(app.get('studio').className,'studio error');
   assert.match(app.get('status').textContent,/Djupnemodellen manglar/);
   assert.equal(app.get('save').hidden,true);await app.get('save').emit('click');assert.equal(app.saves.length,0);app.changeStudio('image',0);assert.equal(app.get('save').hidden,false);await app.get('save').emit('click');
-  assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].name,'entropi.png');assert.equal(app.encodedSnapshots[0].photo,true);assert.equal(app.urls.get(app.get('photo').src),blob);
+  assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].name,'entropi.png');assert.equal(app.encodedSnapshots.at(-1).photo,true);assert.equal(app.urls.get(app.get('photo').src),blob);
 });
 
 test('normal processing uses only progress while model errors remain available to screen readers',async()=>{
-  const pending=deferred(),app=harness({image:1,scene:()=>pending.promise});await photoFromDevice(app);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);app.sceneCalls[0].progress({phase:'loading-model',percent:35});assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').firstElementChild.style.width,'35%');pending.reject(new Error('Internett manglar. Klargjer telefonen først.'));await app.tick(0);assert.equal(app.get('studio').className,'studio error');assert.match(app.get('status').textContent,/Internett manglar/);const css=await readFile(new URL('../style.css',import.meta.url),'utf8');assert.match(app.get('status').className,/sr-only/);assert.match(css,/\.sr-only\{[^}]*clip-path:inset\(50%\)/);assert.doesNotMatch(css,/\.studio\.(?:error|working|opening) #status/);
+  assert.match(html,/<div\b[^>]*\bid="progress"[^>]*\bhidden\b[^>]*>\s*<svg\b[^>]*>\s*<rect\b[^>]*pathLength="100"[^>]*\/>\s*<\/svg>\s*<\/div>/);
+  const pending=deferred(),app=harness({image:1,scene:()=>pending.promise});assert.equal(app.get('progress').tagName,'DIV');assert.equal(app.get('progress').hidden,true);await photoFromDevice(app);assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress').hidden,false);app.sceneCalls[0].progress({phase:'loading-model',percent:35});assert.equal(app.get('status').textContent,'');assert.equal(app.get('progress-bar').style.strokeDasharray,'35 100');pending.reject(new Error('Internett manglar. Klargjer telefonen først.'));await app.tick(0);assert.equal(app.get('progress').hidden,true);assert.equal(app.get('studio').className,'studio error');assert.match(app.get('status').textContent,/Internett manglar/);const css=await readFile(new URL('../style.css',import.meta.url),'utf8');assert.match(app.get('status').className,/sr-only/);assert.match(css,/\.sr-only\{[^}]*clip-path:inset\(50%\)/);assert.doesNotMatch(css,/\.studio\.(?:error|working|opening) #status/);
 });
 
 test('processing keeps the frozen finder through decoding and inference until the result is ready',async()=>{
@@ -277,12 +277,12 @@ test('photo and splats reuse one JPEG and one cached scene while styles remain i
   app.changeStudio('primitive',2);assert.equal(styles.at(-1),2);
   assert.equal(photoView.shown,false);app.changeStudio('image',0);await app.tick(0);assert.equal(app.get('photo').src,url);assert.equal(app.get('scene').classList.contains('hidden'),true);assert.equal(photoView.shown,true);assert.equal(photoView.style,1);assert.equal(app.studioControls.primitive,2);assert.equal(photoView.sources.length,1);
   app.changeStudio('image',1);await app.tick(0);assert.equal(app.sceneCalls.length,1);assert.equal(app.get('scene').classList.contains('hidden'),false);
-  await app.get('save').emit('click');assert.equal(app.encodedSnapshots[0],app.nativeSnapshot);assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.urls.get(app.get('photo').src),blob);
+  await app.get('save').emit('click');assert.equal(app.encodedSnapshots.at(-1),app.nativeSnapshot);assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.urls.get(app.get('photo').src),blob);
 });
 
 test('photo gestures and style changes feed the same rendered view to save and print without inference',async()=>{
   const app=harness({image:0}),blob=await photoFromDevice(app),view=app.photoViews[0],url=app.get('photo').src;assert.equal(view.source,app.get('photo'));assert.equal(view.shown,true);app.changeStudio('photo',2);const refreshes=view.refreshes;assert.equal(app.gesturePhoto({grain:5,contrast:2.2,scale:2,x:8,y:-4}),true);assert.deepEqual(view.tone,{grain:5,contrast:2.2});assert.ok(view.refreshes>refreshes);
-  await app.get('save').emit('click');await app.get('print').emit('click');for(const output of [app.encodedSnapshots[0],app.printCalls[0].image]){assert.equal(output.style,1);assert.deepEqual(output.tone,{grain:5,contrast:2.2});assert.equal(output.photo,true)}assert.deepEqual(view.snapshots.map(call=>call.native),[true,false]);assert.equal(view.snapshots[0].pose.scale,2);assert.equal(app.sceneCalls.length,0);assert.equal(app.urls.get(url),blob);assert.equal(app.get('photo').src,url);
+  await app.get('save').emit('click');await app.get('print').emit('click');for(const output of [app.encodedSnapshots.at(-1),app.printCalls[0].image]){assert.equal(output.style,1);assert.deepEqual(output.tone,{grain:5,contrast:2.2});assert.equal(output.photo,true)}assert.deepEqual(view.snapshots.slice(-2).map(call=>call.native),[true,false]);assert.equal(view.snapshots.at(-2).pose.scale,2);assert.equal(app.sceneCalls.length,0);assert.equal(app.urls.get(url),blob);assert.equal(app.get('photo').src,url);
   await app.get('reset').emit('click');assert.equal(view.shown,false);await app.get('last-photo').emit('click');assert.equal(view.shown,true);assert.equal(view.sources.length,1);await app.emit('pagehide');assert.equal(view.disposed,true);
 });
 
@@ -430,7 +430,7 @@ test('a failed new capture retries the camera rather than reprocessing the retai
 });
 
 test('a scene save requests native rendered pixels and a pending save becomes stale after a new photo',async()=>{
-  const flags=[],native={width:20,height:30,data:new Uint8ClampedArray(20*30*4)},app=harness({image:1,scene:async()=>({dispose(){},snapshot:flag=>{flags.push(flag);return native}})});await photoFromDevice(app);await app.get('save').emit('click');assert.deepEqual(flags,[true]);assert.equal(app.encodedSnapshots[0],native);assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].isCurrent(),true);
+  const flags=[],native={width:20,height:30,data:new Uint8ClampedArray(20*30*4)},app=harness({image:1,scene:async()=>({dispose(){},snapshot:flag=>{flags.push(flag);return native}})});await photoFromDevice(app);flags.length=0;await app.get('save').emit('click');assert.deepEqual(flags,[true]);assert.equal(app.encodedSnapshots.at(-1),native);assert.equal(app.saves[0].blob.type,'image/png');assert.equal(app.saves[0].isCurrent(),true);
   await app.get('reset').emit('click');assert.equal(app.saves[0].isCurrent(),false);await photoFromDevice(app,new Blob(['replacement'],{type:'image/jpeg'}));assert.equal(app.saves[0].isCurrent(),false);
 });
 
@@ -453,7 +453,7 @@ test('an intentional live tone adjustment still defers accidental capture',async
 test('depth art uses the captured blob once and saves and prints the cached rendered pixels',async()=>{
   const app=harness({image:2}),blob=await photoFromDevice(app),view=app.artViews[0];
   assert.equal(app.artCalls.length,1);assert.equal(app.artCalls[0].blob,blob);assert.equal(app.sceneCalls.length,0);assert.equal(app.get('marigold-view').hidden,false);
-  await app.get('save').emit('click');assert.equal(app.encodedSnapshots.length,0);await app.saves[0].options.image();await app.get('print').emit('click');assert.equal(app.encodedSnapshots[0].depthArt,true);assert.equal(app.printCalls[0].image.depthArt,true);assert.deepEqual(view.snapshots.map(call=>call.native),[true,false]);
+  await app.get('save').emit('click');assert.equal(app.saves.length,1);assert.equal(app.saves[0].blob.type,'image/png');await app.get('print').emit('click');assert.equal(app.encodedSnapshots.at(-1).depthArt,true);assert.equal(app.printCalls[0].image.depthArt,true);assert.deepEqual(view.snapshots.slice(-2).map(call=>call.native),[true,false]);
   app.changeStudio('image',0);app.changeStudio('image',2);await app.tick(0);assert.equal(app.artCalls.length,1);
   await app.get('recenter').emit('click');assert.equal(view.tones,1);
   await app.get('reset').emit('click');await app.get('last-photo').emit('click');assert.equal(app.artCalls.length,1);assert.equal(app.get('marigold-view').hidden,false);
@@ -496,21 +496,49 @@ test('importing a numerical master restores its expression without running a mod
 });
 
 function archiveFixture(){
-  const records=new Map(),writes=[],removed=[];let nextId=0;
-  const state={failSave:false,failRemove:false,blockedSave:null,blockedRemove:null,records,writes,removed,archive:{
-    async save(left,right=null){const id='capture-'+ ++nextId;records.set(id,{id,left,right,created:nextId,preview:left});return {id}},
+  const records=new Map(),writes=[],previewWrites=[],removed=[];let nextId=0;
+  const state={failSave:false,failRemove:false,blockedSave:null,blockedRemove:null,records,writes,previewWrites,removed,archive:{
+    async save(left,right=null,preview=left){const id='capture-'+ ++nextId;records.set(id,{id,left,right,created:nextId,preview,pending:!preview});return {id}},
     async saveDocument(document,id=document.id){writes.push({document,id});if(state.failSave)throw new DOMException('Storage full','QuotaExceededError');if(state.blockedSave)await state.blockedSave.promise;const previous=records.get(id);records.set(id,{id,left:document.left,right:document.right,document,created:previous?.created??nextId++,preview:document.preview});return {id}},
-    async list(){return [...records.values()].map(({id,created,preview})=>({id,created,preview}))},
+    async savePreview(id,preview){const record=records.get(id);if(!record)return null;previewWrites.push({id,preview});record.preview=preview;record.pending=false;return {id}},
+    async list(){return [...records.values()].filter(record=>!record.pending).map(({id,created,preview})=>({id,created,preview}))},
     async get(id){return records.get(id)},
     async remove(id){if(state.failRemove)throw new Error('Delete failed');if(state.blockedRemove)await state.blockedRemove.promise;removed.push(id);records.delete(id);state.failSave=false}
   }};return state;
 }
 
+test('the archive displays and saves the current processed photo while retaining its original',async()=>{
+  const store=archiveFixture(),app=harness({image:0,archive:store.archive}),original=await photoFromDevice(app);
+  const record=store.records.get('capture-1'),first=record.preview;
+  assert.equal(record.left,original);assert.notEqual(first,original);assert.equal(first.type,'image/png');assert.equal(record.pending,false);
+  app.changeStudio('photo',2);app.gesturePhoto({grain:5,contrast:2,scale:2,x:8,y:-4});await app.tick(301);
+  assert.notEqual(record.preview,first);assert.equal(record.left,original);assert.equal(app.encodedSnapshots.at(-1).style,1);assert.equal(app.photoViews[0].snapshots.at(-1).pose.scale,2);
+  await app.get('open-gallery').emit('click');const tile=app.get('phone-vault-grid').children[0];
+  assert.equal(app.urls.get(tile.children[0].src),record.preview);await tile.emit('click');
+  assert.equal(app.urls.get(app.get('phone-vault-image').src),record.preview);
+  await app.get('phone-vault-save').emit('click');assert.equal(app.saves.at(-1).blob,record.preview);assert.equal(app.saves.at(-1).options.document,undefined);
+});
+
+test('the archive publishes the native rendered splat and updates its current style without inference',async()=>{
+  let level=0;
+  const store=archiveFixture(),app=harness({image:1,archive:store.archive,scene:async()=>({dispose(){},setPrimitiveLevel(value){level=value},snapshot(native){return {splat:true,native,level,width:4,height:6,data:new Uint8ClampedArray(96)}}})}),original=await photoFromDevice(app);
+  const record=store.records.get('capture-1');assert.equal(record.left,original);assert.equal(record.preview.type,'image/png');assert.equal(app.encodedSnapshots.at(-1).splat,true);assert.equal(app.encodedSnapshots.at(-1).native,true);
+  const first=record.preview;app.changeStudio('primitive',2);await app.tick(301);
+  assert.notEqual(record.preview,first);assert.equal(app.encodedSnapshots.at(-1).level,2);assert.equal(app.sceneCalls.length,1);assert.equal(record.left,original);
+});
+
+test('unfinished depth captures retain the original privately until their processed preview is ready',async()=>{
+  const pending=deferred(),store=archiveFixture(),app=harness({image:2,archive:store.archive,art:()=>pending.promise}),original=await photoFromDevice(app);
+  const record=store.records.get('capture-1');assert.equal(record.left,original);assert.equal(record.pending,true);assert.equal(record.preview,null);assert.equal((await store.archive.list()).length,0);
+  pending.resolve({model:'Test depth',width:2,height:2,depth:Float32Array.of(.1,.2,.6,.9),polarity:'near'});await flush();
+  const finished=store.records.get('capture-1');assert.equal(finished.left,original);assert.equal(finished.preview.type,'image/png');assert.equal(finished.document.left,original);assert.equal((await store.archive.list()).length,1);assert.equal(app.artCalls.length,1);
+});
+
 test('failed autosave keeps the capture archive identity for the next successful update',async()=>{
   const store=archiveFixture(),app=harness({archive:store.archive});await photoFromDevice(app);
-  store.failSave=true;app.artViews[0].binding.onChange();await app.tick(400);
+  const initial=store.writes.length;store.failSave=true;app.artViews[0].binding.onChange();await app.tick(400);
   store.failSave=false;app.artViews[0].binding.onChange();await app.tick(400);
-  assert.equal(store.writes.length,2);assert.equal(store.writes[0].id,'capture-1');assert.equal(store.writes[1].id,'capture-1');
+  assert.equal(store.writes.length,initial+2);assert.equal(store.writes.at(-2).id,'capture-1');assert.equal(store.writes.at(-1).id,'capture-1');
   assert.equal(store.records.size,1);assert.ok(store.records.get('capture-1').document);
 });
 

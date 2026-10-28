@@ -28,36 +28,23 @@ function harness(options={}){
 }
 const png=()=>new Blob(['rendered PNG'],{type:'image/png'});
 
- test('PNG encoding and the native share chooser start synchronously in the initiating gesture',async()=>{
-  const app=harness({canShare:true}),pixels={width:2,height:1,data:new Uint8ClampedArray([8,8,8,255,90,90,90,255])},blob=app.encode(pixels),saving=app.save(blob,'view.png');
-  assert.equal(app.shares.length,1);assert.equal(app.shares[0].files[0].name,'view.png');assert.equal(app.shares[0].files[0].type,'image/png');assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())],[137,80,78,71,13,10,26,10]);assert.deepEqual(app.canvases[0].pixels,pixels.data);assert.equal(app.canvases[0].encodedType,'image/png');await saving;assert.equal(app.dialog,null);assert.equal(app.urls.size,0);
+test('PNG encoding starts a direct download in the initiating gesture even when sharing is available',async()=>{
+  const app=harness({apple:true,canShare:true}),pixels={width:2,height:1,data:new Uint8ClampedArray([8,8,8,255,90,90,90,255])},blob=app.encode(pixels),saving=app.save(blob,'view.png');
+  assert.equal(app.downloads.length,1);assert.equal(app.downloads[0].name,'view.png');assert.equal(app.urls.get(app.downloads[0].url),blob);assert.equal(app.shares.length,0);assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())],[137,80,78,71,13,10,26,10]);assert.deepEqual(app.canvases[0].pixels,pixels.data);assert.equal(app.canvases[0].encodedType,'image/png');await saving;assert.equal(app.dialog,null);assert.equal(app.readers.length,0);
 });
 
-test('native share cancellation never falls through to another save action',async()=>{
-  const app=harness({canShare:true,share:async()=>{throw new DOMException('Cancelled','AbortError')}});await app.save(png(),'view.png');assert.equal(app.shares.length,1);assert.equal(app.readers.length,0);assert.equal(app.urls.size,0);assert.equal(app.downloads.length,0);assert.equal(app.dialog,null);
+test('HTTP camera and iPhone saves download without opening a preview or share sheet',async()=>{
+  for(const options of [{secure:false,canShare:true},{apple:true,canShare:true},{apple:true,secure:false}]){
+    const app=harness(options),blob=png();await app.save(blob,'view.png');assert.equal(app.downloads.length,1);assert.equal(app.downloads[0].name,'view.png');assert.equal(app.urls.get(app.downloads[0].url),blob);assert.equal(app.shares.length,0);assert.equal(app.readers.length,0);assert.equal(app.dialog,null);assert.equal(app.body.children.length,0);
+  }
 });
 
-test('HTTP saving uses an inline data image with native image actions and cleans up on close',async()=>{
-  const app=harness({secure:false,canShare:true});await app.save(png(),'view.png');const dialog=app.dialog,image=dialog.children[0],button=dialog.children[1];assert.equal(app.shares.length,0);assert.equal(app.downloads.length,0);assert.equal(app.urls.size,0);assert.match(image.src,/^data:image\/png;base64,/);assert.match(image.style.cssText,/-webkit-touch-callout:default/);assert.match(image.style.cssText,/filter:none/);assert.match(dialog.children[2].textContent,/Hald inne/);
-  const menu=new Event('contextmenu',{cancelable:true});image.dispatchEvent(menu);assert.equal(menu.defaultPrevented,false);assert.equal(dialog.open,true);button.click();assert.equal(image.src,'');assert.equal(app.dialog,null);assert.equal(app.focused,1);
+test('invalid or obsolete images never start a download',async()=>{
+  const app=harness({secure:false});await assert.rejects(app.save(new Blob(['html'],{type:'text/html'})),/ikkje klart/);await assert.rejects(app.save(new Blob([],{type:'image/png'})),/ikkje klart/);await app.save(png(),'stale.png',()=>false);assert.equal(app.downloads.length,0);assert.equal(app.urls.size,0);assert.equal(app.shares.length,0);assert.equal(app.dialog,null);
 });
 
-test('a failed native share on Apple devices uses the same inline save surface',async()=>{
-  const app=harness({apple:true,canShare:true,share:async()=>{throw new Error('Unsupported file share')}});await app.save(png(),'view.png');assert.equal(app.shares.length,1);assert.ok(app.dialog);assert.equal(app.downloads.length,0);
-});
-
-test('a delayed file conversion cannot open an obsolete image or duplicate the save dialog',async()=>{
-  const app=harness({secure:false,deferRead:true});let current=true;const old=app.save(png(),'old.png',()=>current);current=false;app.readers[0].complete();await old;assert.equal(app.dialog,null);
-  const first=app.save(png(),'first.png'),second=app.save(png(),'second.png');app.readers[1].complete();app.readers[2].complete();await Promise.all([first,second]);assert.equal(app.body.children.length,1);assert.equal(app.dialog.children[0].src,'data:image/png;base64,cGl4ZWxz');
-});
-
-test('invalid images and failed file reads never create a save surface',async()=>{
-  const app=harness({secure:false,deferRead:true});await assert.rejects(app.save(new Blob(['html'],{type:'text/html'})),/ikkje klart/);await app.save(png(),'stale.png',()=>false);assert.equal(app.readers.length,0);
-  const saving=app.save(png());app.readers[0].fail();await assert.rejects(saving,/ikkje opnast/);assert.equal(app.dialog,null);assert.equal(app.downloads.length,0);
-});
-
-test('desktop download fallback releases its temporary URL after the save',async()=>{
-  const app=harness();const blob=png();await app.save(blob,'view.png');assert.equal(app.downloads.length,1);assert.equal(app.downloads[0].name,'view.png');assert.equal(app.urls.get(app.downloads[0].url),blob);assert.equal(app.body.children.length,0);assert.equal(app.revoked.length,0);app.tick();assert.deepEqual(app.revoked,[app.downloads[0].url]);
+test('direct download releases its temporary URL after the browser can consume it',async()=>{
+  const app=harness(),blob=png();await app.save(blob,'view.png');assert.equal(app.downloads.length,1);assert.equal(app.body.children.length,0);assert.equal(app.revoked.length,0);app.tick();assert.deepEqual(app.revoked,[app.downloads[0].url]);
 });
 
 test('photo snapshots retain full RGB values and alpha without a Canvas filter',()=>{
