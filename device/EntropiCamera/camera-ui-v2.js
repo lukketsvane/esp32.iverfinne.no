@@ -54,7 +54,7 @@ function archiveDate(timestamp){
 async function showArchive(){
   cancelCountdown();stopStream();
   $('archive').hidden=false;
-  $('archive-grid').hidden=false;$('archive-detail').hidden=true;$('vault-hint').hidden=false;
+  $('archive-grid').hidden=false;$('archive-detail').hidden=true;
   archiveSelected=null;
   clearArchiveUrls();
   const grid=$('archive-grid');grid.replaceChildren();
@@ -65,12 +65,9 @@ async function showArchive(){
     }
     for(const record of archiveRecords){
       const button=document.createElement('button');button.className='vault-item';button.type='button';
-      const image=document.createElement('img');image.alt='Opptak '+archiveDate(record.created);
+      const image=document.createElement('img');image.alt=(record.stereo?'Stereoopptak ':'Foto ')+archiveDate(record.created);
       if(record.preview)image.src=archiveUrl(record.preview);
-      const meta=document.createElement('span');meta.className='vault-item-meta';
-      const date=document.createElement('span');date.textContent=archiveDate(record.created);
-      const type=document.createElement('b');type.textContent=record.stereo?'STEREO':'FOTO';
-      meta.append(date,type);button.append(image,meta);
+      button.append(image);
       button.addEventListener('click',()=>void openArchivedPhoto(record.id));
       grid.append(button);
     }
@@ -90,7 +87,7 @@ async function openArchivedPhoto(id){
   $('archive-right').hidden=!record.right;
   $('archive-delete').textContent='Slett';
   $('archive-notice').textContent='';
-  $('archive-grid').hidden=true;$('vault-hint').hidden=true;$('archive-detail').hidden=false;
+  $('archive-grid').hidden=true;$('archive-detail').hidden=false;
 }
 function closeArchive(){
   if($('archive').hidden)return;

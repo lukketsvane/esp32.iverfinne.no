@@ -32,8 +32,6 @@
 .sheet .sheet-head .icon{font-size:0;width:44px}
 .sheet .sheet-head .icon svg{width:22px}
 .vault{background:#000}
-.vault .vault-description{color:#808080}
-.vault-item-meta{font-size:10px}
 .review #print-status.print-feedback{background:#000e;border-color:#333}
 @media(orientation:landscape) and (max-height:550px){
 .review.working .photo-frame,.review.error .photo-frame{position:absolute;left:32%;top:50%;transform:translate(-50%,-50%);width:min(17vw,112px);margin-left:0}

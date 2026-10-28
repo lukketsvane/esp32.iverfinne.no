@@ -201,7 +201,6 @@ async function openPhoneGallery(){
   $('phone-vault').hidden=false;
   $('phone-vault-grid').hidden=false;
   $('phone-vault-detail').hidden=true;
-  $('phone-vault-info').hidden=false;
   $('phone-vault-status').textContent='';
   galleryCurrent=null;clearGalleryUrls();
   const grid=$('phone-vault-grid');grid.replaceChildren();
@@ -211,11 +210,10 @@ async function openPhoneGallery(){
       const empty=document.createElement('p');empty.textContent='Ingen foto enno.';empty.style.cssText='color:#888;font-size:13px';grid.append(empty);
     }
     for(const item of galleryItems){
-      const button=document.createElement('button'),image=document.createElement('img'),caption=document.createElement('span');
-      image.alt='Opptak frå '+new Date(item.created).toLocaleDateString('nn-NO');
+      const button=document.createElement('button'),image=document.createElement('img');
+      button.setAttribute('aria-label','Opptak frå '+new Date(item.created).toLocaleString('nn-NO'));image.alt='';
       if(item.preview)image.src=galleryUrl(item.preview);
-      caption.textContent=new Date(item.created).toLocaleString('nn-NO',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-      button.append(image,caption);button.addEventListener('click',()=>void showPhoneRecord(item.id));grid.append(button);
+      button.append(image);button.addEventListener('click',()=>void showPhoneRecord(item.id));grid.append(button);
     }
   }catch(error){$('phone-vault-status').textContent=error.message||'Arkivet er ikkje tilgjengeleg'}
 }
@@ -230,7 +228,6 @@ async function showPhoneRecord(id){
   galleryImageUrl=URL.createObjectURL(record.left);
   $('phone-vault-image').src=galleryImageUrl;
   $('phone-vault-grid').hidden=true;
-  $('phone-vault-info').hidden=true;
   $('phone-vault-detail').hidden=false;
   $('phone-vault-remove').textContent='Slett';
 }
