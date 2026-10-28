@@ -201,6 +201,7 @@ function renderOnboarding(){
   const modelNeeded=needsPhoneModels(),depthArt=studioControls.image===2;
   $('close-onboarding').setAttribute('aria-label',photoDialog.open?'Tilbake til biletet':'Tilbake til kameraet');
   $('onboarding-title').textContent=phoneWorking?(depthArt?'Fullfører djupnekunst':'Fullfører 3D'):modelNeeded?(depthArt?'Klargjer djupnekunst':'Klargjer 3D'):connected?(secondEnabled?'Kameraa er klare':'Kameraet er klart'):'Finn kameraet';
+  $('onboarding-title').className=phoneWorking?'sr':'';
   $('onboarding-copy').textContent=phoneWorking?'':modelNeeded?(depthArt?'Hent modellen med internett éin gong for bruk utan nett, også med to kamera.':'Hent modellen med internett éin gong for 3D frå eitt foto. Stereo treng ingen modell.'):connected?(secondEnabled?'':'Kamera 2 koplar seg til automatisk når det får straum.'):'Slå på begge kameraa, vel ENTROPI under Wi-Fi og hald tilkoplinga utan internett.';
   $('onboarding-copy').hidden=!$('onboarding-copy').textContent;$('onboarding-progress').hidden=!phoneWorking;onboarding.setAttribute('aria-busy',String(phoneWorking));
   $('onboarding-next').textContent=modelNeeded?'Fullfør':connected?'Tilbake til kameraet':'Prøv igjen';$('onboarding-next').className=modelNeeded?'quiet':'primary';$('onboarding-next').hidden=phoneWorking;
