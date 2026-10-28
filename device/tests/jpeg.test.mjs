@@ -51,7 +51,7 @@ int main(int argc,char **argv){
   assert(!jpegDimensions(noSof,sizeof(noSof),width,height));
 }
 `);
-    const compiled=spawnSync(compiler,['-std=c++11','-Wall','-Wextra','-Werror',source,'-o',program],{encoding:'utf8'});
+    const compiled=spawnSync(compiler,['-std=c++11','-Wall','-Wextra','-Werror',...(process.platform==='win32'?['-static']:[]),source,'-o',program],{encoding:'utf8'});
     assert.equal(compiled.status,0,compiled.stderr||compiled.error?.message);
     const run=spawnSync(program,['baseline.jpg','progressive.jpg'].map(name=>fileURLToPath(new URL('./fixtures/'+name,import.meta.url))),{encoding:'utf8'});
     assert.equal(run.status,0,run.stderr||run.error?.message);

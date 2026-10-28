@@ -69,7 +69,7 @@ int main(int argc,char **argv){
   flow.feed(pause,4,paused);flow.reset();flow.feed(pause+4,5,paused);assert(!paused);
 }
 `);
-    const compiled=spawnSync(compiler,['-std=c++11','-Wall','-Wextra','-Werror',source,'-o',program],{encoding:'utf8'});
+    const compiled=spawnSync(compiler,['-std=c++11','-Wall','-Wextra','-Werror',...(process.platform==='win32'?['-static']:[]),source,'-o',program],{encoding:'utf8'});
     assert.equal(compiled.status,0,compiled.stderr||compiled.error?.message);
     const run=spawnSync(program,paths,{encoding:'utf8'});assert.equal(run.status,0,run.stderr||run.error?.message);
   }finally{
@@ -138,7 +138,7 @@ int main(){
   finish(true);retiringConnection=noConnection;now=retireQuiet;cleanupBle();assert(!cleaningUp&&!initializationFailed&&records[1].state==State::SENT&&records[0].state==State::SENT&&locks==0);
 }
 `);
-    const compiled=spawnSync(compiler,['-std=c++11','-Wall','-Wextra','-Werror',source,'-o',program],{encoding:'utf8'});
+    const compiled=spawnSync(compiler,['-std=c++11','-Wall','-Wextra','-Werror',...(process.platform==='win32'?['-static']:[]),source,'-o',program],{encoding:'utf8'});
     assert.equal(compiled.status,0,compiled.stderr||compiled.error?.message);
     const run=spawnSync(program,[],{encoding:'utf8'});assert.equal(run.status,0,run.stderr||run.error?.message);
   }finally{

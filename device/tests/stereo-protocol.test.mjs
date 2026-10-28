@@ -73,7 +73,7 @@ int main(){
   Client late;late.bytes="ABCD";late.release=11;tick=0;assert(!stereoReadBody(late,bytes,4,10,now,idle));assert(late.offset==0);
 }
 `);
-    const compiled=spawnSync(compiler,['-std=c++11','-Wall','-Wextra','-Werror',source,'-o',program],{encoding:'utf8'});
+    const compiled=spawnSync(compiler,['-std=c++11','-Wall','-Wextra','-Werror',...(process.platform==='win32'?['-static']:[]),source,'-o',program],{encoding:'utf8'});
     assert.equal(compiled.status,0,compiled.stderr||compiled.error?.message);
     const run=spawnSync(program,[],{encoding:'utf8'});
     assert.equal(run.status,0,run.stderr||run.error?.message);
