@@ -73,6 +73,32 @@ test('confidence is independent of validity and samples are copied before editin
   assert.equal(reopened.result.confidenceDefinition,'Source match score');
 });
 
+test('measured stereo provenance and disparity units survive editing and numerical export',async()=>{
+  const input=example();input.result.source='stereo';input.result.quantity='disparity';input.result.units='px';
+  input.result.provenance={rigId:'fixed-rig',matchedFraction:.5,metric:false,hardwareSynchronized:false};
+  const saved=createEntropiDocument(input);input.result.provenance.rigId='changed';
+  const reopened=await decodeEntropiDocument(await encodeEntropiDocument(saved));
+  assert.deepEqual(reopened.result.provenance,{rigId:'fixed-rig',matchedFraction:.5,metric:false,hardwareSynchronized:false});
+  assert.equal(reopened.result.source,'stereo');assert.equal(reopened.result.quantity,'disparity');assert.equal(reopened.result.units,'px');
+  reopened.recipe.position=-.4;const edited=await decodeEntropiDocument(await encodeEntropiDocument(reopened));
+  assert.deepEqual(edited.result.provenance,reopened.result.provenance);assert.deepEqual(rawBytes(edited.result.depth),rawBytes(saved.result.depth));
+  assert.deepEqual(edited.result.validity,saved.result.validity);assert.deepEqual(await edited.left.arrayBuffer(),await left.arrayBuffer());assert.deepEqual(await edited.right.arrayBuffer(),await right.arrayBuffer());
+});
+
+test('rejected stereo remains estimated with its reason in the exported provenance',async()=>{
+  const input=example();input.result.provenance={stereo:{accepted:false,reason:'No reliable stereo'},modelRevision:'pinned'};
+  const saved=createEntropiDocument(input);input.result.provenance.stereo.accepted=true;
+  const reopened=await decodeEntropiDocument(await encodeEntropiDocument(saved));
+  assert.equal(reopened.result.source,'browser');assert.equal(reopened.result.quantity,'relative-depth');assert.equal(reopened.result.units,'relative');
+  assert.deepEqual(reopened.result.provenance,{stereo:{accepted:false,reason:'No reliable stereo'},modelRevision:'pinned'});
+});
+
+test('provenance is optional for older masters and bounded like other document metadata',()=>{
+  const input=example();delete input.result.provenance;assert.equal(createEntropiDocument(input).result.provenance,null);
+  const circular={};circular.self=circular;input.result.provenance=circular;assert.throws(()=>createEntropiDocument(input),/metadata/);
+  input.result.provenance={reason:'x'.repeat(65537)};assert.throws(()=>createEntropiDocument(input),/metadata/);
+});
+
 test('unknown calibration and metric units cannot be silently substituted',()=>{
   const input=example();input.result.quantity='depth';input.result.units='m';assert.throws(()=>createEntropiDocument(input),/kalibrering/);
   input.geometry.calibration={baselineMetres:.06,focalLengthPixels:1200};assert.equal(createEntropiDocument(input).result.units,'m');

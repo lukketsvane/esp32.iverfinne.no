@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { COLOR_SCHEMES } from '../../vendor/color-schemes.mjs';
+import { readStereoPairResponse } from '../../vendor/stereo-pair.mjs';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]);
 const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','window.checkPhone=checkPhone;function updateCameraChrome(){} async function archiveCapture(){return {id:null,warning:null}} async function persistCurrentMaster(){} async function persistCurrentPreview(){} function schedulePreviewSave(){}');
 const verifiedStatus = { camera_id: 'aaaaaaaaaaaa', camera_ready: true, stream_ready: true, recovering: false, recovery_attempts: 0, last_error: '', framesize: 10, photo_framesize: 15, brightness: 0, psram: true };
+const jpeg = value => new Blob([Uint8Array.of(255,216),value,Uint8Array.of(255,217)],{type:'image/jpeg'});
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
 function deferred() {
@@ -167,10 +169,12 @@ function harness(options = {}) {
     return { ok, status: ok ? 200 : 500, headers: { get: name => normalized.get(name.toLowerCase()) ?? null }, json: async () => body, blob: async () => body };
   };
   const status = structuredClone(options.status === undefined ? {...verifiedStatus,peer:options.second?{camera_id:'bbbbbbbbbbbb'}:null} : options.status);
+  const pairResponse=(left=jpeg('jpeg'),right=jpeg('right-jpeg'))=>new Response(new Blob([left,right]),{headers:{'Content-Type':'application/octet-stream','X-Entropi-Pair-Id':'a'.repeat(32),'X-Entropi-Left-Id':status.camera_id,'X-Entropi-Right-Id':'bbbbbbbbbbbb','X-Entropi-Left-Length':String(left.size),'X-Entropi-Right-Length':String(right.size),'X-Entropi-Timing':JSON.stringify({hardware_synchronized:false,coordinator_camera_id:status.camera_id,left_capture_us:1000,right_capture_us:900,left_capture_duration_us:30,right_capture_duration_us:40,peer_requested_us:2000,peer_headers_received_us:3000,peer_request_started_us:2100,peer_response_ready_us:2900})}});
   const fetch = async (url, init) => {
     requests.push({ url: String(url), init });
-    const custom = options.fetch?.(String(url), requests.length, response, init);
+    const custom = options.fetch?.(String(url), requests.length, response, init, pairResponse);
     if (custom !== undefined) return await custom;
+    if(String(url).startsWith('/stereo/capture'))return pairResponse();
     if(String(url)==='/peer/status')return response(structuredClone(options.secondStatus??{...verifiedStatus,camera_id:'bbbbbbbbbbbb'}));
     if(String(url).startsWith('/peer/'))return response(new Blob([String(url).includes('/preview')?'preview-jpeg':'right-jpeg'],{type:'image/jpeg'}));
     if (String(url).startsWith('/status')) return response(structuredClone(status));
@@ -190,7 +194,7 @@ function harness(options = {}) {
       getItem(key) { if (options.storageDenied) throw new Error('Storage denied'); return stored.get(key) ?? null; },
       setItem(key, value) { if (options.storageDenied) throw new Error('Storage denied'); stored.set(key, value); },
     },
-    COLOR_SCHEMES,
+    COLOR_SCHEMES,readStereoPairResponse,
     Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};this.captures=[];finders.push(this) }capture(source){const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;this.captures.push({source,url:source.src,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
     readColorScheme:kind=>stored.get('entropi-screen-'+kind+'-v2')??'macintosh',
@@ -245,7 +249,7 @@ function harness(options = {}) {
   function gestureStudio() { for (const binding of studioBindings) binding.onGesture?.(); }
   function gesturePhoto(pose){if(!photoGestureBinding.enabled())return false;Object.assign(photoGestureState,pose);photoGestureBinding.onChange(photoGestureState);return true}
   function gestureLive(pose){if(!liveGestureBinding.enabled())return false;Object.assign(liveGestureState,pose);liveGestureBinding.onChange(liveGestureState);return true}
-  return { checkModels:()=>window.checkPhone(), status, elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, artCalls, artViews, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, tick, emit, get: id => elements.get(id), choosePalette:id=>{if(!colorBinding)throw Error('Palettes not mounted');colorBinding.onChoose(colorBinding.getKind(),id)}, paletteKind:()=>colorBinding?.getKind(), selectedPalette:()=>colorBinding?.getSelection(colorBinding.getKind()) };
+  return { checkModels:()=>window.checkPhone(), status, elements, document, images, canvases, requests, revoked, objectUrls, sceneCalls, artCalls, artViews, viewers, printCalls, printConfiguration, saves, encodedSnapshots, photoViews, nativeSnapshot, reportPrint:message=>printReport(message), photoGestureState, liveGestureState, finders, photoRefreshes, gesturePhoto, gestureLive, get photoResets(){return photoResets}, snapshot, modelChecks, preparations, studioControls, changeStudio, gestureStudio, opened, messages, childWindow, stored, response, pairResponse, tick, emit, get: id => elements.get(id), choosePalette:id=>{if(!colorBinding)throw Error('Palettes not mounted');colorBinding.onChoose(colorBinding.getKind(),id)}, paletteKind:()=>colorBinding?.getKind(), selectedPalette:()=>colorBinding?.getSelection(colorBinding.getKind()) };
 }
 
 async function connectedCamera(options = {}) {
@@ -310,20 +314,20 @@ for(const [label,status] of Object.entries({duplicate:{...verifiedStatus},legacy
   const app=await connectedCamera({second:true,secondStatus:status});
   assert.equal(app.requests.some(request=>request.url.startsWith('/peer/preview')),false);
   await app.get('capture-plane').emit('click');assert.equal(app.get('photo-dialog').open,true);assert.equal(app.studioControls.image,0);
-  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/capture')),false);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/stereo/capture')),false);
 });
 
 for(const [label,blob] of Object.entries({empty:new Blob([],{type:'image/jpeg'}),html:new Blob(['offline'],{type:'text/html'})}))test(`an ${label} secondary preview cannot enable pairing`,async()=>{
   const app=await connectedCamera({second:true,fetch:(url,count,response)=>url.startsWith('/peer/preview')?response(blob):undefined});
   await app.get('capture-plane').emit('click');assert.equal(app.get('photo-dialog').open,true);assert.equal(app.studioControls.image,0);
-  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/capture')),false);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/stereo/capture')),false);
 });
 
 test('a corrupt secondary JPEG preserves the primary live camera',async()=>{
   const app=await connectedCamera({second:true,decode:async image=>{if(await image.blob.text()==='preview-jpeg')throw Error('Bad JPEG')}});
   assert.equal(app.studioControls.image,0);assert.equal(app.get('capture-plane').disabled,false);
   await app.get('capture-plane').emit('click');assert.equal(app.get('photo-dialog').open,true);
-  assert.equal(app.requests.some(request=>request.url.startsWith('/peer/capture')),false);
+  assert.equal(app.requests.some(request=>request.url.startsWith('/stereo/capture')),false);
 });
 
 test('a timed out secondary request leaves mono usable and retries on the next heartbeat',async()=>{
@@ -369,7 +373,7 @@ test('pairing preserves a mode chosen while secondary verification is pending',a
   app.changeStudio('image',1);app.changeStudio('image',0);
   pending.resolve(app.response({...verifiedStatus,camera_id:'bbbbbbbbbbbb'}));await app.tick(0);
   assert.equal(app.studioControls.image,0);await app.get('capture-plane').emit('click');
-  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,2);assert.equal(app.sceneCalls.length,0);
+  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,1);assert.equal(app.sceneCalls.length,0);
 });
 
 test('a mode selected before primary connection is not treated as an automatic stereo choice',async()=>{
@@ -380,14 +384,14 @@ test('a mode selected before primary connection is not treated as an automatic s
 });
 
 test('the existing shutter captures both originals and produces one scene with the same save control',async()=>{
-  const left=deferred(),right=deferred(),app=await connectedCamera({second:true,modelsReady:false,scene:async()=>({dispose(){}}),fetch:url=>url.startsWith('/capture')?left.promise:url.startsWith('/peer/capture')?right.promise:undefined});
+  const pending=deferred(),app=await connectedCamera({second:true,modelsReady:false,scene:async()=>({dispose(){}}),fetch:url=>url.startsWith('/stereo/capture')?pending.promise:undefined});
   const capture=app.get('capture-plane').emit('click');await flush();
-  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,2);
-  await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,2);
-  const leftBlob=new Blob(['left-original'],{type:'image/jpeg'}),rightBlob=new Blob(['right-original'],{type:'image/jpeg'});
-  left.resolve(app.response(leftBlob));right.resolve(app.response(rightBlob));await capture;await app.tick(0);
+  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,1);
+  await app.get('capture-plane').emit('click');assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,1);
+  const leftBlob=jpeg('left-original'),rightBlob=jpeg('right-original');
+  pending.resolve(app.pairResponse(leftBlob,rightBlob));await capture;await app.tick(0);
   assert.equal(app.get('photo-dialog').open,true);assert.equal(app.get('scene').hidden,false);assert.equal(app.get('photo').hidden,true);
-  assert.equal(app.sceneCalls.length,1);assert.equal(app.sceneCalls[0].blob,leftBlob);assert.equal(app.sceneCalls[0].right,rightBlob);
+  assert.equal(app.sceneCalls.length,1);assert.deepEqual(new Uint8Array(await app.sceneCalls[0].blob.arrayBuffer()),new Uint8Array(await leftBlob.arrayBuffer()));assert.deepEqual(new Uint8Array(await app.sceneCalls[0].right.arrayBuffer()),new Uint8Array(await rightBlob.arrayBuffer()));
   assert.equal(app.modelChecks.length,0);assert.equal(app.preparations.length,0);assert.equal(app.get('onboarding').open,false);
   assert.equal(app.get('save-photo').hidden,false);await app.get('save-photo').emit('click');
   assert.equal(app.saves.length,1);assert.equal(app.saves[0].blob.type,'image/png');assert.match(app.saves[0].name,/\.png$/);
@@ -395,7 +399,7 @@ test('the existing shutter captures both originals and produces one scene with t
 });
 
 test('a failed second capture cannot replace the previous single-camera photograph',async()=>{
-  const app=await connectedCamera({modelsReady:false,fetch:(url,count,response)=>url.startsWith('/peer/capture')?response(null,false):undefined});
+  const app=await connectedCamera({modelsReady:false,fetch:(url,count,response)=>url.startsWith('/stereo/capture')?response(null,false):undefined});
   await app.get('capture-plane').emit('click');const original=app.get('photo').src;
   await app.get('close-photo').emit('click');app.status.peer={camera_id:'bbbbbbbbbbbb'};await app.tick(10000);
   await app.get('capture-plane').emit('click');await app.tick(150);
@@ -405,10 +409,10 @@ test('a failed second capture cannot replace the previous single-camera photogra
 });
 
 test('suspending a pending stereo capture rejects late images and releases temporary URLs',async()=>{
-  const pending=deferred(),app=await connectedCamera({second:true,fetch:url=>url.startsWith('/peer/capture')?pending.promise:undefined});
+  const pending=deferred(),app=await connectedCamera({second:true,fetch:url=>url.startsWith('/stereo/capture')?pending.promise:undefined});
   const before=app.revoked.length,capture=app.get('capture-plane').emit('click');await flush();app.document.hidden=true;await app.emit('visibilitychange');
-  assert.equal(app.requests.find(request=>request.url.startsWith('/peer/capture')).init.signal.aborted,true);
-  pending.resolve(app.response(new Blob(['right'],{type:'image/jpeg'})));await capture;
+  assert.equal(app.requests.find(request=>request.url.startsWith('/stereo/capture')).init.signal.aborted,true);
+  pending.resolve(app.pairResponse());await capture;
   assert.equal(app.get('photo-dialog').open,false);assert.equal(app.sceneCalls.length,0);assert.equal(app.revoked.length-before,2);
 });
 
@@ -431,7 +435,7 @@ test('a vanished peer restores mono and recovery does not keep switching the sel
   assert.equal(app.get('photo-dialog').open,true);assert.equal(app.modelChecks.length,0);await app.get('close-photo').emit('click');
   app.status.peer={camera_id:'bbbbbbbbbbbb'};await app.tick(10000);
   assert.equal(app.studioControls.image,0);await app.get('capture-plane').emit('click');
-  assert.equal(app.requests.filter(request=>request.url.startsWith('/peer/capture')).length,1);assert.equal(app.sceneCalls.length,0);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/stereo/capture')).length,1);assert.equal(app.sceneCalls.length,0);
 });
 
 test('secondary health failure preserves a mode explicitly chosen by the user',async()=>{
@@ -445,15 +449,15 @@ test('secondary health failure preserves a mode explicitly chosen by the user',a
 
 test('an older primary heartbeat cannot restart streams during stereo capture',async()=>{
   const heartbeat=deferred(),photo=deferred();let statusCalls=0;
-  const app=await connectedCamera({second:true,scene:async()=>({dispose(){}}),fetch:url=>url==='/status'&&++statusCalls>1?heartbeat.promise:url.startsWith('/capture')?photo.promise:undefined});
+  const app=await connectedCamera({second:true,scene:async()=>({dispose(){}}),fetch:url=>url==='/status'&&++statusCalls>1?heartbeat.promise:url.startsWith('/stereo/capture')?photo.promise:undefined});
   await app.tick(10000);const capture=app.get('capture-plane').emit('click');await flush();
   heartbeat.reject(new Error('Disconnected'));await app.tick(2000);assert.equal(statusCalls,2);assert.equal(app.images[0].src,'');
-  photo.resolve(app.response(new Blob(['left'],{type:'image/jpeg'})));await capture;await app.tick(0);assert.equal(app.get('save-photo').hidden,false);
+  photo.resolve(app.pairResponse());await capture;await app.tick(0);assert.equal(app.get('save-photo').hidden,false);
 });
 
 test('different photo dimensions cannot enter stereo reconstruction',async()=>{
-  const right=new Blob(['right'],{type:'image/jpeg'});
-  const app=await connectedCamera({second:true,fetch:(url,count,response)=>url.startsWith('/peer/capture')?response(right):undefined,imageSize:image=>image.blob===right?[800,600]:[1600,1200]});
+  const right=jpeg('right-mismatch-original');
+  const app=await connectedCamera({second:true,fetch:(url,count,response,init,pair)=>url.startsWith('/stereo/capture')?pair(undefined,right):undefined,imageSize:image=>image.blob.size===right.size?[800,600]:[1600,1200]});
   await app.get('capture-plane').emit('click');assert.equal(app.sceneCalls.length,0);assert.equal(app.get('photo-dialog').open,false);assert.equal(app.get('retry-capture').hidden,false);
 });
 
@@ -811,17 +815,19 @@ test('a prepared opener is used only after splats request models',async()=>{
   pending.resolve();await app.tick(0);assert.equal(app.sceneCalls.length,1);assert.equal(app.opened.length,0);
 });
 
-test('holding the photo prints a positive B&W snapshot and mode switching invalidates its handoff',async()=>{
+test('image holds do not print and the print icon exports a positive B&W snapshot with a current handoff',async()=>{
   const app=await connectedCamera({modelsReady:false});await app.get('capture-plane').emit('click');const target=app.get('photo');
   await app.get('photo-dialog').emit('pointerdown',{target});await app.tick(500);await app.get('photo-dialog').emit('pointerup',{target});
+  assert.equal(app.printCalls.length,0);await app.get('print-photo').emit('click');
   assert.equal(app.printCalls.length,1);assert.equal(app.printCalls[0].image.photo,true);assert.equal(app.printCalls[0].image.width,384);
   assert.equal(app.printCalls[0].image.image,target);assert.equal(app.printCalls[0].isCurrent(),true);
   assert.equal(app.sceneCalls.length,0);app.changeStudio('image',1);assert.equal(app.printCalls[0].isCurrent(),false);
 });
 
-test('holding splats prints its current view and closing review invalidates the handoff',async()=>{
+test('splat holds do not print and the print icon preserves current-view and stale-handoff guards',async()=>{
   const app=await connectedCamera({splats:true,scene:async()=>({dispose(){}})});await app.get('capture-plane').emit('click');await app.tick(0);const target=app.get('scene');
   await app.get('photo-dialog').emit('pointerdown',{target});await app.tick(500);await app.get('photo-dialog').emit('pointerup',{target});
+  assert.equal(app.printCalls.length,0);await app.get('print-photo').emit('click');
   assert.equal(app.printCalls.length,1);assert.equal(app.printCalls[0].image,app.snapshot);assert.equal(app.printCalls[0].isCurrent(),true);
   assert.equal(app.requests.filter(r=>r.url.startsWith('/capture')).length,1);
   await app.get('close-photo').emit('click');assert.equal(app.printCalls[0].isCurrent(),false);
@@ -1180,11 +1186,12 @@ async function reviewTap(app,details={}) {
   await app.get('photo-dialog').emit('pointerup',{target,...details});
 }
 
-test('a double tap leaves working review while its result stays cached for the last photo', async () => {
+test('double taps preserve working review and explicit close keeps its result cached', async () => {
   const pending=deferred();let disposed=false;
   const app=await connectedCamera({splats:true,scene:()=>pending.promise});
   await app.get('capture-plane').emit('click');
   await reviewTap(app);await app.tick(100);await reviewTap(app);
+  assert.equal(app.get('photo-dialog').open,true);await app.get('close-photo').emit('click');
   assert.equal(app.get('photo-dialog').open,false);
   assert.equal(app.sceneCalls[0].signal.aborted,false);
   pending.resolve({dispose(){disposed=true}});await app.tick(150);
@@ -1261,9 +1268,9 @@ test('the click following a result double tap cannot capture another photo', asy
   await app.get('capture-plane').emit('click');await app.tick(0);
   await reviewTap(app);await app.tick(100);await reviewTap(app);
   await app.get('capture-plane').emit('click');
-  assert.equal(app.get('photo-dialog').open,false);
+  assert.equal(app.get('photo-dialog').open,true);
   assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,1);
-  await app.tick(401);await app.get('capture-plane').emit('click');await app.tick(0);
+  await app.get('close-photo').emit('click');await app.tick(401);await app.get('capture-plane').emit('click');await app.tick(0);
   assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,2);
   assert.equal(app.get('photo-dialog').open,true);
 });
@@ -1317,40 +1324,53 @@ test('an unchanged orientation or viewport tone cannot suppress an immediate pai
   assert.equal(app.gestureLive({grain:1,contrast:1}),true);
   await app.get('capture-plane').emit('click');
   assert.equal(app.get('photo-dialog').open,true);
-  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,2);
+  assert.equal(app.requests.filter(request=>request.url.includes('/capture')).length,1);
 });
 
-test('portable depth art checks its model before processing the original left camera even with two cameras',async()=>{
-  const app=await connectedCamera({second:true});app.changeStudio('image',2);
-  assert.equal(app.modelChecks.length,0);
+test('paired depth art processes both originals before checking a downloaded model and reuses its result',async()=>{
+  const app=await connectedCamera({second:true,modelsReady:false,art:async()=>({source:'stereo',model:'Stereo'})});app.changeStudio('image',2);
   await app.get('capture-plane').emit('click');await app.tick(0);
-  assert.equal(app.modelChecks.length,1);assert.equal(app.artCalls.length,1);assert.equal(app.sceneCalls.length,0);
+  assert.equal(app.modelChecks.length,0);assert.equal(app.artCalls.length,1);assert.equal(app.sceneCalls.length,0);
   assert.equal(app.artCalls[0].blob,app.objectUrls.get(app.finders[0].captures[0].url));
-  assert.equal(app.artCalls[0].blob.type,'image/jpeg');assert.equal(app.get('marigold-view').hidden,false);
+  assert.equal(app.artCalls[0].blob.type,'image/jpeg');assert.deepEqual(new Uint8Array(await app.artCalls[0].settings.right.arrayBuffer()),new Uint8Array(await jpeg('right-jpeg').arrayBuffer()));
+  assert.equal(app.get('marigold-view').hidden,false);assert.equal(app.get('onboarding').open,false);
   app.changeStudio('image',0);app.changeStudio('image',2);await app.tick(0);
-  assert.equal(app.modelChecks.length,1);assert.equal(app.artCalls.length,1);
+  assert.equal(app.modelChecks.length,0);assert.equal(app.artCalls.length,1);
 });
 
-test('missing portable art assets open depth-specific setup and preparation resumes the same stereo capture',async()=>{
-  const app=await connectedCamera({second:true,modelsReady:false});app.changeStudio('image',2);
+test('rejected stereo with missing fallback assets opens setup and preparation resumes the same pair',async()=>{
+  let prepared=false;
+  const app=await connectedCamera({second:true,modelsReady:false,prepare:async()=>{prepared=true},art:async()=>{if(!prepared)throw Object.assign(new Error('Fallback model missing'),{code:'PHONE_SETUP_REQUIRED'});return {source:'browser',model:'fallback'}}});app.changeStudio('image',2);
   await app.get('capture-plane').emit('click');await app.tick(0);
-  const raw=app.objectUrls.get(app.finders[0].captures[0].url);
-  assert.equal(app.artCalls.length,0);assert.equal(app.get('onboarding').open,true);
+  const raw=app.objectUrls.get(app.finders[0].captures[0].url),right=app.artCalls[0].settings.right;
+  assert.equal(app.modelChecks.length,0);assert.equal(app.artCalls.length,1);assert.equal(app.get('onboarding').open,true);
   assert.equal(app.get('onboarding-title').textContent,'Klargjer djupnekunst');assert.match(app.get('onboarding-copy').textContent,/også med to kamera/);
   assert.equal(app.get('onboarding-prepare').hidden,false);assert.equal(app.get('retry-scene').getAttribute('aria-label'),'Klargjer telefonen');
-  app.get('onboarding').close();await app.get('retry-scene').emit('click');assert.equal(app.get('onboarding').open,true);
+  app.get('onboarding').close();await app.get('retry-scene').emit('click');assert.equal(app.get('onboarding').open,true);assert.equal(app.artCalls.length,1);
   await app.get('onboarding-next').emit('click');await app.tick(0);
-  assert.equal(app.preparations.length,1);assert.equal(app.artCalls.length,1);assert.equal(app.artCalls[0].blob,raw);
+  assert.equal(app.preparations.length,1);assert.equal(app.artCalls.length,2);assert.equal(app.artCalls[1].blob,raw);assert.equal(app.artCalls[1].settings.right,right);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/stereo/capture')).length,1);
   assert.equal(app.get('onboarding').open,false);assert.equal(app.get('marigold-view').hidden,false);
 });
 
-test('cancelling portable depth setup returns to the existing photo and rejects a late preparation',async()=>{
-  const pending=deferred(),app=await connectedCamera({second:true,modelsReady:false,prepare:()=>pending.promise});app.changeStudio('image',2);
+test('cancelling fallback setup keeps the existing pair and rejects a late preparation',async()=>{
+  const pending=deferred(),app=await connectedCamera({second:true,modelsReady:false,prepare:()=>pending.promise,art:async()=>{throw Object.assign(new Error('Fallback model missing'),{code:'PHONE_SETUP_REQUIRED'})}});app.changeStudio('image',2);
   await app.get('capture-plane').emit('click');await app.tick(0);const photo=app.get('photo').src;
   await app.get('onboarding-next').emit('click');await app.get('close-onboarding').emit('click');
   assert.equal(app.studioControls.image,0);assert.equal(app.preparations[0].signal.aborted,true);assert.equal(app.get('photo').hidden,false);
   pending.resolve();await app.tick(0);
-  assert.equal(app.artCalls.length,0);assert.equal(app.get('photo').src,photo);assert.equal(app.get('onboarding').open,false);
+  assert.equal(app.artCalls.length,1);assert.equal(app.get('photo').src,photo);assert.equal(app.get('onboarding').open,false);
+});
+
+test('a fresh stereo capture can succeed after cancelling setup for a rejected previous pair',async()=>{
+  let attempts=0;
+  const app=await connectedCamera({second:true,vathography:true,modelsReady:false,art:async()=>{if(++attempts===1)throw Object.assign(new Error('Fallback model missing'),{code:'PHONE_SETUP_REQUIRED'});return {source:'stereo',model:'Stereo'}}});
+  if(app.get('onboarding').open)await app.get('close-onboarding').emit('click');
+  await app.get('capture-plane').emit('click');await app.tick(0);assert.equal(app.artCalls.length,1);assert.equal(app.get('onboarding').open,true);
+  await app.get('close-onboarding').emit('click');await app.get('close-photo').emit('click');await app.tick(200);
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.artCalls.length,2);assert.equal(app.artViews[0].result.source,'stereo');assert.equal(app.get('marigold-view').hidden,false);assert.equal(app.get('onboarding').open,false);assert.equal(app.preparations.length,0);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/stereo/capture')).length,2);
 });
 
 test('a late portable model check cannot take over photo mode or start repeated art requests',async()=>{

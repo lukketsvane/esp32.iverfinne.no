@@ -19,12 +19,19 @@ function dimensions(data,width,height,channels=1){
   if(!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||!Number.isSafeInteger(width*height*channels)||data?.length!==width*height*channels)throw new Error('Ugyldig djupnekart.');
 }
 
-export function normalizeDepth(depth,{polarity='near'}={}){
+export function normalizeDepth(depth,{polarity='near',validity}={}){
   if(!depth?.length||!Number.isSafeInteger(depth.length)||!['near','far'].includes(polarity))throw new Error('Ugyldig djupnekart.');
+  if(validity&&(validity.length!==depth.length||Array.from(validity).some(value=>value!==0&&value!==1)))throw new Error('Ugyldig stereomaske.');
   let low=Infinity,high=-Infinity;
-  for(const value of depth)if(Number.isFinite(value)){low=Math.min(low,value);high=Math.max(high,value)}
+  for(let i=0;i<depth.length;i++){const value=depth[i];if(Number.isFinite(value)&&(!validity||validity[i]===1)){low=Math.min(low,value);high=Math.max(high,value)}}
   if(low===Infinity)throw new Error('Djupnekartet manglar gyldige verdiar.');
   const output=new Float32Array(depth.length),span=high-low;
+  if(validity){
+    output.fill(NaN);
+    const flat=!Number.isFinite(span)||span<=Number.EPSILON*Math.max(1,Math.abs(low),Math.abs(high));
+    for(let i=0;i<depth.length;i++)if(validity[i]===1&&Number.isFinite(depth[i]))output[i]=flat?.5:polarity==='near'?1-(depth[i]-low)/span:(depth[i]-low)/span;
+    return output;
+  }
   if(!Number.isFinite(span)||span<=Number.EPSILON*Math.max(1,Math.abs(low),Math.abs(high))){output.fill(.5);return output}
   for(let i=0;i<depth.length;i++){
     const value=depth[i];
@@ -53,14 +60,15 @@ function pchip(knots){
 
 const toneLuts=curves.map(knots=>{const evaluate=pchip(knots);return Float32Array.from({length:4097},(_,i)=>evaluate(i/4096)*255)});
 
-export function toneDepth(depth,width,height,{preset=0,position=0,width:bandWidth=1,outputWidth=width,outputHeight=height}={}){
+export function toneDepth(depth,width,height,{preset=0,position=0,width:bandWidth=1,outputWidth=width,outputHeight=height,validity}={}){
   dimensions(depth,width,height);
+  if(validity&&(validity.length!==depth.length||Array.from(validity).some(value=>value!==0&&value!==1)))throw new Error('Ugyldig stereomaske.');
   if(!Number.isInteger(outputWidth)||!Number.isInteger(outputHeight)||outputWidth<1||outputHeight<1||outputWidth*outputHeight>16777216)throw new Error('Ugyldig biletstorleik.');
   const selected=typeof preset==='string'?VATHOGRAPHY_PRESETS.findIndex(item=>item.id===preset):preset;
   const lut=toneLuts[Number.isInteger(selected)&&selected>=0&&selected<toneLuts.length?selected:0];
   const shift=Number.isFinite(position)?clamp(position,-1,1):0,stretch=Number.isFinite(bandWidth)?clamp(bandWidth,.25,3):1;
   const output=new Uint8ClampedArray(outputWidth*outputHeight*4),sameSize=width===outputWidth&&height===outputHeight;
-  const valueAt=index=>Number.isFinite(depth[index])?depth[index]:.5;
+  const valueAt=index=>validity?validity[index]===1&&Number.isFinite(depth[index])?depth[index]:NaN:Number.isFinite(depth[index])?depth[index]:.5;
   for(let y=0;y<outputHeight;y++){
     const sy=clamp((y+.5)*height/outputHeight-.5,0,height-1),y0=Math.floor(sy),y1=Math.min(height-1,y0+1),dy=sy-y0;
     for(let x=0;x<outputWidth;x++){
@@ -69,9 +77,10 @@ export function toneDepth(depth,width,height,{preset=0,position=0,width:bandWidt
       if(sameSize)sample=valueAt(i);
       else{
         const sx=clamp((x+.5)*width/outputWidth-.5,0,width-1),x0=Math.floor(sx),x1=Math.min(width-1,x0+1),dx=sx-x0;
-        const top=valueAt(y0*width+x0)*(1-dx)+valueAt(y0*width+x1)*dx,bottom=valueAt(y1*width+x0)*(1-dx)+valueAt(y1*width+x1)*dx;
-        sample=top*(1-dy)+bottom*dy;
+        const top=dx?valueAt(y0*width+x0)*(1-dx)+valueAt(y0*width+x1)*dx:valueAt(y0*width+x0),bottom=dx?valueAt(y1*width+x0)*(1-dx)+valueAt(y1*width+x1)*dx:valueAt(y1*width+x0);
+        sample=dy?top*(1-dy)+bottom*dy:top;
       }
+      if(validity&&!Number.isFinite(sample))continue;
       const index=clamp((sample-.5-shift)/stretch+.5,0,1)*4096,low=Math.floor(index),high=Math.min(4096,low+1);
       const value=Math.round(lut[low]+(lut[high]-lut[low])*(index-low)),at=i*4;
       output[at]=output[at+1]=output[at+2]=value;output[at+3]=255;

@@ -49,7 +49,7 @@ async function persistCurrentMaster(){
   clearTimeout(masterSaveTimer);masterSaveTimer=0;
   if(!marigoldView.ready||!photoOriginal)throw new Error('Djupnebiletet er ikkje klart.');
   const blob=photoBlob,result=marigoldView.result,preview=snapshotBlob(marigoldView.snapshot(true));
-  const master=createEntropiDocument(captureDocument?{...captureDocument,recipe:marigoldView.recipe,preview}:{left:photoPair?.left??photoOriginal,right:photoPair?.right??null,result,recipe:marigoldView.recipe,preview,geometry:{referenceCamera:'left',calibration:null},capture:{capturedAt:photoPair?.captured_at??null,receivedAt:photoReceivedAt,hardwareSynchronized:photoPair?.hardware_synchronized??false,transport:photoPair?.transport??'wifi',leftCameraId:cameraStatus?.camera_id??null,rightCameraId:secondId||null}});
+  const master=createEntropiDocument(captureDocument?{...captureDocument,recipe:marigoldView.recipe,preview}:{left:photoPair?.left??photoOriginal,right:photoPair?.right??null,result,recipe:marigoldView.recipe,preview,geometry:{referenceCamera:'left',calibration:null,rectification:result.rigId??null},capture:{pairId:photoPair?.id??null,timing:photoPair?.timing??null,capturedAt:photoPair?.captured_at??null,receivedAt:photoReceivedAt,hardwareSynchronized:photoPair?.hardware_synchronized??false,transport:photoPair?.transport??'wifi',leftCameraId:cameraStatus?.camera_id??null,rightCameraId:secondId||null}});
   captureDocument=master;if(captureArchiveSuppressed)return master;const id=captureArchiveId??master.id;
   const write=(masterWrites.get(blob)??Promise.resolve()).then(async()=>{const record=await archiveStore.saveDocument(master,id);if(blob===photoBlob&&result===marigoldView.result)captureArchiveId=record.id}).catch(error=>{if(blob===photoBlob&&result===marigoldView.result)printFeedback('Biletet er ikkje arkivert. Lagre Entropi-fila manuelt. '+(error?.name==='QuotaExceededError'?'Lagringa er full.':''))});
   masterWrites.set(blob,write);await write;return master;
@@ -92,7 +92,7 @@ function archiveDate(timestamp){
   return new Date(timestamp).toLocaleString('nn-NO',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
 }
 async function showArchive(){
-  cancelCountdown();stopStream();
+  disarmArchiveDelete();cancelCountdown();stopStream();
   $('archive').hidden=false;
   $('archive-grid').hidden=false;$('archive-detail').hidden=true;
   archiveSelected=null;
@@ -135,7 +135,7 @@ async function openArchivedPhoto(id){
 }
 function closeArchive(){
   if($('archive').hidden)return;
-  $('archive').hidden=true;archiveSelected=null;archiveRecord=null;archiveDeleteArmed=false;
+  disarmArchiveDelete();$('archive').hidden=true;archiveSelected=null;archiveRecord=null;archiveDeleteArmed=false;
   $('archive-photo').removeAttribute('src');
   clearArchiveUrls();resumeStream();
 }
@@ -149,12 +149,16 @@ function archivedExportOptions(kind){
   return {image:()=>blob,document:kind==='left'&&record.document?()=>record.document:undefined,imageExtension:blob.type==='image/png'?'png':blob.type==='image/webp'?'webp':'jpg',name:'entropi-'+id+'-'+kind,isCurrent:()=>archiveSelected===id&&!$('archive').hidden,onError:error=>{$('archive-notice').textContent=error.message}};
 }
 for(const kind of ['left','right'])bindExportGesture($('archive-'+kind),()=>archivedExportOptions(kind));
+let archiveDeleteTimer=0;
+function disarmArchiveDelete(){clearTimeout(archiveDeleteTimer);archiveDeleteTimer=0;archiveDeleteArmed=false;$('archive-delete').setAttribute('aria-label','Slett');$('archive-delete').dataset.armed='false'}
+for(const name of ['pointerdown','click','focusin'])$('archive').addEventListener(name,event=>{if(!event.target.closest('#archive-delete'))disarmArchiveDelete()},true);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)disarmArchiveDelete()});
 $('archive-delete').addEventListener('click',async()=>{
   const id=archiveSelected;if(!id)return;
   if(!archiveDeleteArmed){
-    archiveDeleteArmed=true;$('archive-delete').setAttribute('aria-label','Trykk igjen for å slette');$('archive-delete').dataset.armed='true';return;
+    archiveDeleteArmed=true;$('archive-delete').setAttribute('aria-label','Trykk igjen for å slette');$('archive-delete').dataset.armed='true';archiveDeleteTimer=setTimeout(disarmArchiveDelete,3000);return;
   }
-  const current=id===captureArchiveId,blob=photoBlob;
+  disarmArchiveDelete();const current=id===captureArchiveId,blob=photoBlob;
   if(current){captureArchiveSuppressed=true;clearTimeout(masterSaveTimer);masterSaveTimer=0;await masterWrites.get(blob)}
   try{await archiveStore.remove(id);void showArchive()}catch(error){if(current&&blob===photoBlob)captureArchiveSuppressed=false;$('archive-notice').textContent=error.message}
 });

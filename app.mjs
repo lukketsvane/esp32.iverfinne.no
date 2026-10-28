@@ -170,8 +170,6 @@ $('capture-plane').addEventListener('click',()=>void capture());$('reset').addEv
 $('last-photo').addEventListener('click',()=>{if(!photoReady)return;stopCamera();state('done');if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeDepthArt()});$('print').addEventListener('click',()=>void printCurrent());
 $('recenter').addEventListener('click',()=>{if(studioControls.image===0)photoGestures.reset();else if(studioControls.image===2)depthArt.resetTone();else scene?.resetView?.()});
 $('retry').addEventListener('click',()=>{if(retryScene&&photoReady&&studioControls.image===1)void makeScene();else if(retryScene&&photoReady&&studioControls.image===2)void makeDepthArt();else{reset();void startCamera()}});
-$('studio').addEventListener('pointerdown',event=>{if(!event.isPrimary||event.target.closest('button,a')&&!event.target.closest('#capture-plane')){pointer=null;lastTap=0;return}pointer=mode==='working'||mode==='done'?{id:event.pointerId,x:event.clientX,y:event.clientY,time:performance.now()}:null});
-$('studio').addEventListener('pointerup',event=>{const tap=pointer;pointer=null;const now=performance.now();if(tap&&tap.id===event.pointerId&&now-tap.time>=500&&Math.hypot(event.clientX-tap.x,event.clientY-tap.y)<=12&&mode==='done'){lastTap=0;printCurrent();return}if(!tap||tap.id!==event.pointerId||now-tap.time>350||Math.hypot(event.clientX-tap.x,event.clientY-tap.y)>12){lastTap=0;return}if(lastTap&&now-lastTap<350){captureAfter=now+400;reset()}else lastTap=now});
 $('studio').addEventListener('pointercancel',()=>{pointer=null;lastTap=0});
 $('studio').addEventListener('pointermove',event=>{if(pointer&&Math.hypot(event.clientX-pointer.x,event.clientY-pointer.y)>12){pointer=null;lastTap=0}},true);
 $('studio').addEventListener('contextmenu',event=>{if(!event.target.closest('button,a'))event.preventDefault()});
@@ -225,7 +223,7 @@ function galleryUrl(blob){
   const url=URL.createObjectURL(blob);galleryUrls.push(url);return url;
 }
 async function openPhoneGallery(){
-  galleryOpen=true;clearShutterDelay();
+  disarmGalleryDelete();galleryOpen=true;clearShutterDelay();
   if(mode==='camera')stopCamera();
   $('phone-vault').hidden=false;
   $('phone-vault-grid').hidden=false;
@@ -264,7 +262,7 @@ async function showPhoneRecord(id){
   $('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed');
 }
 function closePhoneGallery(){
-  if(!galleryOpen)return;galleryOpen=false;galleryCurrent=null;galleryRecord=null;
+  if(!galleryOpen)return;disarmGalleryDelete();galleryOpen=false;galleryCurrent=null;galleryRecord=null;
   $('phone-vault').hidden=true;clearGalleryUrls();$('phone-vault-image').removeAttribute('src');
   if(mode==='camera'&&hadCamera&&!document.hidden)void startCamera();
 }
@@ -283,10 +281,14 @@ bindExportGesture($('phone-vault-save'),()=>{
   const image=record.preview??record.document?.preview??record.left;
   return {image:()=>image,document:record.document?()=>record.document:undefined,imageExtension:image.type==='image/jpeg'?'jpg':image.type==='image/webp'?'webp':'png',name:'entropi-'+id,isCurrent:()=>id===galleryCurrent&&galleryOpen,onError:error=>{$('phone-vault-status').textContent=error.message}};
 });
+let galleryDeleteTimer=0;
+function disarmGalleryDelete(){clearTimeout(galleryDeleteTimer);galleryDeleteTimer=0;galleryDeleteConfirm=false;$('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed')}
+for(const name of ['pointerdown','click','focusin'])$('phone-vault').addEventListener(name,event=>{if(!event.target.closest('#phone-vault-remove'))disarmGalleryDelete()},true);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)disarmGalleryDelete()});
 $('phone-vault-remove').addEventListener('click',async()=>{
   if(!galleryCurrent)return;
-  if(!galleryDeleteConfirm){galleryDeleteConfirm=true;$('phone-vault-remove').setAttribute('aria-label','Trykk igjen for å slette');$('phone-vault-remove').classList.add('armed');return}
-  $('phone-vault-status').textContent='';
+  if(!galleryDeleteConfirm){galleryDeleteConfirm=true;$('phone-vault-remove').setAttribute('aria-label','Trykk igjen for å slette');$('phone-vault-remove').classList.add('armed');galleryDeleteTimer=setTimeout(disarmGalleryDelete,3000);return}
+  disarmGalleryDelete();$('phone-vault-status').textContent='';
   const id=galleryCurrent,session=archiveState,wasSuppressed=session.suppressed;
   if(session.id===id)session.suppressed=true;
   try{await session.pending;if(session.id===id)session.suppressed=true;await gallery.remove(id);if(galleryCurrent===id){galleryCurrent=null;void openPhoneGallery()}}

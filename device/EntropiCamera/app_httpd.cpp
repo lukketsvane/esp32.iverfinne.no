@@ -18,6 +18,7 @@
 #include "esp_camera.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/semphr.h"
 #include "lwip/sockets.h"
@@ -25,12 +26,14 @@
 #include "camera_assets.h"
 #include "board_config.h"
 #include "jpeg_frame.h"
+#include "stereo_protocol.h"
 #include "px10_printer.h"
 #include "rig_network.h"
 
 static httpd_handle_t cameraHttpd = nullptr;
 static httpd_handle_t streamHttpd = nullptr;
 static SemaphoreHandle_t cameraMutex = nullptr;
+static SemaphoreHandle_t stereoMutex = nullptr;
 static portMUX_TYPE stateMux = portMUX_INITIALIZER_UNLOCKED;
 static Preferences preferences;
 static bool preferencesReady = false;
@@ -52,6 +55,8 @@ static uint32_t streamStackFree = UINT32_MAX;
 struct PhotoFrame {
   uint8_t *data = nullptr;
   size_t length = 0;
+  int64_t startedUs = 0;
+  int64_t capturedUs = 0;
 };
 
 static void cameraMessage(const char *error) {
@@ -128,6 +133,7 @@ static bool copyFrame(camera_fb_t *frame, PhotoFrame &photo) {
   if (!photo.data) return false;
   memcpy(photo.data, frame->buf, frame->len);
   photo.length = frame->len;
+  photo.capturedUs = int64_t(frame->timestamp.tv_sec) * 1000000 + frame->timestamp.tv_usec;
   return true;
 }
 
@@ -295,7 +301,8 @@ static esp_err_t controlHandler(httpd_req_t *request) {
   return httpd_resp_send(request, "", 0);
 }
 
-static bool capturePhoto(PhotoFrame &photo) {
+static bool capturePhoto(PhotoFrame &photo, framesize_t targetSize = photoSize, size_t limit = SIZE_MAX) {
+  photo.startedUs = esp_timer_get_time();
   if (!lockCamera(1000)) return false;
   sensor_t *sensor = cameraReady ? esp_camera_sensor_get() : nullptr;
   if (!sensor) {
@@ -303,7 +310,7 @@ static bool capturePhoto(PhotoFrame &photo) {
     return false;
   }
   bool success = false;
-  bool configured = sensor->set_framesize(sensor, photoSize) == 0;
+  bool configured = sensor->set_framesize(sensor, targetSize) == 0;
   setLed(true);
   vTaskDelay(pdMS_TO_TICKS(150));
   int64_t cutoff = esp_timer_get_time();
@@ -313,8 +320,8 @@ static bool capturePhoto(PhotoFrame &photo) {
       camera_fb_t *frame = waitForFrame(deadline);
       if (!frame) break;
       int64_t timestamp = int64_t(frame->timestamp.tv_sec) * 1000000 + frame->timestamp.tv_usec;
-      bool fresh = timestamp >= cutoff && frameMatches(frame, photoSize);
-      if (fresh) success = copyFrame(frame, photo);
+      bool fresh = timestamp >= cutoff && frameMatches(frame, targetSize);
+      if (fresh && frame->len <= limit) success = copyFrame(frame, photo);
       esp_camera_fb_return(frame);
       if (fresh) break;
     }
@@ -336,8 +343,27 @@ static bool capturePhoto(PhotoFrame &photo) {
 static esp_err_t captureHandler(httpd_req_t *request) {
   httpd_resp_set_hdr(request, "Access-Control-Allow-Origin", "http://192.168.4.1");
   if (printerBusy()) return unavailable(request, "Printer is busy");
+  char pair[33], camera[13], started[24], captured[24], ready[24];
+  bool paired = queryValue(request, "pair", pair, sizeof(pair));
+  if (paired) {
+    if (!stereoHex(pair, 32)) return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid pair identifier");
+    timeval timeout = {6, 0};
+    if (setsockopt(httpd_req_to_sockfd(request), SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)))
+      return unavailable(request, "Could not prepare paired transfer");
+  }
   PhotoFrame photo;
-  if (!capturePhoto(photo)) return unavailable(request, "Could not capture photo");
+  if (!capturePhoto(photo, photoSize, paired ? STEREO_MAX_JPEG : SIZE_MAX)) return unavailable(request, "Could not capture photo");
+  if (paired) {
+    snprintf(camera, sizeof(camera), "%012llx", static_cast<unsigned long long>(ESP.getEfuseMac()));
+    snprintf(started, sizeof(started), "%lld", static_cast<long long>(photo.startedUs));
+    snprintf(captured, sizeof(captured), "%lld", static_cast<long long>(photo.capturedUs));
+    snprintf(ready, sizeof(ready), "%lld", static_cast<long long>(esp_timer_get_time()));
+    httpd_resp_set_hdr(request, "X-Entropi-Pair-Id", pair);
+    httpd_resp_set_hdr(request, "X-Entropi-Camera-Id", camera);
+    httpd_resp_set_hdr(request, "X-Entropi-Capture-Started-Us", started);
+    httpd_resp_set_hdr(request, "X-Entropi-Capture-Us", captured);
+    httpd_resp_set_hdr(request, "X-Entropi-Response-Ready-Us", ready);
+  }
   httpd_resp_set_type(request, "image/jpeg");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   httpd_resp_set_hdr(request, "Content-Disposition", "inline; filename=capture.jpg");
@@ -366,31 +392,42 @@ static esp_err_t previewHandler(httpd_req_t *request) {
   return result;
 }
 
-static bool peerGet(const String &origin, const String &path, size_t limit, uint8_t **body, size_t *size) {
+struct PeerRequest {
+  NetworkClient client;
+  int64_t requestedUs = 0;
+  int64_t headersUs = 0;
+  int64_t deadline = 0;
+};
+
+static void peerIdle() {
+  vTaskDelay(1);
+}
+
+static bool beginPeerRequest(PeerRequest &request, const String &origin, const String &path, int64_t timeoutUs = 5000000) {
   if (!origin.startsWith("http://")) return false;
   String host = origin.substring(7);
-  NetworkClient client;
-  if (!client.connect(host.c_str(), 80, 1000)) return false;
-  client.setTimeout(5000);
-  client.print("GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
-  String first = client.readStringUntil('\n');
-  if (!first.startsWith("HTTP/1.0 200 ") && !first.startsWith("HTTP/1.1 200 ")) return false;
-  int length = -1;
-  for (unsigned i = 0; i < 48; i++) {
-    String header = client.readStringUntil('\n');
-    header.trim();
-    if (!header.length()) break;
-    header.toLowerCase();
-    if (header.startsWith("content-length:")) length = header.substring(15).toInt();
-  }
-  if (length < 0 || static_cast<size_t>(length) > limit) return false;
+  if (!request.client.connect(host.c_str(), 80, 1000)) return false;
+  timeval timeout = {2, 0};
+  if (setsockopt(request.client.fd(), SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout))) return false;
+  request.requestedUs = esp_timer_get_time();
+  request.deadline = request.requestedUs + timeoutUs;
+  String text = "GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nConnection: close\r\n\r\n";
+  return request.client.print(text) == text.length();
+}
+
+static bool readPeerResponse(PeerRequest &request, size_t limit, uint8_t **body, size_t *size,
+                             StereoHeaders &headers, const char *pair = nullptr, const char *camera = nullptr) {
   *body = nullptr;
   *size = 0;
+  if (!stereoReadHeaders(request.client, headers, limit, request.deadline, esp_timer_get_time, peerIdle)) return false;
+  request.headersUs = esp_timer_get_time();
+  if (pair && !headers.captureMatches(pair, camera)) return false;
+  size_t length = static_cast<size_t>(headers.length);
   if (!length) return true;
-  uint8_t *buffer = static_cast<uint8_t *>(heap_caps_malloc(size_t(length) + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!buffer) buffer = static_cast<uint8_t *>(malloc(size_t(length) + 1));
+  uint8_t *buffer = static_cast<uint8_t *>(heap_caps_malloc(length + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!buffer) buffer = static_cast<uint8_t *>(malloc(length + 1));
   if (!buffer) return false;
-  if (client.readBytes(buffer, length) != static_cast<size_t>(length)) {
+  if (!stereoReadBody(request.client, buffer, length, request.deadline, esp_timer_get_time, peerIdle)) {
     free(buffer);
     return false;
   }
@@ -400,74 +437,154 @@ static bool peerGet(const String &origin, const String &path, size_t limit, uint
   return true;
 }
 
-#if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
-void serialStereoPair() {
-  String origin = rigIsPrimary() ? rigPeerOrigin() : "http://192.168.4.1";
-  if (!origin.length()) {
-    Serial.println("PAIR_ERROR PEER_OFFLINE");
-    return;
-  }
+static bool peerGet(const String &origin, const String &path, size_t limit, uint8_t **body, size_t *size) {
+  *body = nullptr;
+  *size = 0;
+  PeerRequest request;
+  StereoHeaders headers;
+  return beginPeerRequest(request, origin, path) && readPeerResponse(request, limit, body, size, headers);
+}
+
+struct StereoPair {
+  PhotoFrame local;
+  PhotoFrame peer;
+  char id[33] = {};
+  char localId[13] = {};
+  char peerId[13] = {};
+  int64_t peerRequestedUs = 0;
+  int64_t peerHeadersUs = 0;
+  int64_t peerReadyUs = 0;
+  bool primary = false;
+  bool locked = false;
+};
+
+static void freeStereoPair(StereoPair &pair) {
+  free(pair.local.data);
+  free(pair.peer.data);
+  pair.local.data = pair.peer.data = nullptr;
+  if (pair.locked) xSemaphoreGive(stereoMutex);
+  pair.locked = false;
+}
+
+static bool captureStereoPair(StereoPair &pair, const char *&error) {
+  error = "BUSY";
+  if (printerBusy() || !stereoMutex || xSemaphoreTake(stereoMutex, 0) != pdTRUE) return false;
+  pair.locked = true;
+  pair.primary = rigIsPrimary();
+  String origin = pair.primary ? rigPeerOrigin() : "http://192.168.4.1";
+  snprintf(pair.localId, sizeof(pair.localId), "%012llx", static_cast<unsigned long long>(ESP.getEfuseMac()));
+  snprintf(pair.peerId, sizeof(pair.peerId), "%s", rigPeerId());
+  snprintf(pair.id, sizeof(pair.id), "%08lx%08lx%08lx%08lx", static_cast<unsigned long>(esp_random()),
+           static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
+  error = "PEER_OFFLINE";
+  if (!origin.length() || !stereoHex(pair.peerId, 12)) return false;
+  framesize_t requestedSize = photoSize;
   uint8_t *data = nullptr;
   size_t length = 0;
   if (!peerGet(origin, "/status", 2048, &data, &length) || !length) {
     free(data);
-    Serial.println("PAIR_ERROR PEER_OFFLINE");
-    return;
+    return false;
   }
   String status(reinterpret_cast<const char *>(data));
   free(data);
   data = nullptr;
-  if (status.indexOf("\"camera_id\":" + quoted(rigPeerId())) < 0 || status.indexOf("\"camera_ready\":true") < 0) {
-    Serial.println("PAIR_ERROR PEER_ID_OR_SENSOR");
-    return;
-  }
-  if (status.indexOf("\"photo_framesize\":" + String(static_cast<int>(photoSize)) + ",") < 0) {
-    if (!peerGet(origin, "/control?var=photo_framesize&val=" + String(static_cast<int>(photoSize)), 2048, &data, &length)) {
+  error = "PEER_ID_OR_SENSOR";
+  if (status.indexOf("\"camera_id\":" + quoted(pair.peerId)) < 0 || status.indexOf("\"camera_ready\":true") < 0) return false;
+  if (status.indexOf("\"photo_framesize\":" + String(static_cast<int>(requestedSize)) + ",") < 0) {
+    error = "RESOLUTION";
+    if (!peerGet(origin, "/control?var=photo_framesize&val=" + String(static_cast<int>(requestedSize)), 2048, &data, &length)) {
       free(data);
-      Serial.println("PAIR_ERROR RESOLUTION");
-      return;
+      return false;
     }
     free(data);
     data = nullptr;
   }
-  if (!peerGet(origin, "/capture", 1024 * 1024, &data, &length) || length < 4) {
-    free(data);
-    Serial.println("PAIR_ERROR PEER_CAPTURE");
-    return;
-  }
-  PhotoFrame local;
-  if (!capturePhoto(local)) {
-    free(data);
-    Serial.println("PAIR_ERROR LOCAL_CAPTURE");
-    return;
-  }
+  PeerRequest request;
+  StereoHeaders headers;
+  error = "PEER_CAPTURE";
+  if (!beginPeerRequest(request, origin, "/capture?pair=" + String(pair.id), 12000000)) return false;
+  pair.peerRequestedUs = request.requestedUs;
+  error = "LOCAL_CAPTURE";
+  if (!capturePhoto(pair.local, requestedSize, STEREO_MAX_JPEG)) return false;
+  error = "PEER_CAPTURE";
+  if (!readPeerResponse(request, STEREO_MAX_JPEG, &pair.peer.data, &pair.peer.length, headers, pair.id, pair.peerId)) return false;
+  pair.peer.startedUs = headers.startedUs;
+  pair.peer.capturedUs = headers.capturedUs;
+  pair.peerReadyUs = headers.readyUs;
+  pair.peerHeadersUs = request.headersUs;
   unsigned w1 = 0, h1 = 0, w2 = 0, h2 = 0;
-  bool valid = jpegDimensions(data, length, w1, h1) &&
-               jpegDimensions(local.data, local.length, w2, h2) && w1 == w2 && h1 == h2;
-  if (!valid) {
-    Serial.println("PAIR_ERROR SIZE_OR_JPEG");
-  } else {
-    const uint8_t *first = rigIsPrimary() ? local.data : data;
-    const uint8_t *second = rigIsPrimary() ? data : local.data;
-    size_t firstSize = rigIsPrimary() ? local.length : length;
-    size_t secondSize = rigIsPrimary() ? length : local.length;
-    Serial.printf("PAIR_BEGIN %u %u\n", static_cast<unsigned>(firstSize), static_cast<unsigned>(secondSize));
-    for (size_t n = 0; n < firstSize; n += 512) {
-      size_t chunk = firstSize - n < 512 ? firstSize - n : 512;
-      Serial.write(first + n, chunk);
-      pollRigNetwork();
-      delay(1);
-    }
-    for (size_t n = 0; n < secondSize; n += 512) {
-      size_t chunk = secondSize - n < 512 ? secondSize - n : 512;
-      Serial.write(second + n, chunk);
-      pollRigNetwork();
-      delay(1);
-    }
-    Serial.print("PAIR_END\n");
+  error = "SIZE_OR_JPEG";
+  if (!jpegDimensions(pair.local.data, pair.local.length, w1, h1) ||
+      !jpegDimensions(pair.peer.data, pair.peer.length, w2, h2) || w1 != w2 || h1 != h2) return false;
+  error = "PEER_CHANGED";
+  return !strcmp(pair.peerId, rigPeerId()) && (!pair.primary || origin == rigPeerOrigin());
+}
+
+static String stereoTiming(const StereoPair &pair) {
+  const PhotoFrame &left = pair.primary ? pair.local : pair.peer;
+  const PhotoFrame &right = pair.primary ? pair.peer : pair.local;
+  char timing[640];
+  snprintf(timing, sizeof(timing), "{\"left_capture_us\":%lld,\"right_capture_us\":%lld,\"left_capture_duration_us\":%lld,\"right_capture_duration_us\":%lld,\"coordinator_camera_id\":\"%s\",\"peer_requested_us\":%lld,\"peer_headers_received_us\":%lld,\"peer_request_started_us\":%lld,\"peer_response_ready_us\":%lld,\"hardware_synchronized\":false}",
+           static_cast<long long>(left.capturedUs), static_cast<long long>(right.capturedUs),
+           static_cast<long long>(left.capturedUs - left.startedUs), static_cast<long long>(right.capturedUs - right.startedUs), pair.localId,
+           static_cast<long long>(pair.peerRequestedUs), static_cast<long long>(pair.peerHeadersUs),
+           static_cast<long long>(pair.peer.startedUs), static_cast<long long>(pair.peerReadyUs));
+  return String(timing);
+}
+
+static esp_err_t stereoCaptureHandler(httpd_req_t *request) {
+  StereoPair pair;
+  const char *error;
+  if (!captureStereoPair(pair, error)) {
+    freeStereoPair(pair);
+    return unavailable(request, error);
   }
-  free(local.data);
-  free(data);
+  const PhotoFrame &left = pair.primary ? pair.local : pair.peer;
+  const PhotoFrame &right = pair.primary ? pair.peer : pair.local;
+  char leftSize[16], rightSize[16];
+  snprintf(leftSize, sizeof(leftSize), "%u", static_cast<unsigned>(left.length));
+  snprintf(rightSize, sizeof(rightSize), "%u", static_cast<unsigned>(right.length));
+  String timing = stereoTiming(pair);
+  httpd_resp_set_type(request, "application/octet-stream");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+  httpd_resp_set_hdr(request, "X-Entropi-Pair-Id", pair.id);
+  httpd_resp_set_hdr(request, "X-Entropi-Left-Length", leftSize);
+  httpd_resp_set_hdr(request, "X-Entropi-Right-Length", rightSize);
+  httpd_resp_set_hdr(request, "X-Entropi-Left-Id", pair.primary ? pair.localId : pair.peerId);
+  httpd_resp_set_hdr(request, "X-Entropi-Right-Id", pair.primary ? pair.peerId : pair.localId);
+  httpd_resp_set_hdr(request, "X-Entropi-Timing", timing.c_str());
+  esp_err_t result = httpd_resp_send_chunk(request, reinterpret_cast<const char *>(left.data), left.length);
+  if (result == ESP_OK) result = httpd_resp_send_chunk(request, reinterpret_cast<const char *>(right.data), right.length);
+  if (result == ESP_OK) result = httpd_resp_send_chunk(request, nullptr, 0);
+  freeStereoPair(pair);
+  return result;
+}
+
+#if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
+void serialStereoPair() {
+  StereoPair pair;
+  const char *error;
+  if (!captureStereoPair(pair, error)) {
+    freeStereoPair(pair);
+    Serial.printf("PAIR_ERROR %s\n", error);
+    return;
+  }
+  const PhotoFrame &left = pair.primary ? pair.local : pair.peer;
+  const PhotoFrame &right = pair.primary ? pair.peer : pair.local;
+  String timing = stereoTiming(pair);
+  Serial.printf("PAIR_META {\"id\":\"%s\",\"left_camera_id\":\"%s\",\"right_camera_id\":\"%s\",%s\n", pair.id,
+                pair.primary ? pair.localId : pair.peerId, pair.primary ? pair.peerId : pair.localId, timing.c_str() + 1);
+  Serial.printf("PAIR_BEGIN %u %u\n", static_cast<unsigned>(left.length), static_cast<unsigned>(right.length));
+  for (const PhotoFrame *photo : {&left, &right}) {
+    for (size_t n = 0; n < photo->length; n += 512) {
+      size_t chunk = photo->length - n < 512 ? photo->length - n : 512;
+      Serial.write(photo->data + n, chunk);
+      pollRigNetwork();
+      delay(1);
+    }
+  }
+  Serial.print("PAIR_END\n");
+  freeStereoPair(pair);
 }
 #endif
 
@@ -629,6 +746,7 @@ static void deviceWorker(void *) {
 void startCameraServer() {
   startPrinterBridge();
   cameraMutex = xSemaphoreCreateMutex();
+  stereoMutex = xSemaphoreCreateMutex();
   hasPsram = psramFound();
   photoSize = hasPsram ? FRAMESIZE_UXGA : FRAMESIZE_QVGA;
   preferencesReady = preferences.begin("entropi", false);
@@ -645,7 +763,7 @@ void startCameraServer() {
 #endif
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_open_sockets = 4;
-  config.max_uri_handlers = 13;
+  config.max_uri_handlers = 14;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
   config.send_wait_timeout = 3;
@@ -656,6 +774,7 @@ void startCameraServer() {
     registerHandler(cameraHttpd, "/status", statusHandler);
     registerHandler(cameraHttpd, "/control", controlHandler);
     registerHandler(cameraHttpd, "/capture", captureHandler);
+    registerHandler(cameraHttpd, "/stereo/capture", stereoCaptureHandler);
     registerHandler(cameraHttpd, "/preview", previewHandler);
     registerHandler(cameraHttpd, "/peer/status", peerHandler);
     registerHandler(cameraHttpd, "/peer/preview", peerHandler);

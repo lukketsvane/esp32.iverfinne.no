@@ -1,4 +1,5 @@
 import io
+import json
 import itertools
 import types
 import unittest
@@ -51,6 +52,19 @@ class PairTests(unittest.TestCase):
         frames, dimensions = Rig.read_pair(Link(self.payload), 1)
         self.assertEqual(frames, self.frames)
         self.assertEqual(dimensions, (32, 24))
+
+    def test_pair_metadata_keeps_separate_clocks(self):
+        timing = {'id': 'a' * 32, 'left_camera_id': 'c0b62c0d5020', 'right_camera_id': 'c443180d5020', 'coordinator_camera_id': 'c0b62c0d5020', 'hardware_synchronized': False}
+        timing.update({key: index * 100 for index, key in enumerate(('left_capture_us', 'right_capture_us', 'left_capture_duration_us', 'right_capture_duration_us', 'peer_requested_us', 'peer_headers_received_us', 'peer_request_started_us', 'peer_response_ready_us'))})
+        metadata = {}
+        frames, dimensions = Rig.read_pair(Link(b'PAIR_META ' + json.dumps(timing).encode() + b'\n' + self.payload), 1, metadata)
+        self.assertEqual(metadata, timing)
+        self.assertEqual(frames, self.frames)
+        self.assertEqual(dimensions, (32, 24))
+
+    def test_invalid_pair_metadata_cannot_commit_frames(self):
+        with self.assertRaises(ValueError):
+            Rig.read_pair(Link(b'PAIR_META {}\n' + self.payload), 1, {})
 
     def test_truncated_frame(self):
         with self.assertRaises(ValueError):

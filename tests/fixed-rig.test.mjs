@@ -106,8 +106,8 @@ test('bad predictions and invalid masks cannot enter the cloud renderer',()=>{
 });
 
 test('firmware and hosted offline graph include the same fixed rig',async()=>{
-  const scene=await readFile(new URL('../vendor/scene.mjs',import.meta.url),'utf8'),sw=await readFile(new URL('../sw.js',import.meta.url),'utf8'),build=await readFile(new URL('../device/build-ui.py',import.meta.url),'utf8');
-  assert.match(scene,/prepareFixedStereo\(pixels\[0\],pixels\[1\]\)/);assert.match(scene,/restoreFixedStereo/);
-  assert.doesNotMatch(scene,/verticalShift|shiftStereoRows/);
+  const scene=await readFile(new URL('../vendor/scene.mjs',import.meta.url),'utf8'),stereo=await readFile(new URL('../vendor/stereo-depth.mjs',import.meta.url),'utf8'),sw=await readFile(new URL('../sw.js',import.meta.url),'utf8'),build=await readFile(new URL('../device/build-ui.py',import.meta.url),'utf8');
+  assert.match(scene,/runStereoDepth\(left,right,/);assert.match(stereo,/prepareFixedStereo\(pixels\[0\],pixels\[1\]\)/);assert.match(stereo,/restoreFixedStereo/);
+  assert.doesNotMatch(scene+stereo,/verticalShift|shiftStereoRows/);
   assert.match(sw,/\/pointcloud\/stereo-rig\.mjs/);assert.match(build,/pointcloud\/stereo-rig\.mjs/);
 });

@@ -38,7 +38,7 @@ export function showExportOptions(settings){
   const parent=anchor?.closest?.('dialog[open]')||document.body;
   const select=index=>{selected=index;Array.from(options.children).forEach((button,i)=>{button.setAttribute('aria-current',i===index?'true':'false');button.tabIndex=i===index?0:-1;button.style.transform=i===index?'scale(1.08)':'none';button.style.color=i===index?'#fff':'#d4d4d8'})};
   const close=()=>{disposed=true;dialog.close()};
-  const dismiss=event=>{if(!dialog.contains(event.target)&&event.target!==anchor)close()};
+  const dismiss=event=>{if(!dialog.contains(event.target)&&!anchor?.contains?.(event.target))close()};
   const hidden=()=>{if(document.hidden)close()};
   const choose=async index=>{
     if(index<0||busy||disposed||!isCurrent())return;
@@ -86,19 +86,20 @@ export function bindExportGesture(button,getOptions){
   button.style.touchAction='none';button.style.webkitTouchCallout='none';button.setAttribute('aria-haspopup','menu');button.setAttribute('aria-keyshortcuts','ArrowUp Shift+F10');button.setAttribute('aria-expanded','false');
   const down=event=>{
     if(event.isPrimary===false||event.button>0||busy||button.disabled)return;
+    if(menu?.dialog.open&&!pointer){event.preventDefault();event.stopPropagation();reset();return}
     event.stopPropagation();cancel();suppressUntil=0;const value=settings();if(!value||value.isCurrent?.()===false)return;
-    pointer={id:event.pointerId,x:event.clientX,y:event.clientY};try{button.setPointerCapture?.(event.pointerId)}catch{}
+    pointer={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};try{button.setPointerCapture?.(event.pointerId)}catch{}
     if(value.document)timer=setTimeout(()=>{timer=null;if(pointer){suppressUntil=Date.now()+800;open()}},360);
   };
   const move=event=>{
     if(!pointer||event.pointerId!==pointer.id)return;
-    if(menu){event.preventDefault();event.stopPropagation();menu.point(event.clientX,event.clientY)}
+    if(menu){pointer.moved||=Math.hypot(event.clientX-pointer.x,event.clientY-pointer.y)>10;event.preventDefault();event.stopPropagation();menu.point(event.clientX,event.clientY)}
     else if(Math.hypot(event.clientX-pointer.x,event.clientY-pointer.y)>10)reset();
   };
   const up=async event=>{
     if(!pointer||event.pointerId!==pointer.id)return;
-    stopTimer();try{button.releasePointerCapture?.(pointer.id)}catch{}pointer=null;
-    if(menu){event.preventDefault();event.stopPropagation();suppressUntil=Date.now()+800;const choice=menu;menu=null;if(choice.point(event.clientX,event.clientY)<0)choice.close();else{busy=true;try{await choice.choose()}finally{busy=false}}}
+    const held=pointer;stopTimer();try{button.releasePointerCapture?.(pointer.id)}catch{}pointer=null;
+    if(menu){event.preventDefault();event.stopPropagation();suppressUntil=Date.now()+800;if(!held.moved&&Math.hypot(event.clientX-held.x,event.clientY-held.y)<=10)return;const choice=menu;menu=null;if(choice.point(event.clientX,event.clientY)<0)choice.close();else{busy=true;try{await choice.choose()}finally{busy=false}}}
   };
   const other=event=>{if(pointer&&event.pointerId!==pointer.id)reset()};
   const click=async event=>{
@@ -112,7 +113,7 @@ export function bindExportGesture(button,getOptions){
   const keys=event=>{if(event.key==='ArrowUp'||event.key==='F10'&&event.shiftKey){event.preventDefault();event.stopPropagation();cancel();open()?.focus()}else if(event.key==='Escape'){event.preventDefault();reset()}};
   const context=event=>{event.preventDefault();event.stopPropagation();if(!pointer){cancel();open()?.focus()}};
   const hidden=()=>{if(document.hidden)reset()};
-  const bindings=[[button,'pointerdown',down],[button,'click',click],[button,'keydown',keys],[button,'contextmenu',context],[document,'pointerdown',other,true],[document,'pointermove',move,true],[document,'pointerup',up,true],[document,'pointercancel',reset,true],[document,'visibilitychange',hidden],[globalThis,'pagehide',reset]];
+  const bindings=[[button,'pointerdown',down],[button,'click',click],[button,'keydown',keys],[button,'contextmenu',context],[document,'pointerdown',other,true],[document,'pointermove',move,true],[document,'pointerup',up,true],[document,'pointercancel',reset,true],[document,'visibilitychange',hidden],[globalThis,'pagehide',reset],[globalThis,'resize',reset]];
   for(const [target,name,handler,capture]of bindings)target.addEventListener?.(name,handler,capture);
   return ()=>{reset();status?.remove();for(const [target,name,handler,capture]of bindings)target.removeEventListener?.(name,handler,capture)};
 }

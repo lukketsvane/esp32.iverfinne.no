@@ -165,9 +165,10 @@ test('the result saves the displayed monochrome PNG and retains its source JPEG'
   assert.equal([...app.urls.values()].some(value=>value.type==='application/octet-stream'),false);
 });
 
-test('holding a completed scene prints its current view synchronously without capturing again',async()=>{
+test('only the print icon prints a completed scene and returning to the camera invalidates its handoff',async()=>{
   const app=harness({image:1});await photoFromDevice(app);
   await app.get('studio').emit('pointerdown');await app.tick(500);await app.get('studio').emit('pointerup');
+  assert.equal(app.printCalls.length,0);await app.get('print').emit('click');
   assert.equal(app.printCalls.length,1);assert.equal(app.printCalls[0].image,app.snapshot);assert.equal(app.printCalls[0].isCurrent(),true);
   assert.equal(app.sceneCalls.length,1);await app.tick(100);await tap(app);assert.equal(app.get('studio').className,'studio done');
   await app.get('reset').emit('click');assert.equal(app.printCalls[0].isCurrent(),false);
@@ -215,6 +216,8 @@ test('returning to the camera keeps pending splats without letting a late result
   const app=harness({image:1,scene:()=>pending.promise});await photoFromDevice(app);
   assert.equal(app.get('studio').className,'studio working');
   await tap(app);await app.tick(100);await tap(app);
+  assert.equal(app.get('studio').className,'studio working');
+  await app.get('reset').emit('click');
   assert.equal(app.get('studio').className,'studio camera');
   assert.equal(app.sceneCalls[0].signal.aborted,false);
   pending.resolve({dispose(){disposed=true}});await app.tick(0);
@@ -262,12 +265,15 @@ test('an unchanged rail gesture clears a pending result tap',async()=>{
   assert.equal(app.get('studio').className,'studio done');
 });
 
-test('a double-tap click cannot recapture until the next intentional camera gesture',async()=>{
+test('a double tap keeps review open and cannot recapture until explicitly returning to the camera',async()=>{
   const app=harness();await app.get('capture-plane').emit('click');await app.get('capture-plane').emit('click');
+  const url=app.get('photo').src;
   await tap(app);await app.tick(100);await tap(app);await app.get('capture-plane').emit('click');
-  assert.equal(app.get('studio').className,'studio camera');assert.equal(app.sceneCalls.length,0);
+  assert.equal(app.get('studio').className,'studio done');assert.equal(app.get('photo').src,url);assert.equal(app.finders[0].captures.length,1);
   await app.tick(401);await app.get('capture-plane').emit('click');
-  assert.equal(app.get('studio').className,'studio done');assert.equal(app.sceneCalls.length,0);
+  assert.equal(app.get('studio').className,'studio done');assert.equal(app.finders[0].captures.length,1);
+  await app.get('reset').emit('click');await app.get('capture-plane').emit('click');
+  assert.equal(app.get('studio').className,'studio done');assert.equal(app.finders[0].captures.length,2);assert.equal(app.sceneCalls.length,0);
 });
 
 test('photo and splats reuse one JPEG and one cached scene while styles remain independent',async()=>{
@@ -306,8 +312,9 @@ test('rapid image switches share pending splats and reopening the same photo use
   assert.equal(app.get('last-photo').hidden,false);await app.get('last-photo').emit('click');assert.equal(app.get('studio').className,'studio done');assert.equal(app.sceneCalls.length,1);assert.equal(app.get('photo').src,url);
 });
 
-test('holding a normal photo prints the monochrome photo snapshot without starting a model',async()=>{
+test('holding a normal photo never prints while the print icon uses its monochrome snapshot without a model',async()=>{
   const app=harness({image:0});await photoFromDevice(app);await app.get('studio').emit('pointerdown');await app.tick(500);await app.get('studio').emit('pointerup');
+  assert.equal(app.printCalls.length,0);await app.get('print').emit('click');
   assert.equal(app.printCalls.length,1);assert.equal(app.printCalls[0].image.photo,true);assert.equal(app.printCalls[0].image.width,384);assert.equal(app.sceneCalls.length,0);
 });
 

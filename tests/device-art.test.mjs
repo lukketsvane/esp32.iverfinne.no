@@ -105,6 +105,28 @@ test('embedded master writes serialize immutable edits and deleted captures rema
   const exported=await state.persistCurrentMaster();assert.equal(exported.recipe.preset,4);assert.equal(writes.length,2);
 });
 
+test('editing during the first archive write queues the latest recipe and processed preview',async()=>{
+  const initial=new Blob(['initial preview'],{type:'image/png'}),edited=new Blob(['edited preview'],{type:'image/png'}),timers=new Map(),writes=[];
+  let callbacks,finish,started,latest=initial,nextTimer=0;const firstWrite=new Promise(resolve=>{started=resolve});
+  const view={ready:false,result:{depth:Float32Array.of(1,2,3,4),width:2,height:2},recipe:{preset:1,position:0,width:1},snapshot:()=>latest,async process(){this.ready=true;callbacks.onChange()}};
+  const progress={classList:{add(){},toggle(){}},style:{}};
+  const state=vm.createContext({photoBlob:initial,photoOriginal:jpeg,photoPair:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,cameraStatus:null,secondId:'',
+    photoDialog:{open:true},studioControls:{image:2},sceneGeneration:1,artTask:null,artError:'',needsSetup:false,phoneTask:null,AbortController,DOMException,
+    createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:value=>value,printFeedback(){},refreshReview(){},needsPhoneModels:()=>false,
+    $:()=>progress,createMarigoldView:(_,options)=>{callbacks=options;return view},setTimeout:callback=>{const id=++nextTimer;timers.set(id,callback);return id},clearTimeout:id=>timers.delete(id),
+    archiveStore:{saveDocument(master,id){writes.push({master,id});if(writes.length>1)return Promise.resolve({id});started();return new Promise(resolve=>{finish=()=>resolve({id})})}}
+  });
+  const initialization=html.split('\n').find(line=>line.startsWith('const marigoldView=createMarigoldView'));
+  const schedule=enhancement.slice(enhancement.indexOf('function scheduleMasterSave('),enhancement.indexOf('function schedulePreviewSave('));
+  vm.runInContext(initialization+'\n'+schedule+'\n'+persistSource+'\n'+artSource,state);
+  const processing=state.makeArt();await firstWrite;assert.ok(state.artTask);assert.equal(timers.size,0);
+  view.recipe={preset:4,position:.4,width:1.5};latest=edited;callbacks.onChange();assert.equal(timers.size,1);
+  for(const [id,callback]of [...timers]){timers.delete(id);callback()}
+  assert.equal(writes.length,1);finish();await processing;await state.masterWrites.get(initial);
+  assert.equal(writes.length,2);assert.deepEqual(writes[1].master.recipe,view.recipe);assert.equal(writes[1].master.preview,edited);
+  assert.equal(writes[0].master.preview,initial);assert.equal(writes[0].master.recipe.position,0);assert.equal(writes[1].id,'original');assert.equal(writes[1].master.id,writes[0].master.id);
+});
+
 test('archived export uses the latest processed preview and preserves the original right image',()=>{
   const preview=new Blob(['latest processed preview'],{type:'image/png'}),master={preview:new Blob(['master preview'],{type:'image/png'}),result:{depth:Float32Array.of(1)}};
   const record={left:jpeg,right:jpeg,preview,document:master},state=vm.createContext({archiveSelected:'master-1',archiveRecord:record,$:()=>({hidden:false})});
@@ -120,7 +142,7 @@ test('deleting the current archive entry settles its queued writes before remova
   writes.set(blob,new Promise(resolve=>{finish=resolve}));
   const state=vm.createContext({
     archiveSelected:'capture',captureArchiveId:'capture',archiveDeleteArmed:true,photoBlob:blob,captureArchiveSuppressed:false,masterSaveTimer:1,masterWrites:writes,
-    clearTimeout(){},$:()=>({addEventListener(_,callback){handler=callback}}),archiveStore:{async remove(id){removed.push(id)}},showArchive(){}
+    clearTimeout(){},disarmArchiveDelete(){},$:()=>({addEventListener(_,callback){handler=callback}}),archiveStore:{async remove(id){removed.push(id)}},showArchive(){}
   });
   vm.runInContext(enhancement.slice(enhancement.indexOf("$('archive-delete').addEventListener"),enhancement.indexOf("window.addEventListener('keydown'")),state);
   const deleting=handler();assert.equal(state.captureArchiveSuppressed,true);assert.equal(state.masterSaveTimer,0);assert.deepEqual(removed,[]);
@@ -138,13 +160,13 @@ function pairHarness(options={}){
   let nextImage=0,nextUrl=0;
   const capture={id:'pair-1',left:'/api/frame/pair-1/left',right:'/api/frame/pair-1/right',captured_at:'2026-10-25T12:00:00Z',transport:'usb',hardware_synchronized:false};
   const context=vm.createContext({
-    __ENTROPI_RIG_BRIDGE:options.bridge!==false,
+    __ENTROPI_RIG_BRIDGE:options.bridge!==false,cameraStatus:{camera_id:'primary'},secondId:'secondary',
     Image:class{
       constructor(){const size=options.dimensions?.[nextImage++]??[640,480];[this.naturalWidth,this.naturalHeight]=size}
       async decode(){}
     },
     URL:{createObjectURL:()=>`blob:frame-${nextUrl++}`,revokeObjectURL:url=>revoked.push(url)},
-    request:async(...args)=>{calls.push(args);args[3]?.throwIfAborted();return args[1]==='json'?(options.capture??capture):jpeg}
+    request:async(...args)=>{calls.push(args);args[3]?.throwIfAborted();return args[1]==='pair'?{id:'pair-id',leftId:options.leftId??'primary',rightId:'secondary',left:jpeg,right:jpeg,timing:{},transport:'wifi'}:args[1]==='json'?(options.capture??capture):jpeg}
   });
   vm.runInContext(pairSource+statusSource,context);
   return {context,calls,revoked,capture};
@@ -155,7 +177,7 @@ function artHarness(options={}){
   const context=vm.createContext({
     photoBlob:new Blob(['framed']),photoOriginal:new Blob(['original']),photoPair:null,
     photoDialog:{open:true},studioControls:{image:2,setImage(value){this.image=value}},
-    sceneGeneration:1,artTask:null,artError:'',phoneReady:true,phoneTask:null,secondEnabled:false,needsSetup:false,AbortController,DOMException,
+    sceneGeneration:1,artTask:null,artError:'',artNeedsModel:false,phoneReady:true,phoneTask:null,secondEnabled:false,needsSetup:false,AbortController,DOMException,
     $:()=>progress,refreshReview(){},controls(){},showOnboarding(){},checkPhone(){},async persistCurrentMaster(){},printFeedback(){},
     marigoldView:{
       ready:false,result:null,resets:0,
@@ -190,10 +212,11 @@ test('USB capture obtains both frames from one capture ID and preserves measured
   assert.equal(app.revoked.length,2);
 });
 
-test('direct firmware capture keeps its existing two GET endpoints',async()=>{
+test('direct firmware capture receives an atomic pair and verifies both camera identities',async()=>{
   const app=pairHarness({bridge:false}),pair=await app.context.capturePair(new AbortController().signal);
-  assert.equal(app.calls.length,2);assert.match(app.calls[0][0],/^\/capture\?/);assert.match(app.calls[1][0],/^\/peer\/capture\?/);
-  assert.equal(app.calls[0][4],undefined);assert.equal(pair.transport,undefined);
+  assert.equal(app.calls.length,1);assert.match(app.calls[0][0],/^\/stereo\/capture\?/);assert.equal(app.calls[0][1],'pair');
+  assert.equal(pair.transport,'wifi');assert.equal(pair.hardware_synchronized,false);
+  const wrong=pairHarness({bridge:false,leftId:'different'});await assert.rejects(wrong.context.capturePair(new AbortController().signal),/feil kamera/);
 });
 
 test('invalid bridge routes and mismatched frame dimensions cannot enter review',async()=>{
@@ -225,7 +248,7 @@ test('art uses the original capture or original left frame and reuses its cached
 
 test('art exposes no cloud refinement action or provider selection',async()=>{
   const app=artHarness();await app.context.makeArt();
-  assert.equal(app.inputs[0].settings,undefined);assert.doesNotMatch(html,/onMarigoldRequest|artProvider/);
+  assert.equal(app.inputs[0].settings.right,undefined);assert.doesNotMatch(html,/onMarigoldRequest|artProvider/);
 });
 
 test('pending art is deduplicated and an old cancellation cannot clear a newer task',async()=>{
@@ -248,13 +271,13 @@ test('depth failures remain actionable while cancelled processing returns to pho
   await cancelled.context.makeArt();assert.equal(cancelled.context.studioControls.image,0);assert.equal(cancelled.context.artError,'');
 });
 
-test('portable art requires the phone model even with a complete stereo pair; the local bridge bypasses it',async()=>{
+test('paired art tries measured stereo before model setup and requests assets only for estimated fallback',async()=>{
   const app=artHarness(),state=app.context;
   state.phoneReady=false;state.secondEnabled=true;state.photoPair={left:jpeg,right:jpeg};
   let checks=0;state.checkPhone=()=>{checks++};
-  assert.equal(state.needsPhoneModels(),true);await state.makeArt();assert.equal(checks,1);assert.equal(app.inputs.length,0);
-  state.__ENTROPI_RIG_BRIDGE=true;
-  assert.equal(state.needsPhoneModels(),false);await state.makeArt();assert.equal(checks,1);assert.equal(app.inputs.length,1);
+  assert.equal(state.needsPhoneModels(),false);await state.makeArt();assert.equal(checks,0);assert.equal(app.inputs.length,1);assert.equal(app.inputs[0].settings.right,jpeg);
+  state.marigoldView.reset();state.artNeedsModel=true;assert.equal(state.needsPhoneModels(),true);await state.makeArt();assert.equal(checks,1);
+  state.__ENTROPI_RIG_BRIDGE=true;assert.equal(state.needsPhoneModels(),false);
 });
 
 test('missing model assets select portable setup instead of repeating inference',async()=>{

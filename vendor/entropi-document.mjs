@@ -28,7 +28,7 @@ export function createEntropiDocument({left,right=null,result,recipe={},preview=
   if(typeof identity!=='string'||!identity.length||identity.length>128||typeof date!=='string'||!Number.isFinite(Date.parse(date)))invalid();
   const spatial=jsonCopy({referenceCamera:'left',calibration:null,...geometry}),timing=jsonCopy({left:null,right:null,synchronized:false,...capture});
   if(quantity==='depth'&&!spatial.calibration)invalid('Metrisk djupn krev kalibrering.');
-  return {id:identity,created:date,left:blob(left),right:blob(right,true),preview:blob(preview,true),recipe:tone,geometry:spatial,capture:timing,result:{depth,width,height,validity,confidence,polarity,quantity,units,normalized:result.normalized===true,model:text(result.model),source:text(result.source),confidenceDefinition:confidence?text(result.confidenceDefinition,'Source confidence in [0,1]; not a calibrated probability'):null}};
+  return {id:identity,created:date,left:blob(left),right:blob(right,true),preview:blob(preview,true),recipe:tone,geometry:spatial,capture:timing,result:{depth,width,height,validity,confidence,polarity,quantity,units,normalized:result.normalized===true,model:text(result.model),source:text(result.source),provenance:jsonCopy(result.provenance??null),confidenceDefinition:confidence?text(result.confidenceDefinition,'Source confidence in [0,1]; not a calibrated probability'):null}};
 }
 
 async function digest(bytes){

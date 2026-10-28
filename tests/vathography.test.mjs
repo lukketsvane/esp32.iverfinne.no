@@ -15,6 +15,29 @@ test('raw model polarity is normalized without changing the prediction',()=>{
   assert.throws(()=>normalizeDepth(raw,{polarity:'inverse'}),/Ugyldig/);
 });
 
+test('stereo normalization preserves missing values and excludes masked values from the range',()=>{
+  const depth=Float32Array.of(4,999,12,NaN),validity=Uint8Array.of(1,0,1,0),original=depth.slice();
+  assert.deepEqual([...normalizeDepth(depth,{validity})],[1,NaN,0,NaN]);
+  assert.deepEqual([...normalizeDepth(depth,{validity,polarity:'far'})],[0,NaN,1,NaN]);
+  assert.deepEqual([...normalizeDepth([5,999,5],{validity:Uint8Array.of(1,0,1)})],[.5,NaN,.5]);
+  assert.deepEqual(depth,original);
+  assert.throws(()=>normalizeDepth(depth,{validity:new Uint8Array(4)}),/gyldige/);
+  assert.throws(()=>normalizeDepth(depth,{validity:Uint8Array.of(1,0)}),/stereomaske/);
+  assert.throws(()=>normalizeDepth(depth,{validity:Uint8Array.of(1,0,2,0)}),/stereomaske/);
+});
+
+test('masked tone rendering leaves holes transparent without interpolating invented planes',()=>{
+  const depth=Float32Array.of(.53,.79,.66),validity=Uint8Array.of(1,0,1);
+  const pixels=toneDepth(depth,3,1,{validity}),scaled=toneDepth(depth,3,1,{validity,outputWidth:5,outputHeight:1});
+  assert.deepEqual([...pixels.filter((_,i)=>i%4===3)],[255,0,255]);
+  assert.deepEqual([...scaled.filter((_,i)=>i%4===3)],[255,0,0,0,255]);
+  assert.deepEqual([...scaled.subarray(4,16)],Array(12).fill(0));
+  assert.deepEqual([...toneDepth([.53,NaN],2,1,{validity:Uint8Array.of(1,1)}).filter((_,i)=>i%4===3)],[255,0]);
+  assert.deepEqual(toneDepth(depth,3,1,{validity:new Uint8Array(3).fill(1),outputWidth:5}),toneDepth(depth,3,1,{outputWidth:5}));
+  assert.throws(()=>toneDepth(depth,3,1,{validity:new Uint8Array(2)}),/stereomaske/);
+  assert.throws(()=>toneDepth(depth,3,1,{validity:Uint8Array.of(1,2,1)}),/stereomaske/);
+});
+
 test('reference curve knots produce the intended grayscale levels',()=>{
   const cases=[
     ['band',[[0,0],[.25,.005],[.42,.035],[.53,.17],[.66,.96],[.79,.17],[.9,.35],[1,.92]]],

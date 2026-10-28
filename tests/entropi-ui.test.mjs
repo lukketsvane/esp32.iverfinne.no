@@ -129,6 +129,32 @@ test('holding and dragging upward chooses each file format on release and suppre
   }
 });
 
+test('stationary hold and small hand movement keep formats open for a subsequent tap',async()=>{
+  for(const drift of [0,6]){
+    const app=harness(),action=gesture(app);await action.down();app.hold();const dialog=app.dialog();
+    await action.move(action.point.clientX+drift,action.point.clientY);await action.up(action.point.clientX+drift,action.point.clientY);await action.trigger.click();
+    assert.equal(app.dialog(),dialog);assert.equal(app.calls.photo.length+app.calls.downloads.length,0);
+    await button(dialog,'TIFF').click();assert.equal(app.calls.downloads.length,1);assert.equal(app.calls.downloads[0].name,'entropi.tif');assert.equal(app.dialog(),null);
+  }
+});
+
+test('a deliberate drag back to the trigger cancels rather than latching the picker',async()=>{
+  const app=harness(),action=gesture(app);await action.down();app.hold();await action.move(action.point.clientX,action.point.clientY-20);await action.move(action.point.clientX,action.point.clientY);await action.up();await action.trigger.click();
+  assert.equal(app.dialog(),null);assert.equal(app.calls.photo.length+app.calls.downloads.length,0);
+});
+
+test('a latched picker closes on an anchor tap, Escape or page cancellation without saving',async()=>{
+  for(const kind of ['anchor','escape','pointercancel','pagehide','resize','hidden']){
+    const app=harness(),action=gesture(app);await action.down();app.hold();await action.up();assert.ok(app.dialog());
+    if(kind==='anchor'){app.advance(900);const icon=app.element('svg');action.trigger.append(icon);await app.document.emit('pointerdown',{...action.point,target:icon});assert.ok(app.dialog());await action.trigger.emit('pointerdown',{...action.point,target:icon});await action.up()}
+    else if(kind==='escape')await action.trigger.emit('keydown',{key:'Escape'});
+    else if(kind==='pointercancel')await app.document.emit('pointercancel',action.point);
+    else if(kind==='pagehide'||kind==='resize')await app.window.emit(kind);
+    else{app.document.hidden=true;await app.document.emit('visibilitychange')}
+    await action.trigger.click();assert.equal(app.dialog(),null,kind);assert.equal(app.calls.photo.length+app.calls.downloads.length,0,kind);
+  }
+});
+
 test('dragging before the hold, releasing outside, cancellation and second touches cannot save',async()=>{
   for(const kind of ['move-before','outside','pointercancel','second-touch','pagehide','hidden']){
     const app=harness(),action=gesture(app);await action.down();

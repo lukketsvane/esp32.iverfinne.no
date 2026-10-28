@@ -19,7 +19,8 @@ math = (shared / "pointcloud/math.mjs").read_text(encoding="utf-8").replace("exp
 primitive = (shared / "pointcloud/primitive.mjs").read_text(encoding="utf-8").replace("export ", "")
 gestures = (shared / "vendor/viewer-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
 alignment = (shared / "pointcloud/stereo-rig.mjs").read_text(encoding="utf-8").replace("export ", "")
-scene = "const createDepthScene = (() => {\n" + math + "\n" + alignment + "\n" + primitive + "\n" + gestures + "\n" + scene + "\nreturn createDepthScene;\n})();"
+stereo = re.sub(r"^import .*?;\s*", "", (shared / "vendor/stereo-depth.mjs").read_text(encoding="utf-8").replace("export ", ""), flags=re.MULTILINE)
+scene = "const createDepthScene = (() => {\n" + math + "\n" + alignment + "\n" + stereo + "\n" + primitive + "\n" + gestures + "\n" + scene + "\nreturn createDepthScene;\n})();"
 studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("export ", "")
 studio += "\n" + (shared / "vendor/photo-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
 printing = (shared / "vendor/print-client.mjs").read_text(encoding="utf-8").replace("export ", "")
@@ -37,12 +38,12 @@ bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replac
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
 bridge = "const { requestPhoneModels, phoneModelsReady } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady };\n})();"
 source = source.replace("__ENTROPI_VIEWFINDER__", palettes + "\n" + renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_PRINT_CLIENT__", printing).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
-marigold = "\n".join((shared / name).read_text(encoding="utf-8").replace("export ", "") for name in ["pointcloud/math.mjs", "vendor/vathography.mjs", "vendor/depth-source.mjs", "vendor/marigold-view.mjs"])
+marigold = "\n".join((shared / name).read_text(encoding="utf-8").replace("export ", "") for name in ["pointcloud/math.mjs", "pointcloud/stereo-rig.mjs", "vendor/stereo-depth.mjs", "vendor/vathography.mjs", "vendor/depth-source.mjs", "vendor/marigold-view.mjs"])
 marigold = re.sub(r"^import .*?;\s*", "", marigold, flags=re.MULTILINE)
 marigold = "const createMarigoldView = (() => {\n" + marigold + "\nreturn createMarigoldView;\n})();"
 source = source.replace("__ENTROPI_MARIGOLD__", marigold)
 documents = []
-for module, names in [("entropi-document", "createEntropiDocument, encodeEntropiDocument, decodeEntropiDocument"), ("entropi-export", "encodeDepthTiff, encodeDepthDng"), ("entropi-ui", "bindExportGesture, pickEntropiDocument")]:
+for module, names in [("stereo-pair", "readStereoPairResponse"), ("entropi-document", "createEntropiDocument, encodeEntropiDocument, decodeEntropiDocument"), ("entropi-export", "encodeDepthTiff, encodeDepthDng"), ("entropi-ui", "bindExportGesture, pickEntropiDocument")]:
     code = (shared / ("vendor/" + module + ".mjs")).read_text(encoding="utf-8").replace("export ", "")
     code = re.sub(r"^import .*?;\s*", "", code, flags=re.MULTILINE)
     documents.append("const { " + names + " } = (() => {\n" + code + "\nreturn { " + names + " };\n})();")

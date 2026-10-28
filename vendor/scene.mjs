@@ -1,5 +1,5 @@
 import { inferenceSize, imageToPointCloud, pointStride, gaussianSplats } from '../pointcloud/math.mjs';
-import { prepareFixedStereo, restoreFixedStereo } from '../pointcloud/stereo-rig.mjs';
+import { runStereoDepth } from './stereo-depth.mjs';
 import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, primitiveDimensions, qualityPointBudget } from '../pointcloud/primitive.mjs';
 import { attachViewerGestures, progressiveIndices } from './viewer-gestures.mjs';
 import { resolveColorScheme, gaussianInk } from './color-schemes.mjs';
@@ -178,34 +178,10 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
 }
 
 async function stereoScene(host,left,right,onProgress,signal,quality){
-  const urls=[],images=[];let pixels;
-  try{
-    for(const blob of [left,right]){
-      const image=new Image(),url=URL.createObjectURL(blob);urls.push(url);image.src=url;await image.decode();signal.throwIfAborted();images.push(image);
-    }
-    const first=images[0];
-    if(!first.naturalWidth||!first.naturalHeight||first.naturalWidth!==images[1].naturalWidth||first.naturalHeight!==images[1].naturalHeight)throw new Error('Kameraa må bruke same fotooppløysing.');
-    const scale=Math.min(1,320/first.naturalWidth,240/first.naturalHeight),width=Math.round(first.naturalWidth*scale),height=Math.round(first.naturalHeight*scale);
-    const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
-    const context=canvas.getContext('2d',{willReadFrequently:true});if(!context)throw new Error('Telefonen kunne ikkje lese bileta.');
-    pixels=images.map(image=>{context.drawImage(image,0,0,width,height);return context.getImageData(0,0,width,height)});canvas.width=canvas.height=1;
-  }finally{urls.forEach(url=>URL.revokeObjectURL(url))}
-  onProgress({phase:'matching'});signal.throwIfAborted();
-  const prepared=prepareFixedStereo(pixels[0],pixels[1]);
-  const prediction=await new Promise((resolve,reject)=>{
-    const worker=new Worker('/pointcloud/stereo-worker.mjs',{type:'module'});let finished=false;
-    const finish=(error,result)=>{if(finished)return;finished=true;clearTimeout(timer);signal.removeEventListener('abort',abort);worker.terminate();if(error)reject(error);else resolve(result)};
-    const abort=()=>finish(signal.reason||new DOMException('Avbrote.','AbortError'));
-    const timer=setTimeout(()=>finish(new Error('Stereoberekninga tok for lang tid.')),30000);
-    signal.addEventListener('abort',abort,{once:true});
-    worker.onmessage=({data})=>{try{if(data.type==='result')finish(null,restoreFixedStereo({depth:new Float32Array(data.depth),valid:new Uint8Array(data.valid),width:data.width,height:data.height},pixels[0].width,pixels[0].height));else if(data.type==='error')finish(new Error(data.message))}catch(error){finish(error)}};
-    worker.onerror=()=>finish(new Error('Telefonen kunne ikkje kombinere kameraa.'));
-    const {left,right,width,height}=prepared;
-    try{worker.postMessage({left:left.buffer,right:right.buffer,width,height},[left.buffer,right.buffer])}catch(error){finish(error)}
-    if(signal.aborted)abort();
-  });
+  const prediction=await runStereoDepth(left,right,{signal,onProgress});
   signal.throwIfAborted();onProgress({phase:'rendering'});
-  const detail=pixels[0],cloud=imageToPointCloud({rgba:detail.data,width:detail.width,height:detail.height,depth:prediction.depth,depthWidth:prediction.width,depthHeight:prediction.height,valid:prediction.valid,stride:pointStride(detail.width,detail.height,qualityPointBudget(quality))});
+  const detail=prediction.pixels,budget=qualityPointBudget(quality),measured=prediction.validity.reduce((sum,value)=>sum+(value===1?1:0),0);
+  const cloud=imageToPointCloud({rgba:detail.data,width:detail.width,height:detail.height,depth:prediction.depth,depthWidth:prediction.width,depthHeight:prediction.height,valid:prediction.validity,stride:measured<=budget?1:pointStride(detail.width,detail.height,budget)});
   return renderScene(host,cloud,gaussianSplats(cloud),signal,detail.data);
 }
 

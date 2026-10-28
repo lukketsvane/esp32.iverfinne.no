@@ -1,7 +1,9 @@
 .mg-view{position:absolute;inset:0;z-index:4;background:#000;overflow:hidden;touch-action:none;isolation:isolate}
 .mg-view[hidden]{display:none!important}
-.mg-view img,.mg-art{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;filter:none;-webkit-user-drag:none;user-select:none;pointer-events:none}
+.mg-view img,.mg-art,.mg-pulse{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;filter:none;-webkit-user-drag:none;user-select:none;pointer-events:none}
 .mg-original{opacity:0}
+.mg-view.peeking .mg-original{opacity:1;clip-path:none}
+.mg-view.peeking .mg-seam{display:none}
 .mg-view.comparing .mg-original{opacity:1;clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}
 .mg-seam{position:absolute;top:0;bottom:0;left:var(--split,50%);border-left:1px solid #ffffffa0;display:none;pointer-events:none}
 .mg-view.comparing .mg-seam{display:block}
@@ -15,3 +17,6 @@
 @media(orientation:landscape) and (max-height:550px){.mg-variants{top:64px;bottom:8px}.mg-compare{bottom:calc(72px + env(safe-area-inset-bottom));right:calc(8px + env(safe-area-inset-right))}}
 
 .mg-view [hidden]{display:none!important}
+
+.mg-pulse{z-index:1}.mg-view.peeking .mg-pulse,.mg-view.comparing .mg-pulse{display:none}
+@media(prefers-reduced-motion:reduce){.mg-pulse{display:none}}

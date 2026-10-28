@@ -108,7 +108,7 @@ test('the canonical start route reuses existing sources with its own offline cac
 
 test('the new depth worker pathname bypasses cached 420px code even when a query version cannot',async()=>{
   const oldPath='/pointcloud/depth-worker.mjs',newPath='/pointcloud/depth-worker-v2.mjs';
-  const legacy=serviceWorker(worker.replaceAll(newPath,oldPath).replace('entropi-app-v48','entropi-app-v38'),async()=>{throw new TypeError('Offline')});
+  const legacy=serviceWorker(worker.replaceAll(newPath,oldPath).replace('entropi-app-v49','entropi-app-v38'),async()=>{throw new TypeError('Offline')});
   await legacy.lifecycle('install');
   const oldCode=(await read(newPath.slice(1))).replaceAll('> 518','> 420');
   legacy.stores.get(legacy.name).set(oldPath,new Response(oldCode));
@@ -132,7 +132,7 @@ test('the fresh print module graph resolves canonical sources and stays availabl
   const destinations={'/print':'/prepare/print.html','/print/':'/prepare/print.html','/print/index.html':'/prepare/print.html','/print/app.mjs':'/prepare/print.mjs','/print/printer.mjs':'/vendor/print/printer.mjs','/print/px10-protocol.mjs':'/vendor/print/px10-protocol.mjs'};
   for(const [path,destination]of Object.entries(destinations)){assert.equal(rewrites.find(route=>route.source===path)?.destination,destination);await stat(new URL(destination.slice(1),root))}
   const html=await read('prepare/print.html'),module=await read('prepare/print.mjs'),printer=await read('vendor/print/printer.mjs');assert.match(html,/src="\/print\/app\.mjs"/);assert.match(module,/from '\/print\/printer\.mjs'/);assert.match(printer,/from '\.\/px10-protocol\.mjs'/);
-  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v48'],[prepare,'/prepare/sw.js','entropi-prepare-v23'],[prepare,'/start/sw.js','entropi-start-v17']]){
+  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v49'],[prepare,'/prepare/sw.js','entropi-prepare-v23'],[prepare,'/start/sw.js','entropi-start-v17']]){
     const app=serviceWorker(source,async()=>{throw new TypeError('Offline')},{scriptPath});await app.lifecycle('install');assert.equal(app.name,name);
     for(const path of printFiles){assert.ok(app.files.includes(path));assert.equal(await(await app.request(path)).text(),'cached:'+path);const file=destinations[path].slice(1);if(path.endsWith('.mjs'))for(const match of(await read(file)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm))assert.ok(app.files.includes(new URL(match[1],origin+path).pathname),path+' -> '+match[1])}
     for(const path of ['/print','/print/index.html'])assert.equal(await(await app.request(path)).text(),'cached:/print/');

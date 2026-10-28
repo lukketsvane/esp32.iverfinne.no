@@ -57,7 +57,7 @@ class Rig:
         raise RuntimeError('Ingen stadfesta kameraparing på ' + self.port)
 
     @staticmethod
-    def read_pair(link, timeout):
+    def read_pair(link, timeout, metadata=None):
         end = time.monotonic() + timeout
         line = b''
         while time.monotonic() < end:
@@ -67,6 +67,18 @@ class Rig:
                 continue
             if b'PAIR_ERROR ' in line:
                 raise RuntimeError(line.decode('ascii', 'replace').strip())
+            if line.startswith(b'PAIR_META '):
+                value = json.loads(line[len(b'PAIR_META '):])
+                if not isinstance(value, dict) or not re.fullmatch('[a-f0-9]{32}', value.get('id', '')) or not all(re.fullmatch('[a-f0-9]{12}', value.get(key, '')) for key in ('left_camera_id', 'right_camera_id')) or value['left_camera_id'] == value['right_camera_id'] or value.get('hardware_synchronized') is not False:
+                    raise ValueError('Ugyldige stereometadata')
+                timing_keys = ('left_capture_us', 'right_capture_us', 'left_capture_duration_us', 'right_capture_duration_us', 'peer_requested_us', 'peer_headers_received_us', 'peer_request_started_us', 'peer_response_ready_us')
+                if value.get('coordinator_camera_id') != value['left_camera_id'] or not all(type(value.get(key)) is int and 0 <= value[key] <= 9007199254740991 for key in timing_keys):
+                    raise ValueError('Ugyldige opptakstider')
+                if metadata is not None:
+                    metadata.clear()
+                    metadata.update(value)
+                line = b''
+                continue
             match = re.search(rb'PAIR_BEGIN (\d+) (\d+)$', line.strip())
             line = b''
             if match:
@@ -105,8 +117,11 @@ class Rig:
                     self.identify_link(link)
                 link.reset_input_buffer()
                 link.write(b'stereo-snap\n')
-                frames, size = self.read_pair(link, self.timeout)
-            record = {'id': uuid.uuid4().hex, 'created': time.time(), 'frames': frames, 'size': size}
+                metadata = {}
+                frames, size = self.read_pair(link, self.timeout, metadata)
+                if metadata and (metadata['left_camera_id'], metadata['right_camera_id']) != self.identities:
+                    raise ValueError('Stereoparet kjem frå feil kamera')
+            record = {'id': uuid.uuid4().hex, 'created': time.time(), 'frames': frames, 'size': size, 'timing': metadata or None}
             self.current = record
             self.history[record['id']] = record
             while len(self.history) > 8:
@@ -183,7 +198,7 @@ class Handler(SimpleHTTPRequestHandler):
                 record = self.server.rig.capture()
                 return self.json({'id': record['id'], 'left': '/api/frame/' + record['id'] + '/left',
                                   'right': '/api/frame/' + record['id'] + '/right', 'captured_at': record['created'],
-                                  'transport': 'usb', 'hardware_synchronized': False})
+                                  'transport': 'usb', 'hardware_synchronized': False, 'timing': record.get('timing')})
             if self.path == '/api/depth':
                 length = int(self.headers.get('Content-Length', 0))
                 if not 0 < length <= 16 * 1024 * 1024 or self.headers.get('Content-Type', '').split(';')[0] not in ('image/jpeg', 'image/png', 'image/webp'):
