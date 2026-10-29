@@ -647,3 +647,17 @@ for(const [name,message] of [['NotFoundError',/^Fann ikkje noko kamera på einin
   assert.match(app.get('status').textContent,message);
   assert.equal(app.get('retry').hidden,false);
 });
+
+test('a full device is reported in Nynorsk when the archive cannot save',async()=>{
+  const store=archiveFixture(),app=harness({archive:store.archive});await photoFromDevice(app);
+  store.failSave=true;app.artViews[0].binding.onChange();await app.tick(400);
+  assert.equal(app.get('print-status').textContent,'Lagringa på eininga er full.');
+});
+
+test('the archive view keeps its own messages but never shows the browser\'s error text',async()=>{
+  for(const [error,text] of [[new DOMException('The transaction was aborted.','UnknownError'),'Arkivet er ikkje tilgjengeleg'],[new TypeError('Failed to fetch'),'Arkivet er ikkje tilgjengeleg'],[new Error('Lokal lagring er ikkje tilgjengeleg.'),'Lokal lagring er ikkje tilgjengeleg.']]){
+    const store=archiveFixture();store.archive.list=async()=>{throw error};
+    const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');await app.tick(0);
+    assert.equal(app.get('phone-vault-status').textContent,text,error.name);
+  }
+});
