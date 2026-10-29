@@ -21,7 +21,7 @@ Opne <http://127.0.0.1:19305> på PC-en. Brua lyttar berre lokalt. Ho tek eit f�
 `POST /api/capture` tek eitt ferskt par og gir to URL-ar med same opptaks-ID. `POST /api/depth` tek JPEG, PNG eller WebP og returnerer little-endian float32 med dimensjonar, polaritet og modellnamn i svarhovuda. Begge originalane blir bevarte i nettlesaren sitt eksisterande fotoarkiv. Serveren held berre dei åtte siste para i minnet.
 
 ```powershell
-python -m unittest discover -s local -p test_bridge.py
+python -m unittest discover -s local -p "test_*.py"
 ```
 
 ## Riggkontroll
@@ -35,3 +35,16 @@ python -m http.server 8000 --bind 127.0.0.1
 <http://127.0.0.1:8000/local/stereo-check.html?pair=/test-results/direct-download-live-after-flash/1>
 
 Paret frå 28.10.2026 kl. 18.59 gav 0 % dekning med profilen og best dekning, 5,6 %, ved 28 px forskyving (om lag 140 px i fotoet).
+
+## Trygg overføring av firmware
+
+`flash.py` overfører berre app-partisjonen til eitt kamera. Først kontrollerer han at porten høyrer til rett kamera ved å samanlikne MAC-adressa med kamera-ID-en for rolla, og tek full backup av heile flashminnet på 4 MB. Deretter kontrollerer han at biletet får plass i app-partisjonen. Med `--write` skriv han appen på 0x10000, kontrollerer med `verify-flash`, les appen tilbake og samanliknar byte for byte, og stadfestar at partisjonstabellen og innstillingane (0x8000–0xE000) er uendra. Feilar noko etter at skrivinga har starta, blir den gamle appen frå backupen skriven tilbake og kontrollert.
+
+Utan `--write` blir berre identitet og backup kontrollerte. Backup og logg hamnar i `device/firmware/backups/`, som Git ignorerer.
+
+```powershell
+python local/flash.py --role primary --port COM13 --image device/build/primary/EntropiCamera.ino.bin
+python local/flash.py --role primary --port COM13 --image device/build/primary/EntropiCamera.ino.bin --write
+```
+
+Byggjet må ha den private riggheaderen for eit para kamera; sjå hovud-README. Verktøyet er testa mot eit simulert kort og har enno ikkje vore køyrt mot kameraa.

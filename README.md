@@ -87,7 +87,7 @@ Modell og WASM har inga utløpstid. Dei blir lagra under SHA-256 i `entropi-dept
 python prepare-models.py
 python device/build-ui.py
 node --test
-python -m unittest discover -s local -p test_bridge.py
+python -m unittest discover -s local -p "test_*.py"
 arduino-cli compile --fqbn esp32:esp32:esp32cam:PartitionScheme=huge_app --build-path device/build device/EntropiCamera
 ```
 
@@ -95,7 +95,7 @@ Kamera 2 treng i tillegg `-DENTROPI_SECONDARY_CAMERA=1`, og USB-kommandoane `ste
 
 ESP32 core **3.3.12**, AI Thinker ESP32-CAM, 4 MB flash, `huge_app`. Ta full backup av eksisterande flash og kontroller rett port før overføring. Backup, genererte headerar, bygg og ferdige firmwarefiler er ignorerte av Git og Vercel.
 
-Automatiske testar dekkjer opptaksflyt, feilhandtering, avbrot, meldingsopphav, djupnegeometri, Gaussian-data, modellintegritet og at lagring gir same svartkvitt, utsnitt eller splatstil som visinga. GitHub Actions køyrer `node --test` og testane for den lokale USB-brua ved push og pull request, og byggjer firmware for primærkameraet, kamera 2 og USB-stereovarianten med ESP32 core 3.3.12. Native C++-testar av JPEG-parseren, stereoprotokollen, utskriftsjobben og utløysarknappen køyrer i Linux-byggjemiljøet; lokalt blir dei eksplisitt hoppa over dersom ein C++-vertskompilator manglar. Ekte modellkøyring og WebGL er kontrollerte i Chromium på PC. Brukaren sitt iPhone-opptak stadfestar søkjar og JPEG-opptak; den nye klargjeringa og 3D utan internett må òg kontrollerast på fysisk iPhone/Safari.
+Automatiske testar dekkjer opptaksflyt, feilhandtering, avbrot, meldingsopphav, djupnegeometri, Gaussian-data, modellintegritet og at lagring gir same svartkvitt, utsnitt eller splatstil som visinga. GitHub Actions køyrer `node --test` og testane for dei lokale verktøya (USB-brua og den trygge firmwareoverføringa) ved push og pull request, og byggjer firmware for primærkameraet, kamera 2 og USB-stereovarianten med ESP32 core 3.3.12. Native C++-testar av JPEG-parseren, stereoprotokollen, utskriftsjobben og utløysarknappen køyrer i Linux-byggjemiljøet; lokalt blir dei eksplisitt hoppa over dersom ein C++-vertskompilator manglar. Ekte modellkøyring og WebGL er kontrollerte i Chromium på PC. Brukaren sitt iPhone-opptak stadfestar søkjar og JPEG-opptak; den nye klargjeringa og 3D utan internett må òg kontrollerast på fysisk iPhone/Safari.
 
 Søkjar og djupneprojeksjon er tilpassa [entropi.iverfinne.no](https://github.com/lukketsvane/entropi.iverfinne.no), commit `4f2aa4ce11349350d4b924e2a876655f0502f65b`. Modellrevisjon, storleik og kontrollsummar ligg i `pointcloud/models/manifest.json`. Modell- og runtime-lisensar følgjer filene. Espressif-lisensen er bevart i firmware.
 
