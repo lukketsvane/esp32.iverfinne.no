@@ -30,6 +30,23 @@ def find_esptool():
     return found[-1]
 
 
+def check_build(image, role, allow_unpaired=False):
+    # arduino-cli writes the flags next to the image; a mismatch here would put the wrong role on the board.
+    options = Path(image).with_name('build.options.json')
+    if not options.exists():
+        raise ValueError('Fann ikkje build.options.json ved biletet; bygg med local/build.py')
+    built = json.loads(options.read_text(encoding='utf-8'))
+    if built.get('fqbn') != 'esp32:esp32:esp32cam:PartitionScheme=huge_app':
+        raise ValueError('Biletet er ikkje bygd for ESP32-CAM med huge_app')
+    flags = re.search(r'compiler\.cpp\.extra_flags=([^,]*)', built.get('customBuildProperties', ''))
+    flags = flags.group(1) if flags else ''
+    if ('-DENTROPI_SECONDARY_CAMERA=1' in flags) != (role == 'secondary'):
+        raise ValueError('Biletet er bygd for ' + ('kamera 2' if role == 'primary' else 'primærkameraet') + '; ingenting er skrive')
+    if '-include' not in flags and not allow_unpaired:
+        raise ValueError('Biletet manglar riggheaderen og vil ikkje para seg; bruk --allow-unpaired om det er meininga')
+    return flags
+
+
 def app_partition_size(table):
     for i in range(0, len(table) - 31, 32):
         magic, kind, _subtype, offset, size, _name, _flags = struct.unpack('<HBBII16sI', table[i:i + 32])
@@ -111,9 +128,11 @@ def main():
     parser.add_argument('--image', type=Path, required=True)
     parser.add_argument('--camera-id', help='overstyr kamera-ID-en for rolla')
     parser.add_argument('--write', action='store_true', help='skriv appen; utan dette blir berre identitet og backup kontrollerte')
+    parser.add_argument('--allow-unpaired', action='store_true')
     parser.add_argument('--esptool', type=Path)
     parser.add_argument('--out', type=Path)
     args = parser.parse_args()
+    check_build(args.image, args.role, args.allow_unpaired)
     root = Path(__file__).resolve().parents[1]
     out = args.out or root / 'device/firmware/backups' / (datetime.now().strftime('%Y%m%d-%H%M%S-') + args.role)
     record = Flasher(args.esptool or find_esptool(), args.port, out).flash(args.image, args.camera_id or CAMERAS[args.role], args.write)

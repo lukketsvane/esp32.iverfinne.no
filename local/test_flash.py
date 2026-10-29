@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from flash import APP_OFFSET, FLASH_SIZE, Flasher, mac_of
+from flash import APP_OFFSET, FLASH_SIZE, Flasher, check_build, mac_of
 
 
 def partition_table(app_size):
@@ -105,6 +105,35 @@ class FlashTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'ikkje eit ESP32-appbilete'):
             self.flasher(board).flash(self.image, 'c0b62c0d5020', write=True)
         self.assertEqual(board.calls, [])
+
+
+class BuildCheckTests(unittest.TestCase):
+    def image(self, flags, fqbn='esp32:esp32:esp32cam:PartitionScheme=huge_app'):
+        folder = Path(tempfile.mkdtemp())
+        properties = ('compiler.cpp.extra_flags=' + flags + ',' if flags is not None else '') + 'build.warn_data_percentage=75'
+        (folder / 'build.options.json').write_text(json.dumps({'fqbn': fqbn, 'customBuildProperties': properties}))
+        return folder / 'EntropiCamera.ino.bin'
+
+    def test_a_paired_build_for_the_right_role_passes(self):
+        self.assertIn('-include', check_build(self.image('-includeC:/rig.h -DENTROPI_USB_STEREO_TEST=1'), 'primary'))
+        check_build(self.image('-includeC:/rig.h -DENTROPI_SECONDARY_CAMERA=1'), 'secondary')
+
+    def test_a_build_for_the_other_camera_is_refused(self):
+        with self.assertRaisesRegex(ValueError, 'bygd for kamera 2'):
+            check_build(self.image('-includeC:/rig.h -DENTROPI_SECONDARY_CAMERA=1'), 'primary')
+        with self.assertRaisesRegex(ValueError, 'bygd for primærkameraet'):
+            check_build(self.image('-includeC:/rig.h -DENTROPI_USB_STEREO_TEST=1'), 'secondary')
+
+    def test_an_unpaired_build_needs_an_explicit_choice(self):
+        with self.assertRaisesRegex(ValueError, 'manglar riggheaderen'):
+            check_build(self.image('-DENTROPI_USB_STEREO_TEST=1'), 'primary')
+        check_build(self.image(None), 'primary', allow_unpaired=True)
+
+    def test_images_without_build_options_or_for_another_board_are_refused(self):
+        with self.assertRaisesRegex(ValueError, 'build.options.json'):
+            check_build(Path(tempfile.mkdtemp()) / 'EntropiCamera.ino.bin', 'primary')
+        with self.assertRaisesRegex(ValueError, 'huge_app'):
+            check_build(self.image('-includeC:/rig.h', fqbn='esp32:esp32:esp32cam'), 'primary')
 
 
 if __name__ == '__main__':

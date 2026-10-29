@@ -40,11 +40,16 @@ Paret frå 28.10.2026 kl. 18.59 gav 0 % dekning med profilen og best dekning, 5,
 
 `flash.py` overfører berre app-partisjonen til eitt kamera. Først kontrollerer han at porten høyrer til rett kamera ved å samanlikne MAC-adressa med kamera-ID-en for rolla, og tek full backup av heile flashminnet på 4 MB. Deretter kontrollerer han at biletet får plass i app-partisjonen. Med `--write` skriv han appen på 0x10000, kontrollerer med `verify-flash`, les appen tilbake og samanliknar byte for byte, og stadfestar at partisjonstabellen og innstillingane (0x8000–0xE000) er uendra. Feilar noko etter at skrivinga har starta, blir den gamle appen frå backupen skriven tilbake og kontrollert.
 
-Utan `--write` blir berre identitet og backup kontrollerte. Backup og logg hamnar i `device/firmware/backups/`, som Git ignorerer.
+Utan `--write` blir berre identitet og backup kontrollerte. Backup og logg hamnar i `device/firmware/backups/`, som Git ignorerer. Før noko rører kortet, les verktøyet `build.options.json` ved biletet og avviser eit bilete bygd for den andre rolla eller utan riggheaderen (med mindre `--allow-unpaired` er gitt).
+
+`build.py` byggjer riktig variant for rolla til `device/build/<rolle>/`. Han brukar den private riggheaderen `test-results/rig-pairing.h` når han finst, eller `--rig-header`, og nektar å byggje eit upara kamera utan `--allow-unpaired`. Primærkameraet får USB-kommandoane for brua som standard; `--no-usb` tek dei bort.
 
 ```powershell
+python local/build.py --role primary
 python local/flash.py --role primary --port COM13 --image device/build/primary/EntropiCamera.ino.bin
 python local/flash.py --role primary --port COM13 --image device/build/primary/EntropiCamera.ino.bin --write
+python local/build.py --role secondary
+python local/flash.py --role secondary --port COM15 --image device/build/secondary/EntropiCamera.ino.bin --write
 ```
 
-Byggjet må ha den private riggheaderen for eit para kamera; sjå hovud-README. Verktøyet er testa mot eit simulert kort og har enno ikkje vore køyrt mot kameraa.
+Verktøya er testa mot eit simulert kort og ein ekte byggjeprosess, men har enno ikkje vore køyrde mot kameraa.
