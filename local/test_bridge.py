@@ -5,7 +5,7 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 from PIL import Image
-from bridge import Rig
+from bridge import FrameError, Rig
 
 
 class Link:
@@ -36,7 +36,10 @@ class SerialLink(Link):
     def write(self, command):
         self.commands.append(command)
         self.rates.append(self.baudrate)
-        self.buffer = io.BytesIO(self.responses.get((self.baudrate, command), self.responses.get(command, b'')))
+        response = self.responses.get((self.baudrate, command), self.responses.get(command, b''))
+        if isinstance(response, list):
+            response = response.pop(0) if len(response) > 1 else response[0]
+        self.buffer = io.BytesIO(response)
 
 
 class PairTests(unittest.TestCase):
@@ -107,6 +110,45 @@ class PairTests(unittest.TestCase):
         self.assertEqual(rig.baudrate, 460800)
         self.assertEqual(link.rates, [460800, 460800])
         self.assertEqual(record['frames'], self.frames)
+
+    def damaged_payload(self):
+        first = self.frames[0]
+        return self.payload.replace(first, first[:100] + b'cam_hal: FB-OVF\r\n' + first[100:])
+
+    def primary_link(self, snaps):
+        return SerialLink({
+            b'rig-check\n': b'Rig: own=c0b62c0d5020 expected_peer=c443180d5020 configured=1 primary=1 peer=http://192.168.4.2\n',
+            b'stereo-snap\n': snaps,
+        })
+
+    def test_text_inside_a_frame_is_a_frame_error(self):
+        with self.assertRaises(FrameError):
+            Rig.read_pair(Link(self.damaged_payload()), 1)
+
+    def test_damaged_frame_is_captured_again_once(self):
+        rig = Rig('COM13')
+        link = self.primary_link([self.damaged_payload(), self.payload])
+        with patch.object(rig, 'connection', return_value=link):
+            record = rig.capture()
+        self.assertEqual(link.commands, [b'rig-check\n', b'stereo-snap\n', b'stereo-snap\n'])
+        self.assertEqual(record['frames'], self.frames)
+
+    def test_second_damaged_frame_is_reported_without_a_third_capture(self):
+        rig = Rig('COM13')
+        link = self.primary_link([self.damaged_payload()])
+        with patch.object(rig, 'connection', return_value=link):
+            with self.assertRaisesRegex(FrameError, 'Ufullstendig JPEG'):
+                rig.capture()
+        self.assertEqual(link.commands, [b'rig-check\n', b'stereo-snap\n', b'stereo-snap\n'])
+        self.assertIsNone(rig.current)
+
+    def test_camera_errors_are_not_retried(self):
+        rig = Rig('COM13')
+        link = self.primary_link(b'PAIR_ERROR PEER_OFFLINE\n')
+        with patch.object(rig, 'connection', return_value=link):
+            with self.assertRaisesRegex(RuntimeError, 'PEER_OFFLINE'):
+                rig.capture()
+        self.assertEqual(link.commands, [b'rig-check\n', b'stereo-snap\n'])
 
     def test_primary_identification_without_connected_peer(self):
         rig = Rig('COM13')

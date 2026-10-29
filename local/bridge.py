@@ -14,6 +14,10 @@ import uuid
 from PIL import Image
 
 
+class FrameError(ValueError):
+    pass
+
+
 class Rig:
     def __init__(self, port, timeout=35):
         self.port = port
@@ -91,18 +95,21 @@ class Rig:
                     while len(frame) < size and time.monotonic() < end:
                         frame.extend(link.read(min(8192, size - len(frame))))
                     if len(frame) != size or not frame.startswith(b'\xff\xd8') or not frame.endswith(b'\xff\xd9'):
-                        raise ValueError('Ufullstendig JPEG frå kameraet')
+                        raise FrameError('Ufullstendig JPEG frå kameraet')
                     frames.append(bytes(frame))
                 trailer = bytearray()
                 while len(trailer) < 9 and time.monotonic() < end:
                     trailer.extend(link.read(9 - len(trailer)))
                 if trailer != b'PAIR_END\n':
-                    raise ValueError('Stereoparet manglar sluttmarkør')
+                    raise FrameError('Stereoparet manglar sluttmarkør')
                 dims = []
                 for frame in frames:
-                    with Image.open(io.BytesIO(frame)) as image:
-                        dims.append(image.size)
-                        image.verify()
+                    try:
+                        with Image.open(io.BytesIO(frame)) as image:
+                            dims.append(image.size)
+                            image.verify()
+                    except (OSError, SyntaxError) as error:
+                        raise FrameError('Skadd JPEG frå kameraet') from error
                 if dims[0] != dims[1]:
                     raise ValueError('Kameraa har ulik oppløysing')
                 return frames, dims[0]
@@ -115,10 +122,16 @@ class Rig:
             with self.connection() as link:
                 if not self.identities:
                     self.identify_link(link)
-                link.reset_input_buffer()
-                link.write(b'stereo-snap\n')
-                metadata = {}
-                frames, size = self.read_pair(link, self.timeout, metadata)
+                for attempt in range(2):
+                    link.reset_input_buffer()
+                    link.write(b'stereo-snap\n')
+                    metadata = {}
+                    try:
+                        frames, size = self.read_pair(link, self.timeout, metadata)
+                        break
+                    except FrameError:
+                        if attempt:
+                            raise
                 if metadata and (metadata['left_camera_id'], metadata['right_camera_id']) != self.identities:
                     raise ValueError('Stereoparet kjem frå feil kamera')
             record = {'id': uuid.uuid4().hex, 'created': time.time(), 'frames': frames, 'size': size, 'timing': metadata or None}
