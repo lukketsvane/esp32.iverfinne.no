@@ -8,7 +8,17 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const rawMessage = error => typeof error?.message === 'string' ? error.message : String(error);
 const isQuota = error => ['RATE_LIMIT', 'RATE_LIMIT_EXCEEDED'].includes(error?.code) || /rate.?limit|too many BLE requests/i.test(rawMessage(error));
-const messageOf = error => isQuota(error) ? RETRY_MESSAGE : rawMessage(error);
+// Web Bluetooth reports in the browser's language; the module's own errors are plain Errors in Nynorsk.
+const BLUETOOTH_MESSAGES = {
+  NetworkError: 'Mista kontakten med skrivaren. Prøv igjen.',
+  NotFoundError: 'Fann ikkje skrivaren. Prøv igjen.',
+  NotAllowedError: 'Nettlesaren gav ikkje tilgang til skrivaren.',
+  SecurityError: 'Nettlesaren gav ikkje tilgang til skrivaren.',
+  NotSupportedError: 'Skrivaren svara ikkje som venta.',
+  AbortError: 'Utskrifta vart avbroten.',
+};
+const messageOf = error => isQuota(error) ? RETRY_MESSAGE
+  : BLUETOOTH_MESSAGES[error?.name] ?? (error?.name === 'Error' && rawMessage(error) ? rawMessage(error) : RETRY_MESSAGE);
 
 async function bounded(promise, milliseconds, message) {
    let timer;

@@ -120,3 +120,10 @@ test('a cached page departure preserves the exact helper session before and duri
 test('a real departure after a cached departure still closes an unfinished helper',async()=>{
   const app=harness(),printing=app.client.print(image());await app.hide(true);assert.equal(app.closed,false);await app.hide(false);assert.equal(await printing,false);assert.equal(app.closed,true);app.client.dispose();
 });
+
+test('a board print failure shows its own message but never the browser\'s network text',async()=>{
+  for(const [error,text] of [[new TypeError('Failed to fetch'),'Kunne ikkje skrive ut.'],[new DOMException('The operation timed out.','TimeoutError'),'Kunne ikkje skrive ut.'],[new Error('Kameraet sender ein annan utskrift.'),'Kameraet sender ein annan utskrift.']]){
+    const devicePrinter={print:async()=>{throw error},dispose(){}},app=harness({devicePrinter});
+    assert.equal(await app.client.print(image()),false);assert.equal(app.reports.at(-1),text,error.name);app.client.dispose();
+  }
+});

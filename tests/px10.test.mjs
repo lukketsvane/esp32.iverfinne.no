@@ -452,3 +452,13 @@ test('thermal cloud conversion preserves white paper, monochrome points and tran
   assert.equal(frames.filter(frame => [0xbf, 0xa2].includes(frame.opcode)).length, 17);
   rgba.fill(0); assert.throws(() => cloudPrintJob({ width: WIDTH, height: 50, data: rgba }), /ingen synlege/);
 });
+
+test('Bluetooth failures reach the UI in Nynorsk while the thrown error keeps its detail', async t => {
+  const fake = fakeBLE({ write: async () => { throw new DOMException('GATT operation failed for unknown reason.', 'NetworkError'); } });
+  const printer = printerFor(fake); t.after(() => printer.dispose()); await printer.choose();
+  const messages = []; printer.addEventListener('status', e => { if (e.detail.message) messages.push(e.detail.message); });
+  await assert.rejects(printer.send('lost', new Uint8Array(20)), /GATT operation failed/);
+  assert.equal(messages[0], 'Mista kontakten med skrivaren. Prøv igjen.');
+  assert.ok(messages.every(message => !/GATT|operation/i.test(message)), messages.join(' | '));
+  assert.equal(printer.lastError, 'Mista kontakten med skrivaren. Prøv igjen.');
+});

@@ -49,7 +49,7 @@ export function createPrintClient({printer,devicePrinter,buildJob,report=()=>{}}
         const poll=setInterval(()=>{if(disposed||!isCurrent()||popup.closed)finish(false)},250);
         pending=()=>finish(false);window.addEventListener('message',messageReceived);
       });
-    }catch(error){directImage=null;if(!disposed&&isCurrent()&&error.name!=='AbortError')feedback(error.message||'Kunne ikkje skrive ut.');return false}
+    }catch(error){directImage=null;if(!disposed&&isCurrent()&&error.name!=='AbortError')feedback(error?.name==='Error'&&error.message?error.message:'Kunne ikkje skrive ut.');return false}
     finally{busy=false}
   }
   return {print,dispose(){if(disposed)return;disposed=true;window.removeEventListener('pagehide',pagehide);pending?.();try{completed?.close()}catch{}completed=null;printer?.dispose();devicePrinter?.dispose()}};
