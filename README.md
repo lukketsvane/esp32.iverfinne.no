@@ -91,7 +91,7 @@ python -m unittest discover -s local -p test_bridge.py
 arduino-cli compile --fqbn esp32:esp32:esp32cam:PartitionScheme=huge_app --build-path device/build device/EntropiCamera
 ```
 
-Kamera 2 treng i tillegg `-DENTROPI_SECONDARY_CAMERA=1`, og USB-kommandoane `stereo-snap` og `camera-photo` finst berre når primærkameraet blir bygd med `-DENTROPI_USB_STEREO_TEST=1`. Begge går i same `compiler.cpp.extra_flags` som den private headeren.
+Kamera 2 treng i tillegg `-DENTROPI_SECONDARY_CAMERA=1`, og USB-kommandoane `stereo-snap`, `camera-photo` og `camera-preview` finst berre når primærkameraet blir bygd med `-DENTROPI_USB_STEREO_TEST=1`. Begge går i same `compiler.cpp.extra_flags` som den private headeren.
 
 ESP32 core **3.3.12**, AI Thinker ESP32-CAM, 4 MB flash, `huge_app`. Ta full backup av eksisterande flash og kontroller rett port før overføring. Backup, genererte headerar, bygg og ferdige firmwarefiler er ignorerte av Git og Vercel.
 

@@ -14,8 +14,8 @@ const body=(source,signature)=>{
   assert.fail('Unterminated '+signature);
 };
 
-for(const [name,prefix] of [['serialStereoPair','PAIR'],['serialCameraPhoto','PHOTO']])test(`${name} keeps other serial output out of its binary frames`,async()=>{
-  const code=body(await read('app_httpd.cpp'),`void ${name}()`);
+for(const [name,prefix,signature] of [['serialStereoPair','PAIR','void serialStereoPair()'],['sendSerialPhoto','PHOTO','static void sendSerialPhoto(PhotoFrame &photo)']])test(`${name} keeps other serial output out of its binary frames`,async()=>{
+  const code=body(await read('app_httpd.cpp'),signature);
   const begin=code.indexOf('beginSerialBinary()'),meta=code.indexOf(`"${prefix}_META `),end=code.indexOf(`"${prefix}_END\\n"`),release=code.indexOf('endSerialBinary()');
   assert.ok(begin>0&&begin<meta,'the line is held before the metadata line');
   assert.ok(end>0&&end<release,'the line is released after the end marker');
@@ -39,4 +39,15 @@ test('a binary frame mutes the ROM printf and restores it afterwards',async()=>{
   assert.match(body(guard,'bool beginSerialBinary()'),/xSemaphoreTake\(serialMutex, pdMS_TO_TICKS\(1000\)\)[\s\S]*Serial\.setDebugOutput\(false\)/);
   assert.match(body(guard,'void endSerialBinary()'),/Serial\.flush\(\);\s*Serial\.setDebugOutput\(true\);\s*xSemaphoreGive\(serialMutex\);/);
   assert.match(body(guard,'bool trySerialText()'),/xSemaphoreTake\(serialMutex, 0\)/);
+});
+
+test('camera-photo and camera-preview share the guarded photo framing in USB test builds only',async()=>{
+  const server=await read('app_httpd.cpp'),sketch=await read('EntropiCamera.ino');
+  for(const name of ['serialCameraPhoto','serialCameraPreview']){
+    const code=body(server,`void ${name}()`);
+    assert.match(code,/sendSerialPhoto\(photo\);/);assert.doesNotMatch(code,/Serial\.write\(/);
+  }
+  assert.match(body(server,'void serialCameraPreview()'),/capturePreview\(photo\)/);
+  const usb=sketch.slice(sketch.indexOf('#if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST\n      else if'));
+  assert.match(usb.slice(0,usb.indexOf('#endif')),/"camera-preview"\)\) serialCameraPreview\(\);/);
 });

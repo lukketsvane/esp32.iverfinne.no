@@ -27,6 +27,8 @@ class Rig:
         self.history = {}
         self.identities = None
         self.baudrate = None
+        self.preview_supported = None
+        self.probe_timeout = 4
 
     def connection(self):
         import serial
@@ -114,6 +116,54 @@ class Rig:
                     raise ValueError('Kameraa har ulik oppløysing')
                 return frames, dims[0]
         raise TimeoutError('Kameraet svarte ikkje med eit stereopar')
+
+    @staticmethod
+    def read_photo(link, timeout):
+        end = time.monotonic() + timeout
+        line = b''
+        while time.monotonic() < end:
+            byte = link.read(1)
+            if byte != b'\n':
+                line = (line + byte)[-4096:]
+                continue
+            if b'PHOTO_ERROR ' in line:
+                raise RuntimeError(line.decode('ascii', 'replace').strip())
+            match = re.search(rb'PHOTO_BEGIN (\d+)$', line.strip())
+            line = b''
+            if match:
+                size = int(match.group(1))
+                if not 4 <= size <= 2 * 1024 * 1024:
+                    raise ValueError('Ugyldig biletstorleik')
+                frame = bytearray()
+                while len(frame) < size and time.monotonic() < end:
+                    frame.extend(link.read(min(8192, size - len(frame))))
+                if len(frame) != size or not frame.startswith(b'\xff\xd8') or not frame.endswith(b'\xff\xd9'):
+                    raise FrameError('Ufullstendig JPEG frå kameraet')
+                trailer = bytearray()
+                while len(trailer) < 10 and time.monotonic() < end:
+                    trailer.extend(link.read(10 - len(trailer)))
+                if trailer != b'PHOTO_END\n':
+                    raise FrameError('Biletet manglar sluttmarkør')
+                return bytes(frame)
+        raise TimeoutError('Kameraet svarte ikkje med eit førehandsbilete')
+
+    def preview(self):
+        # One small primary frame takes about a second over USB; firmware without camera-preview gets the cached pair.
+        if self.preview_supported is not False:
+            with self.lock, self.connection() as link:
+                if not self.identities:
+                    self.identify_link(link)
+                link.reset_input_buffer()
+                link.write(b'camera-preview\n')
+                try:
+                    frame = self.read_photo(link, self.timeout if self.preview_supported else self.probe_timeout)
+                    self.preview_supported = True
+                    return frame
+                except TimeoutError:
+                    if self.preview_supported:
+                        raise
+                    self.preview_supported = False
+        return self.capture(15)['frames'][0]
 
     def capture(self, max_age=0):
         # A USB pair takes seconds; readers of a fresh pair must not queue behind the next one.
@@ -244,7 +294,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if record is None or eye not in ('left', 'right'):
                     return self.json({'error': 'Opptaket er ikkje tilgjengeleg'}, 404)
                 return self.send(record['frames'][eye == 'right'], 'image/jpeg')
-            if path in ('/capture', '/peer/capture', '/preview', '/peer/preview'):
+            if path == '/preview':
+                return self.send(self.server.rig.preview(), 'image/jpeg')
+            if path in ('/capture', '/peer/capture', '/peer/preview'):
                 record = self.server.rig.capture(20)
                 return self.send(record['frames'][path.startswith('/peer/')], 'image/jpeg')
             if path == '/stream':
@@ -253,11 +305,10 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_header('Cache-Control', 'no-store')
                 self.end_headers()
                 while True:
-                    record = self.server.rig.capture(15)
-                    frame = record['frames'][0]
+                    frame = self.server.rig.preview()
                     self.wfile.write(b'--entropi\r\nContent-Type: image/jpeg\r\nContent-Length: ' + str(len(frame)).encode() + b'\r\n\r\n' + frame + b'\r\n')
                     self.wfile.flush()
-                    time.sleep(1)
+                    time.sleep(.3)
             if path == '/':
                 html = (self.server.root / 'device/preview/index.html').read_text(encoding='utf-8')
                 config = '<script>globalThis.__ENTROPI_RIG_BRIDGE=true;globalThis.__ENTROPI_DEPTH_ENDPOINT="/api/depth";</script>'

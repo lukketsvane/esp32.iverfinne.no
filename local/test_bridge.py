@@ -186,6 +186,48 @@ class PairTests(unittest.TestCase):
             rig.status()
         self.assertEqual(link.commands.count(b'stereo-snap\n'), 1)
 
+    def photo_payload(self, frame=None):
+        frame = frame or self.frames[0]
+        return b'noise\nPHOTO_META {}\nPHOTO_BEGIN %d\n' % len(frame) + frame + b'PHOTO_END\n'
+
+    def test_preview_frame_is_read_from_its_framing(self):
+        self.assertEqual(Rig.read_photo(Link(self.photo_payload()), 1), self.frames[0])
+        damaged = self.photo_payload().replace(self.frames[0], self.frames[0][:50] + b'cam_hal: FB-OVF\r\n' + self.frames[0][50:])
+        with self.assertRaises(FrameError):
+            Rig.read_photo(Link(damaged), 1)
+        with self.assertRaisesRegex(RuntimeError, 'PHOTO_ERROR CAPTURE'):
+            Rig.read_photo(Link(b'PHOTO_ERROR CAPTURE\n'), 1)
+
+    def test_live_view_uses_single_preview_frames_when_the_firmware_has_them(self):
+        rig = Rig('COM13')
+        link = self.primary_link(self.payload)
+        link.responses[b'camera-preview\n'] = self.photo_payload()
+        with patch.object(rig, 'connection', return_value=link):
+            self.assertEqual(rig.preview(), self.frames[0])
+            self.assertEqual(rig.preview(), self.frames[0])
+        self.assertEqual(link.commands, [b'rig-check\n', b'camera-preview\n', b'camera-preview\n'])
+        self.assertTrue(rig.preview_supported)
+        self.assertIsNone(rig.current)
+
+    def test_older_firmware_falls_back_to_stereo_pairs_once_and_remembers(self):
+        rig = Rig('COM13')
+        rig.probe_timeout = .05
+        link = self.primary_link(self.payload)
+        with patch.object(rig, 'connection', return_value=link):
+            self.assertEqual(rig.preview(), self.frames[0])
+            self.assertEqual(rig.preview(), self.frames[0])
+        self.assertEqual(link.commands, [b'rig-check\n', b'camera-preview\n', b'stereo-snap\n'])
+        self.assertIs(rig.preview_supported, False)
+
+    def test_a_failed_preview_capture_does_not_disable_previews(self):
+        rig = Rig('COM13')
+        link = self.primary_link(self.payload)
+        link.responses[b'camera-preview\n'] = b'PHOTO_ERROR CAPTURE\n'
+        with patch.object(rig, 'connection', return_value=link):
+            with self.assertRaises(RuntimeError):
+                rig.preview()
+        self.assertIsNone(rig.preview_supported)
+
     def test_primary_identification_without_connected_peer(self):
         rig = Rig('COM13')
         link = SerialLink({b'rig-check\n': b'Rig: own=c0b62c0d5020 expected_peer=c443180d5020 configured=1 primary=1 peer= udp=1\n'})

@@ -24,6 +24,7 @@ void serialPeerRetry();
 #if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
 void serialStereoPair();
 void serialCameraPhoto();
+void serialCameraPreview();
 #endif
 
 void networkCheck() {
@@ -141,6 +142,7 @@ void loop() {
 #if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
       else if (!strcmp(command, "stereo-snap")) serialStereoPair();
       else if (!strcmp(command, "camera-photo")) serialCameraPhoto();
+      else if (!strcmp(command, "camera-preview")) serialCameraPreview();
 #endif
       used = 0;
     } else if (byte != '\r') {

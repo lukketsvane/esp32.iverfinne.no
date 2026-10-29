@@ -468,9 +468,8 @@ static esp_err_t captureHandler(httpd_req_t *request) {
   return result;
 }
 
-static esp_err_t previewHandler(httpd_req_t *request) {
-  if (printerBusy() || !cameraReady || !lockCamera()) return unavailable(request, "Camera is unavailable");
-  PhotoFrame photo;
+static bool capturePreview(PhotoFrame &photo) {
+  if (printerBusy() || !cameraReady || !lockCamera()) return false;
   int64_t cutoff = esp_timer_get_time(), deadline = cutoff + 1500000;
   for (unsigned attempt = 0; attempt < 4 && !photo.data; attempt++) {
     camera_fb_t *frame = waitForFrame(deadline);
@@ -481,7 +480,12 @@ static esp_err_t previewHandler(httpd_req_t *request) {
   }
   previewResult(photo.data != nullptr);
   unlockCamera();
-  if (!photo.data) return unavailable(request, "No fresh preview frame");
+  return photo.data != nullptr;
+}
+
+static esp_err_t previewHandler(httpd_req_t *request) {
+  PhotoFrame photo;
+  if (!capturePreview(photo)) return unavailable(request, printerBusy() || !cameraReady ? "Camera is unavailable" : "No fresh preview frame");
   httpd_resp_set_type(request, "image/jpeg");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   esp_err_t result = httpd_resp_send(request, reinterpret_cast<const char *>(photo.data), photo.length);
@@ -712,12 +716,7 @@ static esp_err_t stereoCaptureHandler(httpd_req_t *request) {
 }
 
 #if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
-void serialCameraPhoto() {
-  PhotoFrame photo;
-  if (printerBusy() || !capturePhoto(photo, photoSize, STEREO_MAX_JPEG)) {
-    Serial.println("PHOTO_ERROR CAPTURE");
-    return;
-  }
+static void sendSerialPhoto(PhotoFrame &photo) {
   if (!beginSerialBinary()) {
     free(photo.data);
     Serial.println("PHOTO_ERROR SERIAL");
@@ -736,6 +735,24 @@ void serialCameraPhoto() {
   Serial.print("PHOTO_END\n");
   endSerialBinary();
   free(photo.data);
+}
+
+void serialCameraPhoto() {
+  PhotoFrame photo;
+  if (printerBusy() || !capturePhoto(photo, photoSize, STEREO_MAX_JPEG)) {
+    Serial.println("PHOTO_ERROR CAPTURE");
+    return;
+  }
+  sendSerialPhoto(photo);
+}
+
+void serialCameraPreview() {
+  PhotoFrame photo;
+  if (!capturePreview(photo)) {
+    Serial.println("PHOTO_ERROR CAPTURE");
+    return;
+  }
+  sendSerialPhoto(photo);
 }
 
 void serialStereoPair() {
