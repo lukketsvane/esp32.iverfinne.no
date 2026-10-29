@@ -639,3 +639,11 @@ test('an open archive blocks the central capture handler and ignores a late list
   await app.get('phone-vault-close').emit('click');listed.resolve([{id:'late',created:0,pending:true,preview:new Blob(['old'],{type:'image/jpeg'})}]);await flush();
   assert.equal(app.get('phone-vault-grid').children.length,0);assert.equal(app.urls.size,0);assert.equal(app.get('studio').inert,false);assert.equal(app.activeElement,app.get('open-gallery'));
 });
+
+for(const [name,message] of [['NotFoundError',/^Fann ikkje noko kamera på eininga\.$/],['OverconstrainedError',/^Fann ikkje noko kamera på eininga\.$/],['NotReadableError',/^Kameraet er i bruk av ein annan app\./],['NotAllowedError',/^Gi kameraet tilgang og prøv igjen\.$/],['SecurityError',/^Gi kameraet tilgang og prøv igjen\.$/],['UnknownError',/^Kameraet kunne ikkje opnast\.$/]])test(`a ${name} from the camera is explained in Nynorsk, never with the browser's own text`,async()=>{
+  const app=harness({media:()=>Promise.reject(Object.assign(new Error('Requested device not found'),{name}))});
+  await app.get('capture-plane').emit('click');await app.tick(0);
+  assert.equal(app.get('studio').className,'studio error');
+  assert.match(app.get('status').textContent,message);
+  assert.equal(app.get('retry').hidden,false);
+});

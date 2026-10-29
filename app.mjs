@@ -65,17 +65,18 @@ function clearScene(){task?.abort();task=null;scene?.dispose();scene=null;$('sce
 function clearPhoto(){clearTimeout(documentTimer);currentDocument=null;photoRight=null;archiveState={id:null,pending:null,suppressed:false};photoReceivedAt=null;artTask?.abort();artTask=null;depthArt.reset();if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=null;photoBlob=null;photoReady=false;photo.removeAttribute('src');$('thumbnail').removeAttribute('src')}
 function progress(update){if(studioControls.image===0||mode==='camera'||capturing)return;const known=Number.isFinite(update.percent);$('progress').classList.toggle('indeterminate',!known);$('progress-bar').style.strokeDasharray=known?Math.max(0,Math.min(100,update.percent))+' 100':'';$('status').textContent=''}
 
+const cameraFailures={InsecureContextError:'Kamera krev ein trygg HTTPS-nettlesar.',NotAllowedError:'Gi kameraet tilgang og prøv igjen.',SecurityError:'Gi kameraet tilgang og prøv igjen.',NotFoundError:'Fann ikkje noko kamera på eininga.',OverconstrainedError:'Fann ikkje noko kamera på eininga.',NotReadableError:'Kameraet er i bruk av ein annan app. Lukk han og prøv igjen.',AbortError:'Kameraet vart avbrote. Prøv igjen.'};
 async function startCamera(){
   if(openingCamera||stream||mode!=='camera'||document.hidden||galleryOpen)return;
   const current=generation,attempt=++cameraGeneration;openingCamera=true;$('studio').classList.add('opening');$('status').textContent='';
   try{
-    if(!navigator.mediaDevices?.getUserMedia)throw new Error('Kamera krev ein trygg HTTPS-nettlesar.');
+    if(!navigator.mediaDevices?.getUserMedia)throw Object.assign(new Error('Insecure context'),{name:'InsecureContextError'});
     const media=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode},width:{ideal:1920},height:{ideal:1080}},audio:false});
     if(attempt!==cameraGeneration||current!==generation||mode!=='camera'||document.hidden){media.getTracks().forEach(track=>track.stop());return}
     stream=media;video.srcObject=media;await video.play();
     if(attempt!==cameraGeneration||current!==generation||mode!=='camera'||document.hidden)return;
     finder.source=video;hadCamera=true;state('camera');
-  }catch(error){if(attempt===cameraGeneration&&current===generation&&mode==='camera'&&!document.hidden){stopCamera();state('error',error.name==='NotAllowedError'?'Gi kameraet tilgang og prøv igjen.':error.message||'Kameraet kunne ikkje opnast.')}}
+  }catch(error){if(attempt===cameraGeneration&&current===generation&&mode==='camera'&&!document.hidden){stopCamera();state('error',cameraFailures[error?.name]??'Kameraet kunne ikkje opnast.')}}
   finally{if(attempt===cameraGeneration){openingCamera=false;$('studio').classList.remove('opening')}}
 }
 
