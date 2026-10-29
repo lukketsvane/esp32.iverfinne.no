@@ -116,6 +116,10 @@ class Rig:
         raise TimeoutError('Kameraet svarte ikkje med eit stereopar')
 
     def capture(self, max_age=0):
+        # A USB pair takes seconds; readers of a fresh pair must not queue behind the next one.
+        record = self.current
+        if record and time.time() - record['created'] < max_age:
+            return record
         with self.lock:
             if self.current and time.time() - self.current['created'] < max_age:
                 return self.current
@@ -142,7 +146,7 @@ class Rig:
             return record
 
     def status(self, side=0):
-        record = self.capture(20)
+        record = self.current or self.capture()
         return {'camera_id': self.identities[side], 'camera_ready': True, 'stream_ready': True,
                 'peer': {'camera_id': self.identities[1-side]}, 'transport': 'usb',
                 'hardware_synchronized': False, 'width': record['size'][0], 'height': record['size'][1]}
@@ -269,6 +273,13 @@ class Handler(SimpleHTTPRequestHandler):
             self.json({'error': str(error)}, 503)
 
 
+def warm_up(rig):
+    try:
+        rig.capture()
+    except Exception as error:
+        print('Første stereopar feila: ' + str(error), flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--serial', required=True)
@@ -282,6 +293,7 @@ def main():
     server.root = Path(__file__).resolve().parents[1]
     server.rig = Rig(args.serial)
     server.rig.identify()
+    threading.Thread(target=warm_up, args=(server.rig,), daemon=True).start()
     server.depth = Depth(args.inference_size)
     print('ENTROPI http://127.0.0.1:' + str(args.port), flush=True)
     server.serve_forever()

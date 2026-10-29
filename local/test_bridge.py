@@ -1,6 +1,8 @@
 import io
 import json
 import itertools
+import threading
+import time
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -149,6 +151,40 @@ class PairTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'PEER_OFFLINE'):
                 rig.capture()
         self.assertEqual(link.commands, [b'rig-check\n', b'stereo-snap\n'])
+
+    def blocked_rig(self, age):
+        rig = Rig('COM13')
+        rig.identities = ('c0b62c0d5020', 'c443180d5020')
+        rig.current = {'id': 'a' * 32, 'created': time.time() - age, 'frames': self.frames, 'size': (32, 24), 'timing': None}
+        rig.lock.acquire()
+        self.addCleanup(rig.lock.release)
+        return rig
+
+    def finishes(self, call):
+        result = []
+        worker = threading.Thread(target=lambda: result.append(call()), daemon=True)
+        worker.start()
+        worker.join(1)
+        self.assertFalse(worker.is_alive(), 'waited for the capture in progress')
+        return result[0]
+
+    def test_fresh_pair_is_served_while_the_next_capture_holds_the_line(self):
+        rig = self.blocked_rig(5)
+        self.assertIs(self.finishes(lambda: rig.capture(20)), rig.current)
+
+    def test_status_reuses_the_latest_pair_of_any_age_without_capturing(self):
+        rig = self.blocked_rig(600)
+        status = self.finishes(lambda: rig.status(1))
+        self.assertEqual((status['camera_id'], status['peer']['camera_id']), ('c443180d5020', 'c0b62c0d5020'))
+        self.assertEqual((status['width'], status['height']), (32, 24))
+
+    def test_status_captures_once_when_no_pair_exists(self):
+        rig = Rig('COM13')
+        link = self.primary_link(self.payload)
+        with patch.object(rig, 'connection', return_value=link):
+            self.assertEqual(rig.status()['width'], 32)
+            rig.status()
+        self.assertEqual(link.commands.count(b'stereo-snap\n'), 1)
 
     def test_primary_identification_without_connected_peer(self):
         rig = Rig('COM13')
