@@ -113,9 +113,9 @@ function gesture(app,settings={}){
   return {trigger,dispose,down:()=>trigger.emit('pointerdown',point),move:(x,y)=>app.document.emit('pointermove',{...point,clientX:x,clientY:y}),up:(x=point.clientX,y=point.clientY)=>app.document.emit('pointerup',{...point,clientX:x,clientY:y}),point};
 }
 
-test('ordinary taps save directly without preparing master data or showing a picker',async()=>{
+test('ordinary taps download TIFF from master data without showing a picker',async()=>{
   const app=harness();let reads=0;const action=gesture(app,{name:'photo.jpg',document:()=>{reads++;return master()}});
-  await action.down();await action.up();await action.trigger.click();assert.equal(app.dialog(),null);assert.equal(reads,0);assert.equal(app.calls.photo.length,1);assert.equal(app.calls.photo[0][1],'photo.png');
+  await action.down();await action.up();await action.trigger.click();assert.equal(app.dialog(),null);assert.equal(reads,1);assert.equal(app.calls.photo.length,0);assert.equal(app.calls.downloads[0].blob,tiff);assert.equal(app.calls.downloads[0].name,'photo.tif');
   const original=harness(),plain=gesture(original,{document:null,imageExtension:'jpg',name:'original.jpg'});await plain.down();original.hold();assert.equal(original.dialog(),null);await plain.up();await plain.trigger.click();assert.equal(original.calls.photo[0][1],'original.jpg');
 });
 
@@ -179,14 +179,14 @@ test('pointer menus preserve trigger focus while keyboard menus explicitly focus
 
 test('stale or hidden pending exports and duplicate taps cannot download or reopen controls',async()=>{
   for(const kind of ['stale','hidden']){
-    const app=harness(),pending=deferred();let current=true,reads=0;const action=gesture(app,{image:()=>{reads++;return pending.promise},isCurrent:()=>current});
+    const app=harness(),pending=deferred();let current=true,reads=0;const action=gesture(app,{document:()=>{reads++;return pending.promise},isCurrent:()=>current});
     const first=action.trigger.click(),second=action.trigger.click();assert.equal(reads,1);
-    if(kind==='stale')current=false;else await app.window.emit('pagehide');pending.resolve(png);await Promise.all([first,second]);assert.equal(app.calls.photo.length,0);assert.equal(app.dialog(),null);
+    if(kind==='stale')current=false;else await app.window.emit('pagehide');pending.resolve(master());await Promise.all([first,second]);assert.equal(app.calls.downloads.length,0);assert.equal(app.calls.photo.length,0);assert.equal(app.dialog(),null);
   }
 });
 
 test('failed direct saves remain quiet, notify the caller and permit retry; disposal removes gestures',async()=>{
-  const app=harness();let fail=true;const errors=[],action=gesture(app,{image:()=>{if(fail)throw new Error('Unavailable');return png},onError:error=>errors.push(error.message)});
+  const app=harness();let fail=true;const errors=[],action=gesture(app,{document:null,image:()=>{if(fail)throw new Error('Unavailable');return png},onError:error=>errors.push(error.message)});
   await action.trigger.click();assert.deepEqual(errors,['Unavailable']);assert.equal(app.dialog(),null);assert.equal(action.trigger.children[0].textContent,'Unavailable');
   fail=false;await action.trigger.click();assert.equal(app.calls.photo.length,1);action.dispose();await action.down();app.hold();await action.trigger.click();assert.equal(app.dialog(),null);assert.equal(app.calls.photo.length,1);
 });

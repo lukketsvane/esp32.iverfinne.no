@@ -75,3 +75,8 @@
 .pwa-bottom #open-gallery{left:12px;bottom:calc(8px + env(safe-area-inset-bottom))}
 .studio .access-control.device-link{top:calc(6px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right))}
 }
+
+/* Keep archive rows intrinsic and scrollable on mobile Safari. */
+.phone-vault-grid{min-height:0;grid-auto-rows:max-content;align-items:start}
+.phone-vault-grid button{position:relative;display:block;width:100%;height:0;min-height:0;padding:75% 0 0;align-self:start}
+.phone-vault-grid button img{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto;object-fit:contain}
