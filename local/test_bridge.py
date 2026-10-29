@@ -228,6 +228,27 @@ class PairTests(unittest.TestCase):
                 rig.preview()
         self.assertIsNone(rig.preview_supported)
 
+    def test_a_status_check_during_warm_up_reuses_that_pair(self):
+        rig = Rig('COM13')
+        rig.identities = ('c0b62c0d5020', 'c443180d5020')
+        opened = Mock(side_effect=AssertionError('captured a second pair'))
+        rig.lock.acquire()
+        result = []
+        with patch.object(rig, 'connection', opened):
+            worker = threading.Thread(target=lambda: result.append(rig.status()), daemon=True)
+            worker.start()
+            time.sleep(.05)
+            rig.current = {'id': 'b' * 32, 'created': time.time(), 'frames': self.frames, 'size': (32, 24), 'timing': None}
+            rig.lock.release()
+            worker.join(1)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result[0]['width'], 32)
+        opened.assert_not_called()
+
+    def test_camera_2_check_never_waits_for_a_new_pair(self):
+        rig = self.blocked_rig(600)
+        self.assertIs(self.finishes(rig.latest), rig.current)
+
     def test_primary_identification_without_connected_peer(self):
         rig = Rig('COM13')
         link = SerialLink({b'rig-check\n': b'Rig: own=c0b62c0d5020 expected_peer=c443180d5020 configured=1 primary=1 peer= udp=1\n'})

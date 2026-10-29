@@ -165,6 +165,10 @@ class Rig:
                     self.preview_supported = False
         return self.capture(15)['frames'][0]
 
+    def latest(self):
+        # Any pair answers identity, size and camera-2 checks; one being captured is waited for, never repeated.
+        return self.capture(float('inf'))
+
     def capture(self, max_age=0):
         # A USB pair takes seconds; readers of a fresh pair must not queue behind the next one.
         record = self.current
@@ -196,7 +200,7 @@ class Rig:
             return record
 
     def status(self, side=0):
-        record = self.current or self.capture()
+        record = self.latest()
         return {'camera_id': self.identities[side], 'camera_ready': True, 'stream_ready': True,
                 'peer': {'camera_id': self.identities[1-side]}, 'transport': 'usb',
                 'hardware_synchronized': False, 'width': record['size'][0], 'height': record['size'][1]}
@@ -296,7 +300,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send(record['frames'][eye == 'right'], 'image/jpeg')
             if path == '/preview':
                 return self.send(self.server.rig.preview(), 'image/jpeg')
-            if path in ('/capture', '/peer/capture', '/peer/preview'):
+            if path == '/peer/preview':
+                return self.send(self.server.rig.latest()['frames'][1], 'image/jpeg')
+            if path in ('/capture', '/peer/capture'):
                 record = self.server.rig.capture(20)
                 return self.send(record['frames'][path.startswith('/peer/')], 'image/jpeg')
             if path == '/stream':
