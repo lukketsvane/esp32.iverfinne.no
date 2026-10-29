@@ -1563,3 +1563,11 @@ test('a working sensor without a stream is not reported as a missing image',asyn
   assert.match(app.get('notice').textContent,/^Kamera 1 har inga førehandsvising\.$/);
   assert.equal(app.get('camera-feedback-title').textContent,'Ingen førehandsvising frå kamera 1');
 });
+
+for(const [own,peer,expected] of [['5c2afca','5c2afca',null],['5c2afca','9d4ad2f',/^Kameraa har ulik firmware \(5c2afca og 9d4ad2f\)\. Oppdater begge/],['5c2afca',undefined,/^Kamera 2 har eldre firmware enn kamera 1\./],[undefined,'5c2afca',/^Kamera 1 har eldre firmware enn kamera 2\./],[undefined,undefined,null]])test(`the connection view compares firmware ${own??'none'} with ${peer??'none'}`,async()=>{
+  const app=await connectedCamera({second:true,status:{...verifiedStatus,firmware:own,peer:{camera_id:'bbbbbbbbbbbb'}},secondStatus:{...verifiedStatus,camera_id:'bbbbbbbbbbbb',firmware:peer}});
+  await app.tick(500);assert.ok(app.requests.some(request=>request.url.startsWith('/peer/preview')));
+  await app.get('connection').emit('click');assert.equal(app.get('onboarding').open,true);
+  const text=app.get('onboarding-feedback').textContent;
+  if(expected)assert.match(text,expected);else assert.equal(text,'');
+});

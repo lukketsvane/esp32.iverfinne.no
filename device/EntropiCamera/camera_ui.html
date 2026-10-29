@@ -82,7 +82,7 @@ finder.source=source;
 let live=null,streamRevision=0,connectionProblem=null,recoveryPending=false;
 const streamUrl=new URL('/stream',location.href);if(globalThis.__ENTROPI_RIG_BRIDGE!==true)streamUrl.port='81';
 let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',parentReady=false,parentPort=null,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,sceneError='',captureAfter=0,captureTask=null,captureFailed=false,printBusy=false,printTimer=0;
-let secondId='',secondEnabled=false,secondTask=null,secondSelected=false,secondAutoMode=false,imageRevision=0,photoPair=null,archiveWarning='';
+let secondId='',secondEnabled=false,secondFirmware=null,secondTask=null,secondSelected=false,secondAutoMode=false,imageRevision=0,photoPair=null,archiveWarning='';
 let photoOriginal=null,artTask=null,artError='',artVisible=false,captureDocument=null,captureArchiveId=null,photoReceivedAt=null,masterSaveTimer=0,captureArchiveSuppressed=false;
 let reviewDown=null,reviewTap=null,photoGestures=null,photoPose={scale:1,x:0,y:0,grain:1,contrast:1};
 const photoView=createPhotoView($('photo'));
@@ -136,7 +136,13 @@ function controls(){
   updateCameraChrome();renderCameraFeedback();
   if(connected&&hasFrame&&!connecting&&!parentReady){parentReady=true;notifyCamera('entropi-camera-ready')}
 }
-function stopSecond(){secondTask?.abort();secondTask=null;secondEnabled=false}
+function stopSecond(){secondTask?.abort();secondTask=null;secondEnabled=false;secondFirmware=null}
+function firmwareNotice(){
+  if(!connected||!secondEnabled||secondFirmware===null)return '';
+  const own=typeof deviceStatus?.firmware==='string'?deviceStatus.firmware:'',peer=secondFirmware;
+  if(own===peer)return '';
+  return (!peer?'Kamera 2 har eldre firmware enn kamera 1.':!own?'Kamera 1 har eldre firmware enn kamera 2.':'Kameraa har ulik firmware ('+own+' og '+peer+').')+' Oppdater begge for sikre stereopar.';
+}
 function disconnectSecond(){stopSecond();if(secondAutoMode&&!busy&&!reviewing())studioControls.setImage(0);controls()}
 function peerId(){const id=deviceStatus?.peer?.camera_id;return typeof deviceStatus?.camera_id==='string'&&typeof id==='string'&&/^[a-f0-9]{12}$/.test(deviceStatus.camera_id)&&/^[a-f0-9]{12}$/.test(id)&&id!==deviceStatus.camera_id?id:''}
 async function connectSecond(){
@@ -148,14 +154,15 @@ async function connectSecond(){
     const status=await request('/peer/status','json',5000,task.signal);task.signal.throwIfAborted();
     if(!validStatus(status)||!status.camera_ready||!status.stream_ready)throw new Error('Kamera 2 er ikkje klart.');
     if(status.camera_id!==expected||peerId()!==expected)throw new Error('Ugyldig kamera 2.');
+    const peerFirmware=typeof status.firmware==='string'?status.firmware:'';
     const blob=await request('/peer/preview?t='+Date.now(),'blob',5000,task.signal);task.signal.throwIfAborted();
     if(blob.type!=='image/jpeg'||!blob.size)throw new Error('Ingen bilete frå kamera 2.');
     const image=new Image();url=URL.createObjectURL(blob);image.src=url;await image.decode();task.signal.throwIfAborted();
     if(!image.naturalWidth||!image.naturalHeight||peerId()!==expected)throw new Error('Ugyldig bilete frå kamera 2.');
     if(secondTask!==task||!connected||busy||printBusy||reviewing()||document.hidden)return;
-    secondEnabled=true;
+    secondEnabled=true;secondFirmware=peerFirmware;
     if(!secondSelected){secondSelected=true;if(!imageRevision&&studioControls.image===0){studioControls.setImage(1);secondAutoMode=true}}
-    if(onboarding.open){if(!needsPhoneModels()&&!phoneWorking)onboarding.close();else renderOnboarding()}
+    if(onboarding.open){if(!needsPhoneModels()&&!phoneWorking&&!firmwareNotice())onboarding.close();else renderOnboarding()}
   }catch{if(!task.signal.aborted&&secondTask===task)disconnectSecond()}
   finally{if(url)URL.revokeObjectURL(url);if(secondTask===task)secondTask=null;controls()}
 }
@@ -243,7 +250,7 @@ function renderOnboarding(){
   $('onboarding-copy').hidden=!$('onboarding-copy').textContent;$('onboarding-progress').hidden=!phoneWorking;onboarding.setAttribute('aria-busy',String(phoneWorking));
   $('onboarding-next').setAttribute('aria-label',modelNeeded?'Fullfør':connected?'Tilbake til kameraet':'Prøv igjen');$('onboarding-next').className=modelNeeded?'quiet':'primary';$('onboarding-next').hidden=phoneWorking;
   $('onboarding-prepare').hidden=!modelNeeded||phoneWorking;$('onboarding-help').hidden=phoneWorking||connected;
-  $('onboarding-feedback').textContent=(modelNeeded?phoneError:'')||(!phoneWorking&&!connecting&&!connected&&deviceStatus&&(!deviceStatus.camera_ready||!deviceStatus.stream_ready)?healthMessage(deviceStatus):'');
+  $('onboarding-feedback').textContent=(modelNeeded?phoneError:'')||(!phoneWorking&&!connecting&&!connected&&deviceStatus&&(!deviceStatus.camera_ready||!deviceStatus.stream_ready)?healthMessage(deviceStatus):'')||firmwareNotice();
   if($('onboarding-feedback').textContent)$('onboarding-copy').hidden=true;
 }
 function showOnboarding(){renderOnboarding();if(!onboarding.open)onboarding.showModal()}
