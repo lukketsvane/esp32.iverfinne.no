@@ -100,6 +100,7 @@ enum class State {QUEUED,SENDING,SENT,FAILED};enum class Phase {IDLE,WRITE};
 struct Record {State state=State::SENDING;size_t bytes=0;const char *message="";};
 struct Cancel {int gattc_if;uint8_t remote_bda[6];};using esp_ble_gattc_cancel_open_params_t=Cancel;
 struct SerialType {template<typename... Args>void printf(const char *,Args...) {}} Serial;
+#define PRINTER_LOG(...) Serial.printf(__VA_ARGS__)
 struct Flow {void reset(){}} flow;
 uint32_t now=0,retireDeadline=0,retireQuiet=0;uint32_t millis(){return now;}int64_t esp_timer_get_time(){return int64_t(now)*1000;}
 bool expired(uint32_t target){return int32_t(now-target)>=0;}int locks=0;void lockJob(){locks++;}void unlockJob(){assert(locks==1);locks--;}

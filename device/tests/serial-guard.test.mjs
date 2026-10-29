@@ -51,3 +51,9 @@ test('camera-photo and camera-preview share the guarded photo framing in USB tes
   const usb=sketch.slice(sketch.indexOf('#if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST\n      else if'));
   assert.match(usb.slice(0,usb.indexOf('#endif')),/"camera-preview"\)\) serialCameraPreview\(\);/);
 });
+
+test('printer diagnostics from the printer task skip their line during a binary frame',async()=>{
+  const printer=await read('px10_printer.cpp');
+  assert.match(printer,/#define PRINTER_LOG\(\.\.\.\) do \{ if \(trySerialText\(\)\) \{ Serial\.printf\(__VA_ARGS__\); endSerialText\(\); \} \} while \(0\)/);
+  assert.equal((printer.match(/Serial\.print/g)||[]).length,1,'only the guarded macro writes to Serial');
+});

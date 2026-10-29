@@ -1,5 +1,6 @@
 #include "px10_printer.h"
 #include "px10_job.h"
+#include "serial_guard.h"
 #include <Arduino.h>
 #include <esp32-hal-alloc-ble-mem.h>
 #include <esp32-hal-bt.h>
@@ -14,6 +15,9 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include <sys/socket.h>
+
+// The printer task logs asynchronously; a line inside a USB stereo frame would corrupt it.
+#define PRINTER_LOG(...) do { if (trySerialText()) { Serial.printf(__VA_ARGS__); endSerialText(); } } while (0)
 
 namespace {
 constexpr char printerName[] = "Luxorp.PX10-DAAF";
@@ -263,7 +267,7 @@ void updateState(State state, const char *message = "") {
   }
   bool diagnostic = checking;
   unlockJob();
-  if (diagnostic) Serial.printf("Printer check: %s %s\n", stateName(state), message);
+  if (diagnostic) PRINTER_LOG("Printer check: %s %s\n", stateName(state), message);
 }
 
 void setPhase(Phase next, uint32_t timeout) {
@@ -318,7 +322,7 @@ void finish(bool success, const char *message = "") {
   free(finished);
   phase = Phase::IDLE;
   pendingLength = 0;
-  if (cleanupDiagnostic) Serial.printf("Printer check: %s; no print data sent; BLE=%u connected=%u internal free=%u largest=%u stack_min_free=%u\n", success ? "ready" : "failed", esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED, connected, static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+  if (cleanupDiagnostic) PRINTER_LOG("Printer check: %s; no print data sent; BLE=%u connected=%u internal free=%u largest=%u stack_min_free=%u\n", success ? "ready" : "failed", esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED, connected, static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
   closeChannel();
   retireDeadline = millis() + 10000;
   retireQuiet = millis() + 100;
@@ -359,7 +363,7 @@ void cleanupBle() {
   active = -1;
   cleaningUp = false;
   unlockJob();
-  Serial.printf("Printer BLE cleanup: %s BLE=%u controller=%u internal free=%u largest=%u stack_min_free=%u\n", good ? "ready" : "restart required", esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED, static_cast<unsigned>(esp_bt_controller_get_status()), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+  PRINTER_LOG("Printer BLE cleanup: %s BLE=%u controller=%u internal free=%u largest=%u stack_min_free=%u\n", good ? "ready" : "restart required", esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED, static_cast<unsigned>(esp_bt_controller_get_status()), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
 }
 
 void searchServices() {
@@ -442,25 +446,25 @@ void scanParameters() {
 }
 
 void initializeBle() {
-  Serial.printf("Printer BLE init: internal free=%u largest=%u\n", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+  PRINTER_LOG("Printer BLE init: internal free=%u largest=%u\n", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
   bool good = btStartMode(BT_MODE_BLE);
   size_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   size_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   constexpr size_t hostStacks = CONFIG_BT_BTC_TASK_STACK_SIZE + CONFIG_BT_BTU_TASK_STACK_SIZE;
   constexpr size_t largestStack = CONFIG_BT_BTC_TASK_STACK_SIZE > CONFIG_BT_BTU_TASK_STACK_SIZE ? CONFIG_BT_BTC_TASK_STACK_SIZE : CONFIG_BT_BTU_TASK_STACK_SIZE;
   good = good && psramFound() && freeInternal >= hostStacks + 8192 && largestInternal >= largestStack + 512;
-  Serial.printf("Printer BLE controller: %s internal=%u largest=%u psram=%u\n", good ? "ready" : "memory guard", static_cast<unsigned>(freeInternal), static_cast<unsigned>(largestInternal), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+  PRINTER_LOG("Printer BLE controller: %s internal=%u largest=%u psram=%u\n", good ? "ready" : "memory guard", static_cast<unsigned>(freeInternal), static_cast<unsigned>(largestInternal), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
   if (good) {
     heap_caps_malloc_extmem_enable(0);
     if (esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_UNINITIALIZED) good = esp_bluedroid_init() == ESP_OK;
     if (good && esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_INITIALIZED) good = esp_bluedroid_enable() == ESP_OK;
     heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
-    Serial.printf("Printer BLE host: %s internal=%u largest=%u psram=%u stack_min_free=%u\n", good ? "ready" : "failed", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    PRINTER_LOG("Printer BLE host: %s internal=%u largest=%u psram=%u stack_min_free=%u\n", good ? "ready" : "failed", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)), static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
   }
   if (good) good = esp_ble_gap_register_callback(gapCallback) == ESP_OK && esp_ble_gattc_register_callback(gattCallback) == ESP_OK && esp_ble_gatt_set_local_mtu(185) == ESP_OK;
   setPhase(Phase::REGISTER, 5000);
   if (good) good = esp_ble_gattc_app_register(appId) == ESP_OK;
-  Serial.printf("Printer BLE init: %s internal free=%u largest=%u\n", good ? "started" : "failed", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+  PRINTER_LOG("Printer BLE init: %s internal free=%u largest=%u\n", good ? "started" : "failed", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
   if (!good) {
     initializationFailed = true;
     finish(false, "Start kameraet på nytt.");
@@ -530,7 +534,7 @@ void handleEvent(const Event &event) {
   } else if (event.kind == Kind::FOUND && phase == Phase::SCANNING) {
     memcpy(peer, event.address, 6);
     peerType = event.addressType;
-    Serial.printf("Printer found: %s %02x:%02x:%02x:%02x:%02x:%02x\n", printerName, peer[0], peer[1], peer[2], peer[3], peer[4], peer[5]);
+    PRINTER_LOG("Printer found: %s %02x:%02x:%02x:%02x:%02x:%02x\n", printerName, peer[0], peer[1], peer[2], peer[3], peer[4], peer[5]);
     setPhase(Phase::STOP_SCAN, 2000);
     if (esp_ble_gap_stop_scanning() != ESP_OK) finish(false, "Nådde ikkje skrivaren. Prøv igjen.");
   } else if (event.kind == Kind::SCAN_STOPPED && phase == Phase::STOP_SCAN) {
@@ -733,7 +737,7 @@ esp_err_t reject(httpd_req_t *request, const char *status, const char *message, 
 void startPrinterBridge() {
   jobMutex = xSemaphoreCreateMutex();
   snprintf(bootId, sizeof(bootId), "%08lx%08lx", static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
-  if (!jobMutex) Serial.println("Printer bridge: could not allocate mutex");
+  if (!jobMutex) PRINTER_LOG("%s\n", "Printer bridge: could not allocate mutex");
 }
 
 bool printerBusy() {
@@ -745,13 +749,13 @@ bool printerBusy() {
 }
 
 void requestPrinterCheck() {
-  if (!jobMutex) { Serial.println("Printer check: unavailable"); return; }
+  if (!jobMutex) { PRINTER_LOG("%s\n", "Printer check: unavailable"); return; }
   lockJob();
   bool busy = uploading || jobData || checking || checkPending || cleaningUp;
   bool available = !busy && ensureWorker();
   if (available) checkPending = true;
   unlockJob();
-  Serial.println(available ? "Printer check: queued; read-only" : busy ? "Printer check: busy" : "Printer check: not enough memory");
+  PRINTER_LOG("%s\n", available ? "Printer check: queued; read-only" : busy ? "Printer check: busy" : "Printer check: not enough memory");
 }
 
 bool printerCameraCheckRequested(int64_t &cutoff) {
