@@ -25,6 +25,12 @@
 #include "camera_ui.h"
 #include "camera_assets.h"
 #include "board_config.h"
+#if __has_include("build_info.h")
+#include "build_info.h"
+#endif
+#ifndef ENTROPI_FIRMWARE_VERSION
+#define ENTROPI_FIRMWARE_VERSION "unknown"
+#endif
 #include "capture_button.h"
 #include "jpeg_frame.h"
 #include "stereo_protocol.h"
@@ -295,6 +301,7 @@ static String cameraStatusJson() {
   bool ready = cameraReady && !recovering && !recoveryRequested;
   String json = "{\"camera_ready\":" + String(ready ? "true" : "false");
   json += ",\"camera_id\":" + quoted(cameraId);
+  json += ",\"firmware\":" + quoted(ENTROPI_FIRMWARE_VERSION);
   json += ",\"stream_ready\":" + String(streamHttpd && ready ? "true" : "false");
   json += ",\"stream_active\":" + String(streams ? "true" : "false");
   json += ",\"stream_frames\":" + String(static_cast<unsigned long>(frames));
@@ -918,6 +925,7 @@ static void deviceWorker(void *) {
 }
 
 void startCameraServer() {
+  Serial.printf("Entropi firmware %s\n", ENTROPI_FIRMWARE_VERSION);
   startPrinterBridge();
   cameraMutex = xSemaphoreCreateMutex();
   stereoMutex = xSemaphoreCreateMutex();

@@ -7,4 +7,5 @@ device/firmware/
 device/compile.log
 device/EntropiCamera/camera_ui.h
 device/EntropiCamera/camera_assets.h
+device/EntropiCamera/build_info.h
 __pycache__/

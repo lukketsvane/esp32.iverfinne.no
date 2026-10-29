@@ -1,5 +1,6 @@
 import gzip
 import re
+import subprocess
 from urllib.parse import quote
 from pathlib import Path
 
@@ -71,4 +72,15 @@ headers.append("const CameraAsset cameraAssets[] = {\n" + ",\n".join(entries) + 
 preview = root / "preview"
 preview.mkdir(exist_ok=True)
 (preview / "index.html").write_text(source, encoding="utf-8", newline="\n")
-print(f"Camera UI: {len(payload)} gzip bytes; {len(entries)} local assets")
+
+def firmware_version():
+    try:
+        described = subprocess.run(["git", "describe", "--always", "--dirty", "--abbrev=7"], cwd=shared, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    version = described.stdout.strip()
+    return version if described.returncode == 0 and re.fullmatch(r"[0-9A-Za-z._-]{1,40}", version) else "unknown"
+
+version = firmware_version()
+(sketch / "build_info.h").write_text(f'#pragma once\n\n#define ENTROPI_FIRMWARE_VERSION "{version}"\n', encoding="utf-8", newline="\n")
+print(f"Camera UI: {len(payload)} gzip bytes; {len(entries)} local assets; firmware {version}")
