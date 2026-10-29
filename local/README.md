@@ -36,6 +36,19 @@ python -m http.server 8000 --bind 127.0.0.1
 
 Paret frå 28.10.2026 kl. 18.59 gav 0 % dekning med profilen og best dekning, 5,6 %, ved 28 px forskyving (om lag 140 px i fotoet).
 
+## Ny måling av riggprofilen
+
+`fit_rig.py` måler profilen på nytt etter at kameraa er flytta eller sette saman på nytt. Han finn SIFT-samsvar i kvart par, fjernar samsvar som bryt epipolargeometrien, og tilpassar éi radfunksjon per kamera slik at samsvarande punkt hamnar på same rad. Ein arbeidsrad dekkjer aldri mindre enn ein sensorpiksel midt i biletet. Til slutt køyrer han appen sin eigen matching med den gamle og den nye profilen og viser dekninga.
+
+Riggen må stå i ro under opptaka. Rett han mot eit lyst, stilleståande motiv med mykje detalj over heile biletet, gjerne i ulike avstandar. Med `--serial` tek verktøyet nye par via primærkameraet og lagrar dei i `test-results/rig-fit-<tid>/`. Utan `--write` blir berre målinga vist. Med `--write` blir profilen skriven inn i `pointcloud/stereo-rig.mjs`, men berre når 95 % av radavvika er under 2 px.
+
+```powershell
+python local/fit_rig.py --serial COM13 --count 6
+python local/fit_rig.py test-results/rig-fit-<tid>/1 test-results/rig-fit-<tid>/2 --write
+```
+
+Verktøyet treng NumPy, OpenCV og SciPy i tillegg til PySerial og Pillow for opptak. Det 28.10-paret frå 18.59 gav 0,18 px median radavvik og 8,7 % dekning ved profilen (forskyving 0) med ein profil målt frå det same paret. Eitt par i dempa lys dekkjer berre ein del av biletet, så ei verkeleg måling bør bruke fleire par.
+
 ## Trygg overføring av firmware
 
 `flash.py` overfører berre app-partisjonen til eitt kamera. Først kontrollerer han at porten høyrer til rett kamera ved å samanlikne MAC-adressa med kamera-ID-en for rolla, og tek full backup av heile flashminnet på 4 MB. Deretter kontrollerer han at biletet får plass i app-partisjonen. Med `--write` skriv han appen på 0x10000, kontrollerer med `verify-flash`, les appen tilbake og samanliknar byte for byte, og stadfestar at partisjonstabellen og innstillingane (0x8000–0xE000) er uendra. Feilar noko etter at skrivinga har starta, blir den gamle appen frå backupen skriven tilbake og kontrollert.
