@@ -23,3 +23,15 @@ Opne <http://127.0.0.1:19305> på PC-en. Brua lyttar berre lokalt. Ho tek eit f�
 ```powershell
 python -m unittest discover -s local -p test_bridge.py
 ```
+
+## Riggkontroll
+
+`stereo-check.html` måler kor godt stereopar passar den faste riggprofilen, med same kode og arbeidsstorleik som appen. Han viser dekninga med profilen og kva radforskyving innan ±40 px som gir best dekning. Appen sjølv forskyv aldri rader; verktøyet viser berre om kameraa har flytta seg i festet og profilen må målast på nytt. Start ein lokal server frå rotmappa og opne sida med eitt eller fleire par, der `sti/1` tyder `sti/1-left.jpg` og `sti/1-right.jpg`:
+
+```powershell
+python -m http.server 8000 --bind 127.0.0.1
+```
+
+<http://127.0.0.1:8000/local/stereo-check.html?pair=/test-results/direct-download-live-after-flash/1>
+
+Paret frå 28.10.2026 kl. 18.59 gav 0 % dekning med profilen og best dekning, 5,6 %, ved 28 px forskyving (om lag 140 px i fotoet).

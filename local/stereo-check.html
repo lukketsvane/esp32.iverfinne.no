@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="nn">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Riggkontroll</title>
+<style>
+body{margin:0;padding:16px;background:#0b0b0b;color:#ddd;font:14px/1.5 system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;max-width:900px}th,td{padding:6px 10px;border-bottom:1px solid #2a2a2a;text-align:left}th{color:#999;font-weight:500}
+td.number{font-variant-numeric:tabular-nums}p{max-width:70ch;color:#aaa}
+</style>
+<h1>Riggkontroll</h1>
+<p>Måler kor godt stereopar passar den faste riggprofilen. Dekning er delen av arbeidsbiletet med sikre samsvar; appen avviser par under 5 %. Ei forskyving som gir mykje betre dekning enn profilen, tyder på at kameraa har flytta seg i festet.</p>
+<table><thead><tr><th>Par</th><th>Dekning med profilen</th><th>Beste forskyving</th><th>Dekning der</th></tr></thead><tbody id="rows"></tbody></table>
+<script type="module">
+import { checkFixedPair } from './stereo-check.mjs';
+
+async function pixels(path) {
+  const image = new Image(); image.src = path; await image.decode();
+  const scale = Math.min(1, 320 / image.naturalWidth, 240 / image.naturalHeight);
+  const width = Math.round(image.naturalWidth * scale), height = Math.round(image.naturalHeight * scale);
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true }); context.drawImage(image, 0, 0, width, height);
+  return { pixels: context.getImageData(0, 0, width, height), photoWidth: image.naturalWidth };
+}
+const percent = value => (value * 100).toFixed(1) + ' %';
+const pairs = new URLSearchParams(location.search).getAll('pair');
+const rows = document.getElementById('rows');
+if (!pairs.length) rows.innerHTML = '<tr><td colspan="4">Legg til <code>?pair=/sti/til/1</code> for <code>1-left.jpg</code> og <code>1-right.jpg</code>.</td></tr>';
+const report = window.rigReport = [];
+for (const base of pairs) {
+  const row = rows.insertRow(), cells = [0, 1, 2, 3].map(() => row.insertCell());
+  cells[0].textContent = base;
+  try {
+    const [left, right] = await Promise.all([pixels(base + '-left.jpg'), pixels(base + '-right.jpg')]);
+    const result = checkFixedPair(left.pixels, right.pixels);
+    const photoPixels = result.best ? Math.round(result.best.offset * left.photoWidth / result.height) : null;
+    cells[1].textContent = percent(result.atProfile);
+    cells[2].textContent = result.best ? result.best.offset + ' px (≈ ' + photoPixels + ' px i fotoet)' : 'Ingen sikre samsvar innan ±40 px';
+    cells[3].textContent = percent(result.best?.coverage ?? 0);
+    cells.slice(1).forEach(cell => cell.className = 'number');
+    report.push({ base, ...result, photoPixels });
+  } catch (error) {
+    cells[1].colSpan = 3; cells[1].textContent = error.message; report.push({ base, error: error.message });
+  }
+}
+window.rigDone = true;
+</script>
+</html>
