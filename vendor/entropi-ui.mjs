@@ -1,5 +1,6 @@
 import { encodeEntropiDocument, decodeEntropiDocument } from './entropi-document.mjs';
-import { encodeDepthTiff, encodeDepthDng } from './entropi-export.mjs';
+import { encodeDepthDng } from './entropi-export.mjs';
+import { encodeRenderedTiff } from './entropi-rendered-export.mjs';
 import { downloadFile, savePhoto } from './photo.mjs';
 
 export async function saveEntropiFile(blob,name,isCurrent=()=>true){
@@ -12,7 +13,7 @@ const exportStatusStyle='position:absolute;width:1px;height:1px;overflow:hidden;
 async function prepareExport({image,document:master,name='entropi',imageExtension='png'},extension){
   let blob;
   if(extension==='png')blob=await image();
-  else{const value=await master();blob=extension==='entropi'?await encodeEntropiDocument(value):extension==='tif'?encodeDepthTiff(value.result):encodeDepthDng(value.result)}
+  else{const value=await master();blob=extension==='entropi'?await encodeEntropiDocument(value):extension==='tif'?await encodeRenderedTiff(value):encodeDepthDng(value.result)}
   return {blob,name:name.replace(/\.[^.]+$/,'')+'.'+(extension==='png'?imageExtension:extension),image:extension==='png'};
 }
 
@@ -106,7 +107,7 @@ export function bindExportGesture(button,getOptions){
     event.stopPropagation();if(Date.now()<suppressUntil){event.preventDefault();return}if(busy||button.disabled)return;
     const value=settings();if(!value||value.isCurrent?.()===false)return;busy=true;const ticket=generation,current=()=>ticket===generation&&value.isCurrent?.()!==false;
     button.setAttribute('aria-busy','true');
-    try{const file=await prepareExport(value,value.document?'tif':'png');await handOffExport(file,current)}
+    try{const file=await prepareExport(value,value.document&&value.defaultFormat!=='png'?'tif':'png');await handOffExport(file,current)}
     catch(error){if(current()){if(!status){status=document.createElement('span');status.setAttribute('role','status');status.style.cssText=exportStatusStyle;button.append(status)}status.textContent=error.message||'Eksporten feila.';value.onError?.(error)}}
     finally{busy=false;button.setAttribute('aria-busy','false')}
   };

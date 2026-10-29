@@ -661,3 +661,46 @@ test('the archive view keeps its own messages but never shows the browser\'s err
     assert.equal(app.get('phone-vault-status').textContent,text,error.name);
   }
 });
+
+for(const outcome of ['resolve','reject'])test(`a previous gallery session cannot ${outcome} over the same reopened photo`,async()=>{
+  const pending=deferred(),store=archiveFixture(),old=new Blob(['old'],{type:'image/png'}),fresh=new Blob(['fresh'],{type:'image/png'});
+  const saved=await store.archive.save(old),previous={...store.records.get(saved.id)};let calls=0;
+  store.archive.get=async id=>++calls===1?pending.promise:store.records.get(id);
+  const app=harness({archive:store.archive});
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  await app.get('phone-vault-close').emit('click');store.records.get(saved.id).preview=fresh;
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  const currentUrl=app.get('phone-vault-image').src,currentFocus=app.activeElement,urlCount=app.urls.size;
+  if(outcome==='resolve')pending.resolve(previous);else pending.reject(new Error('Old read failed'));
+  await flush();
+  assert.equal(app.get('phone-vault-image').src,currentUrl);assert.equal(app.urls.get(currentUrl),fresh);
+  assert.equal(app.urls.size,urlCount);assert.equal(app.get('phone-vault-status').textContent,'');assert.equal(app.activeElement,currentFocus);
+  await app.get('phone-vault-save').emit('click');assert.equal(app.saves.at(-1).blob,fresh);
+});
+
+test('a failed earlier gallery selection cannot overwrite the current photo status',async()=>{
+  const pending=deferred(),store=archiveFixture(),first=await store.archive.save(new Blob(['first'],{type:'image/png'})),second=await store.archive.save(new Blob(['second'],{type:'image/png'}));
+  store.archive.get=async id=>id===first.id?pending.promise:store.records.get(id);
+  const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');
+  await app.get('phone-vault-grid').children[0].emit('click');await app.get('phone-vault-grid').children[1].emit('click');
+  pending.reject(new Error('Old read failed'));await flush();
+  assert.equal(app.get('phone-vault-status').textContent,'');assert.equal(app.urls.get(app.get('phone-vault-image').src),store.records.get(second.id).preview);
+});
+
+test('gallery export and its errors stay stale after closing and reopening the same image',async()=>{
+  const store=archiveFixture(),blob=new Blob(['photo'],{type:'image/png'});await store.archive.save(blob);
+  const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  await app.get('phone-vault-save').emit('click');const old=app.saves.at(-1).options;assert.equal(old.isCurrent(),true);
+  await app.get('phone-vault-close').emit('click');await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  assert.equal(old.isCurrent(),false);old.onError(new Error('Stale export error'));assert.equal(app.get('phone-vault-status').textContent,'');
+  await app.get('phone-vault-save').emit('click');assert.equal(app.saves.at(-1).options.isCurrent(),true);
+});
+
+for(const outcome of ['resolve','reject'])test(`a delayed edit ${outcome} cannot replace a reopened gallery session`,async()=>{
+  const pending=deferred(),store=archiveFixture(),saved=await store.archive.save(new Blob(['original'],{type:'image/jpeg'}),null,null),record=store.records.get(saved.id),read=store.archive.get;
+  const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  store.archive.get=()=>pending.promise;await app.get('phone-vault-edit').emit('click');
+  await app.get('phone-vault-close').emit('click');store.archive.get=read;await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  if(outcome==='resolve')pending.resolve(record);else pending.reject(new Error('Stale edit error'));await flush();
+  assert.equal(app.get('phone-vault').hidden,false);assert.equal(app.artCalls.length,0);assert.equal(app.get('print-status').textContent,'');
+});

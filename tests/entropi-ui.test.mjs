@@ -33,7 +33,7 @@ function harness({photoSave=async()=>{},decode=async()=>({restored:true}),share=
   const context=vm.createContext({document,Blob,File,TextEncoder,DOMException,Date:{now:()=>now},innerWidth:390,innerHeight:844,isSecureContext:secure,addEventListener:window.addEventListener.bind(window),removeEventListener:window.removeEventListener.bind(window),navigator:{canShare:()=>!!share,share:async payload=>{calls.shares.push(payload);return await share(payload)}},
     URL:{createObjectURL:blob=>{const url='blob:'+urls.size;urls.set(url,blob);return url},revokeObjectURL:url=>calls.revoked.push(url)},setTimeout:(handler,time)=>{calls.timers.push({handler,time,active:true});return calls.timers.length-1},clearTimeout:id=>{if(calls.timers[id])calls.timers[id].active=false},
     encodeEntropiDocument:async document=>{calls.encode.push(document);return masterBlob},decodeEntropiDocument:async file=>{calls.decode.push(file);return await decode(file)},
-    encodeDepthTiff:result=>{calls.tiff.push(result);return tiff},encodeDepthDng:result=>{calls.dng.push(result);return dng},
+    encodeRenderedTiff:document=>{calls.tiff.push(document);return tiff},encodeDepthDng:result=>{calls.dng.push(result);return dng},
     savePhoto:async(...args)=>{calls.photo.push(args);return await photoSave(...args)}
   });
   vm.runInContext(photoSource,context);vm.runInContext(source,context);
@@ -51,12 +51,12 @@ test('format chooser stays quiet until selection and PNG uses the existing photo
   await button(dialog,'PNG').click();assert.equal(images,1);assert.equal(documents,0);assert.equal(app.calls.photo[0][0],png);assert.equal(app.calls.photo[0][1],'capture.png');assert.equal(app.calls.downloads.length,0);assert.equal(app.dialog(),null);
 });
 
-test('master export preserves the document and TIFF/DNG use raw predictions without rendering PNG',async()=>{
+test('master export preserves the document, TIFF receives its recipe and DNG receives numerical depth',async()=>{
   for(const [label,blob,extension]of [['.entropi',masterBlob,'entropi'],['TIFF',tiff,'tif'],['DNG',dng,'dng']]){
     const app=harness(),document=master(),values=document.result.depth.slice();let renders=0;
     app.api.showExportOptions({name:'capture.png',image:()=>{renders++;return png},document:()=>document});
     await button(app.dialog(),label).click();assert.equal(renders,0);assert.deepEqual(document.result.depth,values);assert.equal(document.id,'preserved');assert.equal(app.calls.downloads[0].blob,blob);assert.equal(app.calls.downloads[0].name,'capture.'+extension);
-    if(label==='.entropi')assert.equal(app.calls.encode[0],document);else assert.equal(app.calls[label==='TIFF'?'tiff':'dng'][0],document.result);
+    if(label==='.entropi')assert.equal(app.calls.encode[0],document);else assert.equal(app.calls[label==='TIFF'?'tiff':'dng'][0],label==='TIFF'?document:document.result);
   }
 });
 
@@ -189,4 +189,11 @@ test('failed direct saves remain quiet, notify the caller and permit retry; disp
   const app=harness();let fail=true;const errors=[],action=gesture(app,{document:null,image:()=>{if(fail)throw new Error('Unavailable');return png},onError:error=>errors.push(error.message)});
   await action.trigger.click();assert.deepEqual(errors,['Unavailable']);assert.equal(app.dialog(),null);assert.equal(action.trigger.children[0].textContent,'Unavailable');
   fail=false;await action.trigger.click();assert.equal(app.calls.photo.length,1);action.dispose();await action.down();app.hold();await action.trigger.click();assert.equal(app.dialog(),null);assert.equal(app.calls.photo.length,1);
+});
+
+
+test('independent archive previews default to the displayed image while retaining master export',async()=>{
+  const app=harness(),document=master(),action=gesture(app,{image:()=>png,document:()=>document,defaultFormat:'png'});
+  await action.trigger.click();assert.equal(app.calls.photo[0][0],png);assert.equal(app.calls.tiff.length,0);
+  await action.down();app.hold();await button(app.dialog(),'TIFF').click();assert.equal(app.calls.tiff[0],document);assert.equal(app.calls.downloads[0].blob,tiff);
 });

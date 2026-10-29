@@ -159,3 +159,44 @@ test('pending captures from an older archive acquire a recovery thumbnail withou
   assert.equal(listed.length,1);assert.equal(listed[0].pending,true);assert.equal(await listed[0].preview.text(),'thumbnail:legacy left');
   assert.equal(record.preview,null);assert.equal(await record.left.text(),'legacy left');assert.equal(await record.right.text(),'legacy right');assert.equal(app.commits.length,commits);
 });
+
+test('preview provenance follows master and independent preview transitions in photo and index records',async()=>{
+  const app=harness(),capture=await app.archive.save(photo('original')),document=master();
+  const check=async expected=>{
+    assert.equal((await app.archive.get(capture.id)).previewMatchesDocument,expected);
+    assert.equal((await app.archive.list())[0].previewMatchesDocument,expected);
+  };
+  assert.equal(capture.previewMatchesDocument,false);await check(false);
+  assert.equal((await app.archive.saveDocument(document,capture.id)).previewMatchesDocument,true);await check(true);
+  assert.equal((await app.archive.savePreview(capture.id,photo('independent rendering'))).previewMatchesDocument,false);await check(false);
+  const retained=(await app.archive.get(capture.id)).document;
+  assert.equal(await retained.preview.text(),'rendered master');assert.deepEqual(retained.result.depth,document.result.depth);
+  assert.equal((await app.archive.saveDocument(document,capture.id)).previewMatchesDocument,true);await check(true);
+});
+
+test('legacy previews default conservatively without modifying stored records',async()=>{
+  for(const variant of ['independent','same bytes','shared','missing','explicit false']){
+    const app=harness(),document=master();await app.archive.saveDocument(document);
+    const photos=app.stores.get('photos'),index=app.stores.get('index'),record=photos.get(document.id),info=index.get(document.id);
+    delete record.previewMatchesDocument;delete info.previewMatchesDocument;
+    if(variant==='independent')record.preview=photo('other rendering');
+    if(variant==='same bytes')record.preview=photo('rendered master');
+    if(variant==='shared'||variant==='explicit false')record.preview=record.document.preview;
+    if(variant==='missing')delete record.preview;
+    if(variant==='explicit false')record.previewMatchesDocument=false;
+    const commits=app.commits.length,loaded=await app.archive.get(document.id),listed=(await app.archive.list())[0];
+    assert.equal(loaded.previewMatchesDocument,variant==='shared'||variant==='missing',variant);
+    assert.equal(listed.previewMatchesDocument,false,variant);
+    assert.equal(await loaded.document.preview.text(),'rendered master');
+    assert.equal(app.commits.length,commits);assert.equal(index.get(document.id).previewMatchesDocument,undefined);
+    assert.equal(photos.get(document.id).previewMatchesDocument,variant==='explicit false'?false:undefined);
+  }
+});
+
+for(const kind of ['async','sync'])test(`${kind} failed preview replacement preserves matching-master provenance`,async()=>{
+  const app=harness(),document=master();await app.archive.saveDocument(document);
+  app.fail('index',kind);await assert.rejects(app.archive.savePreview(document.id,photo('replacement')),error=>error.name==='QuotaExceededError');await app.flush();
+  const record=await app.archive.get(document.id),listed=(await app.archive.list())[0];
+  assert.equal(record.previewMatchesDocument,true);assert.equal(listed.previewMatchesDocument,true);
+  assert.equal(await record.preview.text(),'rendered master');assert.equal(await listed.preview.text(),'thumbnail:rendered master');
+});

@@ -70,7 +70,7 @@ async function openArchivedCapture(record,id=null){
   finally{if(captureTask===task){captureTask=null;busy=false;controls();resumeStream()}}
 }
 $('archive-import').addEventListener('click',async()=>{try{const master=await pickEntropiDocument();if(master)await openEntropiMaster(master)}catch(error){$('archive-notice').textContent=error.message}});
-$('archive-edit').addEventListener('click',async()=>{const id=archiveSelected;if(!id)return;try{const record=await archiveStore.get(id);if(archiveSelected===id&&record)await openArchivedCapture(record,id)}catch(error){$('archive-notice').textContent=error.message}});
+$('archive-edit').addEventListener('click',async()=>{const id=archiveSelected,opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;if(!id||!isCurrent())return;try{const record=await archiveStore.get(id);if(isCurrent()&&record)await openArchivedCapture(record,id)}catch(error){if(isCurrent())$('archive-notice').textContent=error.message}});
 
 async function archiveCapture(original,pair){
   try{
@@ -124,9 +124,10 @@ async function showArchive(){
   }
 }
 async function openArchivedPhoto(id){
+  const opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;
   archiveSelected=id;archiveRecord=null;archiveDeleteArmed=false;
   const record=await archiveStore.get(id).catch(()=>null);
-  if(!record||archiveSelected!==id)return;
+  if(!record||!isCurrent())return;
   archiveRecord=record;
   const pending=!record.preview&&!record.document;
   if(archiveViewer)URL.revokeObjectURL(archiveViewer);
@@ -155,9 +156,9 @@ $('close-archive').addEventListener('click',closeArchive);
 $('archive-back').addEventListener('click',()=>void showArchive());
 
 function archivedExportOptions(kind){
-  const id=archiveSelected,record=archiveRecord;if(!id||!record||$('archive').hidden)return;
+  const id=archiveSelected,record=archiveRecord,opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;if(!id||!record||!isCurrent())return;
   const blob=kind==='right'?record.right:record.preview??record.document?.preview??record.left;if(!blob)return;
-  return {image:()=>blob,document:kind==='left'&&record.document?()=>record.document:undefined,imageExtension:blob.type==='image/png'?'png':blob.type==='image/webp'?'webp':'jpg',name:'entropi-'+id+'-'+kind,isCurrent:()=>archiveSelected===id&&!$('archive').hidden,onError:error=>{$('archive-notice').textContent=error.message}};
+  return {image:()=>blob,document:kind==='left'&&record.document?()=>record.document:undefined,defaultFormat:kind==='left'&&record.previewMatchesDocument?'tif':'png',imageExtension:blob.type==='image/png'?'png':blob.type==='image/webp'?'webp':'jpg',name:'entropi-'+id+'-'+kind,isCurrent,onError:error=>{if(isCurrent())$('archive-notice').textContent=error.message}};
 }
 for(const kind of ['left','right'])bindExportGesture($('archive-'+kind),()=>archivedExportOptions(kind));
 let archiveDeleteTimer=0;

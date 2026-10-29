@@ -44,7 +44,7 @@ marigold = re.sub(r"^import .*?;\s*", "", marigold, flags=re.MULTILINE)
 marigold = "const createMarigoldView = (() => {\n" + marigold + "\nreturn createMarigoldView;\n})();"
 source = source.replace("__ENTROPI_MARIGOLD__", marigold)
 documents = []
-for module, names in [("stereo-pair", "readStereoPairResponse"), ("entropi-document", "createEntropiDocument, encodeEntropiDocument, decodeEntropiDocument"), ("entropi-export", "encodeDepthTiff, encodeDepthDng"), ("entropi-ui", "bindExportGesture, pickEntropiDocument")]:
+for module, names in [("stereo-pair", "readStereoPairResponse"), ("entropi-document", "createEntropiDocument, encodeEntropiDocument, decodeEntropiDocument"), ("vathography", "normalizeDepth, toneDepth"), ("entropi-export", "encodeDepthTiff, encodeDepthDng, encodeGrayscale16Tiff"), ("entropi-rendered-export", "encodeRenderedTiff"), ("entropi-ui", "bindExportGesture, pickEntropiDocument")]:
     code = (shared / ("vendor/" + module + ".mjs")).read_text(encoding="utf-8").replace("export ", "")
     code = re.sub(r"^import .*?;\s*", "", code, flags=re.MULTILINE)
     documents.append("const { " + names + " } = (() => {\n" + code + "\nreturn { " + names + " };\n})();")

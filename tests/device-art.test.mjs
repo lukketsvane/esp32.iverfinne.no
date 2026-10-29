@@ -120,7 +120,7 @@ test('editing during the first archive write queues the latest recipe and proces
 
 test('archived export uses the latest processed preview and preserves the original right image',()=>{
   const preview=new Blob(['latest processed preview'],{type:'image/png'}),master={preview:new Blob(['master preview'],{type:'image/png'}),result:{depth:Float32Array.of(1)}};
-  const record={left:jpeg,right:jpeg,preview,document:master},state=vm.createContext({archiveSelected:'master-1',archiveRecord:record,$:()=>({hidden:false})});
+  const record={left:jpeg,right:jpeg,preview,document:master},state=vm.createContext({archiveGeneration:1,archiveSelected:'master-1',archiveRecord:record,$:()=>({hidden:false})});
   vm.runInContext(enhancement.slice(enhancement.indexOf('function archivedExportOptions('),enhancement.indexOf("for(const kind of ['left','right'])")),state);
   const left=state.archivedExportOptions('left'),right=state.archivedExportOptions('right');
   assert.equal(left.image(),preview);assert.equal(left.document(),master);assert.equal(left.imageExtension,'png');
@@ -356,4 +356,46 @@ test('art print and save use rendered snapshots and invalidate a replaced result
   assert.equal(typeof saves[0].document,'function');assert.equal(saves[0].image.depthArt,true);assert.equal(saves[0].image.native,true);assert.equal(saves[0].isCurrent(),true);
   state.marigoldView.result={model:'replacement'};
   assert.equal(prints[0].isCurrent(),false);assert.equal(saves[0].isCurrent(),false);
+});
+
+for(const outcome of ['resolve','reject'])test(`embedded gallery ignores a stale ${outcome} after reopening the same photo`,async()=>{
+  const start=enhancement.indexOf('async function openArchivedPhoto('),source=enhancement.slice(start,enhancement.indexOf('function closeArchive(',start));
+  let resolve,reject,calls=0;const pending=new Promise((yes,no)=>{resolve=yes;reject=no}),elements=new Map(),urls=new Map();
+  const old=new Blob(['old'],{type:'image/png'}),fresh=new Blob(['fresh'],{type:'image/png'});
+  const record=preview=>({id:'same',left:old,preview});
+  const get=id=>{if(!elements.has(id))elements.set(id,{hidden:false,textContent:'',classList:{toggle(){}},setAttribute(){},dataset:{},focus(){}});return elements.get(id)};
+  const state=vm.createContext({$:get,archiveGeneration:1,archiveSelected:null,archiveRecord:null,archiveDeleteArmed:false,archiveViewer:null,archiveRecords:[{id:'same',created:0}],archiveDate:()=>'',
+    archiveStore:{get:async()=>++calls===1?pending:record(fresh)},URL:{createObjectURL(blob){const url='blob:'+urls.size;urls.set(url,blob);return url},revokeObjectURL(){}}
+  });
+  vm.runInContext(source,state);const stale=state.openArchivedPhoto('same');
+  get('archive').hidden=true;state.archiveSelected=null;state.archiveGeneration++;
+  get('archive').hidden=false;state.archiveGeneration++;await state.openArchivedPhoto('same');
+  const currentUrl=get('archive-photo').src,urlCount=urls.size;
+  if(outcome==='resolve')resolve(record(old));else reject(new Error('Old read failed'));
+  await stale;
+  assert.equal(get('archive-photo').src,currentUrl);assert.equal(urls.get(currentUrl),fresh);assert.equal(urls.size,urlCount);assert.equal(state.archiveRecord.preview,fresh);
+});
+
+test('embedded right-original export remains an ordinary image when its left preview matches a master',()=>{
+  const start=enhancement.indexOf('function archivedExportOptions('),source=enhancement.slice(start,enhancement.indexOf('for(const kind',start));
+  const right=new Blob(['right'],{type:'image/jpeg'}),document={id:'master'},record={previewMatchesDocument:true,document,right,preview:new Blob(['rendered'],{type:'image/png'})};
+  const state=vm.createContext({archiveGeneration:1,archiveSelected:'capture',archiveRecord:record,$:()=>({hidden:false})});vm.runInContext(source,state);
+  const exported=state.archivedExportOptions('right');assert.equal(exported.defaultFormat,'png');assert.equal(exported.document,undefined);assert.equal(exported.image(),right);assert.equal(state.archivedExportOptions('left').defaultFormat,'tif');
+});
+
+test('embedded export and its errors stay stale after reopening the same archive image',()=>{
+  const start=enhancement.indexOf('function archivedExportOptions('),source=enhancement.slice(start,enhancement.indexOf('for(const kind',start));
+  const archive={hidden:false},notice={textContent:''},state=vm.createContext({archiveGeneration:1,archiveSelected:'same',archiveRecord:{preview:jpeg},$:id=>id==='archive'?archive:notice});vm.runInContext(source,state);
+  const old=state.archivedExportOptions('left');assert.equal(old.isCurrent(),true);
+  archive.hidden=true;state.archiveGeneration++;archive.hidden=false;state.archiveGeneration++;
+  assert.equal(old.isCurrent(),false);old.onError(new Error('Stale export error'));assert.equal(notice.textContent,'');assert.equal(state.archivedExportOptions('left').isCurrent(),true);
+});
+
+for(const outcome of ['resolve','reject'])test(`embedded delayed edit ${outcome} cannot replace a reopened archive session`,async()=>{
+  const source=enhancement.split('\n').find(line=>line.startsWith("$('archive-edit').addEventListener"));
+  let resolve,reject,handler;const pending=new Promise((yes,no)=>{resolve=yes;reject=no}),opened=[],notice={textContent:''},archive={hidden:false};
+  const state=vm.createContext({archiveGeneration:1,archiveSelected:'same',archiveStore:{get:()=>pending},openArchivedCapture:async(record,id)=>opened.push({record,id}),$:id=>id==='archive'?archive:id==='archive-notice'?notice:{addEventListener(_,callback){handler=callback}}});vm.runInContext(source,state);
+  const editing=handler();archive.hidden=true;state.archiveGeneration++;archive.hidden=false;state.archiveGeneration++;
+  if(outcome==='resolve')resolve({left:jpeg});else reject(new Error('Stale edit error'));await editing;
+  assert.equal(opened.length,0);assert.equal(notice.textContent,'');
 });

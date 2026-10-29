@@ -240,7 +240,7 @@ async function openPhoneGallery(){
   galleryCurrent=null;clearGalleryUrls();
   const grid=$('phone-vault-grid');grid.replaceChildren();
   try{
-    if(photoReady&&mode==='done')await persistPreview().catch(error=>{$('phone-vault-status').textContent=failureText(error,saveFailure)});
+    if(photoReady&&mode==='done')await persistPreview().catch(error=>{if(galleryOpen&&opening===galleryGeneration)$('phone-vault-status').textContent=failureText(error,saveFailure)});
     const items=await gallery.list();if(!galleryOpen||opening!==galleryGeneration)return;galleryItems=items;
     if(!galleryItems.length){
       const empty=document.createElement('p');empty.className='sr-only';empty.textContent='Ingen foto enno.';grid.append(empty);
@@ -255,12 +255,13 @@ async function openPhoneGallery(){
   }catch(error){if(galleryOpen&&opening===galleryGeneration)$('phone-vault-status').textContent=failureText(error,'Arkivet er ikkje tilgjengeleg')}
 }
 async function showPhoneRecord(id){
+  const opening=galleryGeneration,isCurrent=()=>galleryOpen&&opening===galleryGeneration&&galleryCurrent===id;
   galleryCurrent=id;galleryRecord=null;galleryDeleteConfirm=false;
   $('phone-vault-status').textContent='';
   let record;
   try{record=await gallery.get(id);if(!record)throw new Error('Fotoet er ikkje tilgjengeleg.')}
-  catch(error){$('phone-vault-status').textContent=failureText(error,'Kunne ikkje opne fotoet.');return}
-  if(galleryCurrent!==id)return;
+  catch(error){if(isCurrent())$('phone-vault-status').textContent=failureText(error,'Kunne ikkje opne fotoet.');return}
+  if(!isCurrent())return;
   galleryRecord=record;
   const pending=!record.preview&&!record.document;
   $('phone-vault-edit').hidden=!record.document&&!pending;
@@ -289,13 +290,17 @@ $('phone-vault-import').addEventListener('click',async()=>{
   try{const document=await pickEntropiDocument();if(!document)return;closePhoneGallery();await acceptPhoto(document.left,document.id+'.entropi',document)}catch(error){$('phone-vault-status').textContent=failureText(error,'Kunne ikkje opne Entropi-fila.')}
 });
 $('phone-vault-edit').addEventListener('click',async()=>{
-  const id=galleryCurrent;if(!id)return;
-  try{const record=await gallery.get(id);if(id!==galleryCurrent||!record)return;closePhoneGallery();await acceptPhoto(record.left,(record.document?.id??id)+'.entropi',record.document??null,id,record.right)}catch(error){printFeedback(failureText(error,'Kunne ikkje opne fotoet.'))}
+  const id=galleryCurrent,opening=galleryGeneration,isCurrent=()=>galleryOpen&&opening===galleryGeneration&&id===galleryCurrent;if(!id||!isCurrent())return;
+  let record;
+  try{record=await gallery.get(id)}catch(error){if(isCurrent())printFeedback(failureText(error,'Kunne ikkje opne fotoet.'));return}
+  if(!isCurrent()||!record)return;
+  closePhoneGallery();
+  try{await acceptPhoto(record.left,(record.document?.id??id)+'.entropi',record.document??null,id,record.right)}catch(error){printFeedback(failureText(error,'Kunne ikkje opne fotoet.'))}
 });
 bindExportGesture($('phone-vault-save'),()=>{
-  const id=galleryCurrent,record=galleryRecord;if(!id||!record||!galleryOpen)return;
+  const id=galleryCurrent,record=galleryRecord,opening=galleryGeneration,isCurrent=()=>galleryOpen&&opening===galleryGeneration&&id===galleryCurrent;if(!id||!record||!isCurrent())return;
   const image=record.preview??record.document?.preview??record.left;
-  return {image:()=>image,document:record.document?()=>record.document:undefined,imageExtension:image.type==='image/jpeg'?'jpg':image.type==='image/webp'?'webp':'png',name:'entropi-'+id,isCurrent:()=>id===galleryCurrent&&galleryOpen,onError:error=>{$('phone-vault-status').textContent=failureText(error,'Kunne ikkje lagre biletet.')}};
+  return {image:()=>image,document:record.document?()=>record.document:undefined,defaultFormat:record.previewMatchesDocument?'tif':'png',imageExtension:image.type==='image/jpeg'?'jpg':image.type==='image/webp'?'webp':'png',name:'entropi-'+id,isCurrent,onError:error=>{if(isCurrent())$('phone-vault-status').textContent=failureText(error,'Kunne ikkje lagre biletet.')}};
 });
 let galleryDeleteTimer=0;
 function disarmGalleryDelete(){clearTimeout(galleryDeleteTimer);galleryDeleteTimer=0;galleryDeleteConfirm=false;$('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed')}
