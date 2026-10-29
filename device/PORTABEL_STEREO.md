@@ -8,11 +8,11 @@ Etter oppstart lagar primærkameraet det opne Wi-Fi-nettet ENTROPI på 192.168.4
 
 1. Vel ENTROPI i Wi-Fi-innstillingane på telefonen.
 2. Opne Safari på http://192.168.4.1/
-3. Vent til søkjaren viser kameraet. Trykk i søkjaren for å ta foto.
-4. Trykk ikonet med to rektangel i biletvisinga for å lagre eit side-ved-side-JPEG med begge kamerabileta, i full sensoroppløysing.
-5. På iPhone via lokalt HTTP: hald inne det opna biletet, og vel lagring til Bilder/Foto. Kontroller at fila er lagra før neste opptak.
+3. Vent til søkjaren viser kameraet. Trykk i søkjaren, eller på utløysarknappen på riggen dersom han er montert, for å ta foto.
+4. Eit kort trykk på lagreknappen lastar ned det synlege biletet som PNG. Hald inne lagreknappen og dra opp for å velje `.entropi`, TIFF eller DNG; `.entropi` tek vare på begge originalbileta.
+5. På iPhone hamnar nedlastingar i Filer under Nedlastingar. Kontroller at fila er lagra før neste opptak.
 
-Originalpara blir mellomlagra i nettlesaren sitt lokale arkiv. Lagre viktige bilete til Foto; sletting av nettstaddata kan fjerne arkivet.
+Originalpara blir mellomlagra i nettlesaren sitt lokale arkiv. Lagre viktige opptak som `.entropi`; sletting av nettstaddata kan fjerne arkivet. Stereopar blir ikkje eksporterte side om side.
 
 ## Fast montert rigg
 
