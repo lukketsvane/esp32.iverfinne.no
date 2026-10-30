@@ -8,7 +8,7 @@ import { phoneHelperOrigin } from '../../vendor/model-bridge.mjs';
 
 const html = await readFile(new URL('../EntropiCamera/camera_ui.html', import.meta.url), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-const application = scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','window.checkPhone=checkPhone;window.showPhoto=showPhoto;function updateCameraChrome(){} async function archiveCapture(){return {id:null,warning:null}} async function persistCurrentMaster(){} async function persistCurrentPreview(){} function schedulePreviewSave(){}');
+const application = (await readFile(new URL('../../vendor/capture-gesture.mjs',import.meta.url),'utf8')).replace(/^export /gm,'')+'\n'+scripts.find(script => script.includes('function takePhoto(')).replace(/__ENTROPI_(?:STUDIO|MODEL_BRIDGE|PRINT_CLIENT)__/g,'').replace('__ENTROPI_APP_ENHANCEMENTS__','window.checkPhone=checkPhone;window.showPhoto=showPhoto;function updateCameraChrome(){} async function archiveCapture(){return {id:null,warning:null}} async function persistCurrentMaster(){} async function persistCurrentPreview(){} function schedulePreviewSave(){}');
 const verifiedStatus = { camera_id: 'aaaaaaaaaaaa', camera_ready: true, stream_ready: true, recovering: false, recovery_attempts: 0, last_error: '', framesize: 10, photo_framesize: 15, brightness: 0, psram: true };
 const jpeg = value => new Blob([Uint8Array.of(255,216),value,Uint8Array.of(255,217)],{type:'image/jpeg'});
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
@@ -196,7 +196,7 @@ function harness(options = {}) {
       getItem(key) { if (options.storageDenied) throw new Error('Storage denied'); return stored.get(key) ?? null; },
       setItem(key, value) { if (options.storageDenied) throw new Error('Storage denied'); stored.set(key, value); },
     },
-    COLOR_SCHEMES,readStereoPairResponse,phoneHelperOrigin,
+    COLOR_SCHEMES,readStereoPairResponse,phoneHelperOrigin,createPanoramaCapture:()=>({active:false,recording:false,cancel(){},dispose(){}}),
     Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};this.captures=[];finders.push(this) }capture(source){const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;this.captures.push({source,url:source.src,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
     readColorScheme:kind=>stored.get('entropi-screen-'+kind+'-v2')??'macintosh',
@@ -1533,7 +1533,7 @@ test('the hardware button takes a photo only for fresh presses made while the pa
   assert.equal(app.get('photo-dialog').open,true);
 });
 
-test('a hardware press returns from review, and a press during a capture is not replayed afterwards',async()=>{
+test('a hardware press captures directly from review, and a press during a capture is not replayed afterwards',async()=>{
   const button={presses:0,age_ms:-1},pending=deferred();
   const app=await connectedCamera({status:buttonStatus,fetch:buttonFetch(button,(url,count,response)=>url.startsWith('/capture')?pending.promise.then(()=>response(new Blob(['jpeg'],{type:'image/jpeg'}))):undefined)});
   await app.tick(300);
@@ -1544,10 +1544,10 @@ test('a hardware press returns from review, and a press during a capture is not 
   await app.tick(1000);
   assert.equal(app.get('photo-dialog').open,true);
   Object.assign(button,{presses:2,age_ms:10});await app.tick(300);
-  assert.equal(app.get('photo-dialog').open,false);
-  await app.tick(300);assert.equal(app.get('capture-plane').disabled,false);
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,2);
+  await app.tick(300);
   Object.assign(button,{presses:3,age_ms:10});await app.tick(600);
-  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,2);
+  assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,3);
   assert.equal(app.get('photo-dialog').open,true);
 });
 
@@ -1555,6 +1555,28 @@ test('cameras without a hardware button are never polled for presses',async()=>{
   const app=await connectedCamera();
   await app.tick(3000);
   assert.equal(app.requests.some(request=>request.url==='/button'),false);
+});
+
+test('next-shot gesture keeps a paired rig paired while the result stays open',async()=>{
+  const app=await connectedCamera({image:2,second:true});await app.get('capture-plane').emit('click');await app.tick(0);const first=app.get('photo').src;
+  await app.get('close-photo').emit('keydown',{key:'Enter',shiftKey:true});await app.tick(0);
+  assert.equal(app.get('photo-dialog').open,true);assert.notEqual(app.get('photo').src,first,JSON.stringify({disabled:app.get('close-photo').disabled,working:app.get('photo-dialog').classList.contains('working'),ready:app.artViews[0].ready,notice:app.get('print-status').textContent,requests:app.requests.map(item=>item.url)}));assert.equal(app.requests.filter(request=>request.url.startsWith('/stereo/capture')).length,2);assert.equal(app.requests.filter(request=>request.url.startsWith('/capture')).length,0);assert.equal(app.printCalls.length,0);
+});
+
+test('a failed direct next capture retains the artwork and permits another attempt',async()=>{
+  let captures=0;const app=await connectedCamera({image:2,fetch:(url,count,response)=>url.startsWith('/capture')&&++captures===2?response(null,false):undefined});
+  await app.get('capture-plane').emit('click');await app.tick(0);const url=app.get('photo').src,result=app.artViews[0].result;
+  await app.get('close-photo').emit('keydown',{key:'Enter',shiftKey:true});await app.tick(0);
+  assert.equal(app.get('photo-dialog').open,true);assert.equal(app.get('photo').src,url);assert.equal(app.artViews[0].result,result);assert.equal(app.get('close-photo').disabled,false);assert.equal(app.printCalls.length,0);
+  await app.get('close-photo').emit('keydown',{key:'Enter',shiftKey:true});await app.tick(0);assert.notEqual(app.get('photo').src,url);assert.equal(captures,3);
+});
+
+test('closing a pending direct capture aborts it and never reopens the review',async()=>{
+  const pending=deferred();let captures=0;
+  const app=await connectedCamera({fetch:(url,count,response)=>url.startsWith('/capture')&&++captures===2?pending.promise.then(()=>response(jpeg('late'))):undefined});
+  await app.get('capture-plane').emit('click');const url=app.get('photo').src;
+  const taking=app.get('close-photo').emit('keydown',{key:'Enter',shiftKey:true});await app.tick(0);app.get('photo-dialog').close();
+  pending.resolve();await taking;await app.tick(0);assert.equal(app.get('photo-dialog').open,false);assert.equal(app.get('photo').src,url);assert.equal(captures,2);
 });
 
 test('a working sensor without a stream is not reported as a missing image',async()=>{

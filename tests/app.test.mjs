@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { createEntropiDocument } from '../vendor/entropi-document.mjs';
 import { COLOR_SCHEMES } from '../vendor/color-schemes.mjs';
+import { attachGalleryNavigation } from '../vendor/gallery-navigation.mjs';
 
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
-const application=(await readFile(new URL('../app.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
+const application=(await readFile(new URL('../vendor/capture-gesture.mjs',import.meta.url),'utf8')).replace(/^export /gm,'')+'\n'+(await readFile(new URL('../app.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
 const photoModule=await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8'),photoSource=photoModule.slice(photoModule.indexOf('export function photoSnapshot')).replace(/^export /gm,'');
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
@@ -51,12 +52,12 @@ function harness(options={}){
   }};
   const media={getTracks:()=>[{stop(){stopped++}}]};
   class BrowserURL extends URL{static createObjectURL(blob){const url='blob:test/'+(++nextUrl);urls.set(url,blob);return url}static revokeObjectURL(url){revoked.push(url)}}
-  const context=vm.createContext({
+  const context=vm.createContext({lockPageZoom(){},
     document,window:{opener,addEventListener:document.addEventListener},URL:BrowserURL,Blob,AbortController,DOMException,
     File:class extends Blob{constructor(parts,name,properties){super(parts,properties);this.name=name}},
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
-    COLOR_SCHEMES,
+    COLOR_SCHEMES,attachGalleryNavigation,createPanoramaCapture:()=>({active:false,recording:false,cancel(){},dispose(){}}),
     createEntropiDocument,bindExportGesture:(button,getOptions)=>button.addEventListener('click',async()=>{const options=getOptions();if(!options||!options.isCurrent())return;try{const blob=await options.image();if(options.isCurrent())saves.push({blob,name:options.name.replace(/\.[^.]+$/,'')+'.'+(options.imageExtension??'png'),isCurrent:options.isCurrent,options})}catch(error){options.onError?.(error)}}),pickEntropiDocument:async()=>options.importDocument??null,
     createArchive:()=>options.archive??({saveDocument:async document=>({id:document.id}),save:async()=>({}),savePreview:async()=>null,list:async()=>[],get:async()=>null,remove:async()=>{}}),
     location:{search:''},URLSearchParams,
@@ -492,6 +493,27 @@ test('master export retains raw values and identity while changing the expressio
   await app.get('reset').emit('click');assert.equal(app.saves[0].options.isCurrent(),false);
 });
 
+test('one next-shot action reacquires the camera and archives a second result without printing',async()=>{
+  const store=archiveFixture(),app=harness({archive:store.archive});await photoFromDevice(app);const previous=app.get('photo').src;
+  await app.get('reset').emit('keydown',{key:'Enter',shiftKey:true});await app.tick(0);
+  assert.notEqual(app.get('photo').src,previous);assert.equal(app.get('studio').className,'studio done');assert.equal(store.records.size,2);assert.equal(app.mediaRequests,1);assert.equal(app.artCalls.length,2);assert.equal(app.printCalls.length,0);assert.equal(app.get('reset').disabled,false);
+});
+
+for(const failure of ['camera','encode','decode'])test(`next-shot ${failure} failure preserves the current artwork, recipe and original`,async()=>{
+  const store=archiveFixture();let decodes=0;
+  const app=harness({archive:store.archive,media:failure==='camera'?async()=>{throw new DOMException('Denied','NotAllowedError')}:undefined,toBlob:failure==='encode'?callback=>callback(null):undefined,decode:()=>{if(++decodes>1&&failure==='decode')throw new Error('Bad image')}});
+  const original=await photoFromDevice(app),url=app.get('photo').src,result=app.artViews[0].result;app.artViews[0].recipe={preset:3,position:.3,width:1.2};
+  await app.get('reset').emit('keydown',{key:'Enter',shiftKey:true});await app.tick(0);
+  assert.equal(app.get('photo').src,url);assert.equal(app.artViews[0].result,result);assert.equal(app.artViews[0].recipe.preset,3);assert.equal(app.get('studio').className,'studio done');assert.equal(store.records.size,1);assert.equal(store.records.get('capture-1').left,original);assert.equal(app.get('reset').disabled,false);assert.equal(app.printCalls.length,0);
+});
+
+test('repeated next-shot actions and a late frame after backgrounding cannot replace the current result',async()=>{
+  let finish;const app=harness({toBlob:callback=>{finish=callback}});await photoFromDevice(app);const url=app.get('photo').src;
+  await app.get('reset').emit('keydown',{key:'Enter',shiftKey:true});await app.get('reset').emit('keydown',{key:'Enter',shiftKey:true});assert.equal(app.mediaRequests,1);assert.equal(app.finders[0].captures.length,1);
+  await app.visibility(true);finish(new Blob(['late'],{type:'image/png'}));await app.tick(0);
+  assert.equal(app.get('photo').src,url);assert.equal(app.get('studio').className,'studio done');assert.equal(app.artCalls.length,1);
+});
+
 test('importing a numerical master restores its expression without running a model',async()=>{
   const left=new Blob(['source'],{type:'image/jpeg'}),preview=new Blob(['preview'],{type:'image/png'});
   const stored=createEntropiDocument({left,preview,result:{width:2,height:2,depth:Float32Array.of(1.25,2.75,4.5,NaN),polarity:'near'},recipe:{preset:4,position:-.2,width:2}});
@@ -633,6 +655,30 @@ test('the archive contains keyboard focus and Escape returns through the archive
   await app.emit('keydown',{key:'Escape'});assert.equal(app.get('phone-vault').hidden,true);assert.equal(app.get('studio').inert,false);assert.equal(app.activeElement,app.get('open-gallery'));assert.equal(app.get('studio').className,'studio done');assert.equal(app.mediaRequests,0);
 });
 
+test('gallery navigation keeps the grid, scroll and selection while moving between photos',async()=>{
+  const store=archiveFixture(),images=[0,1,2].map(value=>new Blob([String(value)],{type:'image/png'}));
+  for(const image of images)await store.archive.save(image);
+  let lists=0;const list=store.archive.list;store.archive.list=async()=>{lists++;return list()};
+  const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');
+  const grid=app.get('phone-vault-grid'),tiles=[...grid.children];grid.scrollTop=475;
+  await tiles[0].emit('click');await app.emit('keydown',{key:'ArrowRight'});
+  assert.equal(app.urls.get(app.get('phone-vault-image').src),images[1]);assert.match(app.get('phone-vault-image').alt,/2 av 3/);
+  await app.get('phone-vault-back').emit('click');assert.equal(grid.scrollTop,475);assert.equal(grid.children[0],tiles[0]);assert.equal(app.activeElement,tiles[1]);assert.equal(lists,1);
+  await tiles[2].emit('click');await app.emit('keydown',{key:'ArrowRight'});assert.equal(app.urls.get(app.get('phone-vault-image').src),images[2]);
+  await app.emit('keydown',{key:'ArrowLeft'});assert.equal(app.urls.get(app.get('phone-vault-image').src),images[1]);
+});
+
+test('a superseded same-photo read cannot win after swiping away and back',async()=>{
+  const store=archiveFixture(),pending=deferred(),old=new Blob(['old'],{type:'image/png'}),fresh=new Blob(['fresh'],{type:'image/png'});
+  const saved=await store.archive.save(old);await store.archive.save(new Blob(['next'],{type:'image/png'}));
+  let calls=0;const get=store.archive.get;store.archive.get=async id=>id===saved.id&&++calls===1?pending.promise:get(id);
+  const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');const grid=app.get('phone-vault-grid');
+  await grid.children[0].emit('click');await grid.children[1].emit('click');
+  store.records.get(saved.id).preview=fresh;await app.emit('keydown',{key:'ArrowLeft'});
+  pending.resolve({left:old,preview:old});await app.tick(0);
+  assert.equal(app.urls.get(app.get('phone-vault-image').src),fresh);
+});
+
 test('an open archive blocks the central capture handler and ignores a late list after close',async()=>{
   const listed=deferred(),app=harness({archive:{list:()=>listed.promise}});app.get('open-gallery').focus();await app.get('open-gallery').emit('click');
   await app.get('capture-plane').emit('click');assert.equal(app.mediaRequests,0);assert.equal(app.finders[0].captures.length,0);
@@ -660,4 +706,47 @@ test('the archive view keeps its own messages but never shows the browser\'s err
     const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');await app.tick(0);
     assert.equal(app.get('phone-vault-status').textContent,text,error.name);
   }
+});
+
+for(const outcome of ['resolve','reject'])test(`a previous gallery session cannot ${outcome} over the same reopened photo`,async()=>{
+  const pending=deferred(),store=archiveFixture(),old=new Blob(['old'],{type:'image/png'}),fresh=new Blob(['fresh'],{type:'image/png'});
+  const saved=await store.archive.save(old),previous={...store.records.get(saved.id)};let calls=0;
+  store.archive.get=async id=>++calls===1?pending.promise:store.records.get(id);
+  const app=harness({archive:store.archive});
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  await app.get('phone-vault-close').emit('click');store.records.get(saved.id).preview=fresh;
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  const currentUrl=app.get('phone-vault-image').src,currentFocus=app.activeElement,urlCount=app.urls.size;
+  if(outcome==='resolve')pending.resolve(previous);else pending.reject(new Error('Old read failed'));
+  await flush();
+  assert.equal(app.get('phone-vault-image').src,currentUrl);assert.equal(app.urls.get(currentUrl),fresh);
+  assert.equal(app.urls.size,urlCount);assert.equal(app.get('phone-vault-status').textContent,'');assert.equal(app.activeElement,currentFocus);
+  await app.get('phone-vault-save').emit('click');assert.equal(app.saves.at(-1).blob,fresh);
+});
+
+test('a failed earlier gallery selection cannot overwrite the current photo status',async()=>{
+  const pending=deferred(),store=archiveFixture(),first=await store.archive.save(new Blob(['first'],{type:'image/png'})),second=await store.archive.save(new Blob(['second'],{type:'image/png'}));
+  store.archive.get=async id=>id===first.id?pending.promise:store.records.get(id);
+  const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');
+  await app.get('phone-vault-grid').children[0].emit('click');await app.get('phone-vault-grid').children[1].emit('click');
+  pending.reject(new Error('Old read failed'));await flush();
+  assert.equal(app.get('phone-vault-status').textContent,'');assert.equal(app.urls.get(app.get('phone-vault-image').src),store.records.get(second.id).preview);
+});
+
+test('gallery export and its errors stay stale after closing and reopening the same image',async()=>{
+  const store=archiveFixture(),blob=new Blob(['photo'],{type:'image/png'});await store.archive.save(blob);
+  const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  await app.get('phone-vault-save').emit('click');const old=app.saves.at(-1).options;assert.equal(old.isCurrent(),true);
+  await app.get('phone-vault-close').emit('click');await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  assert.equal(old.isCurrent(),false);old.onError(new Error('Stale export error'));assert.equal(app.get('phone-vault-status').textContent,'');
+  await app.get('phone-vault-save').emit('click');assert.equal(app.saves.at(-1).options.isCurrent(),true);
+});
+
+for(const outcome of ['resolve','reject'])test(`a delayed edit ${outcome} cannot replace a reopened gallery session`,async()=>{
+  const pending=deferred(),store=archiveFixture(),saved=await store.archive.save(new Blob(['original'],{type:'image/jpeg'}),null,null),record=store.records.get(saved.id),read=store.archive.get;
+  const app=harness({archive:store.archive});await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  store.archive.get=()=>pending.promise;await app.get('phone-vault-edit').emit('click');
+  await app.get('phone-vault-close').emit('click');store.archive.get=read;await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
+  if(outcome==='resolve')pending.resolve(record);else pending.reject(new Error('Stale edit error'));await flush();
+  assert.equal(app.get('phone-vault').hidden,false);assert.equal(app.artCalls.length,0);assert.equal(app.get('print-status').textContent,'');
 });

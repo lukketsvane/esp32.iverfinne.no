@@ -1,38 +1,10 @@
+import { estimateDepth } from './depth-engine.mjs';
 import { inferenceSize, imageToPointCloud, pointStride, gaussianSplats } from '../pointcloud/math.mjs';
 import { runStereoDepth } from './stereo-depth.mjs';
 import { nearestC64, PRIMITIVE_MODES, PRIMITIVE_BAYER, normalizePrimitiveLevel, primitiveDimensions, qualityPointBudget } from '../pointcloud/primitive.mjs';
 import { attachViewerGestures, progressiveIndices } from './viewer-gestures.mjs';
 import { resolveColorScheme, gaussianInk } from './color-schemes.mjs';
 import { renderRetroPixels } from './retro-modes.mjs';
-
-let depthWorker=null,depthIdle=0,depthCancel=null;
-function releaseDepthWorker(){clearTimeout(depthIdle);depthIdle=0;depthWorker?.terminate();depthWorker=null}
-globalThis.addEventListener?.('pagehide',()=>{if(!depthCancel)releaseDepthWorker()});
-globalThis.document?.addEventListener?.('visibilitychange',()=>{if(document.hidden&&!depthCancel)releaseDepthWorker()});
-
-function estimateDepth(pixels,onProgress,signal){
-  signal.throwIfAborted();depthCancel?.(new DOMException('Avbrote.','AbortError'));clearTimeout(depthIdle);
-  return new Promise((resolve,reject)=>{
-    const worker=depthWorker??=new Worker('/pointcloud/depth-worker-v2.mjs',{type:'module'});let finished=false;
-    const finish=(error,result)=>{
-      if(finished)return;finished=true;clearTimeout(timer);signal.removeEventListener('abort',abort);worker.onmessage=worker.onerror=null;if(depthCancel===finish)depthCancel=null;
-      if(error||globalThis.document?.hidden)releaseDepthWorker();else depthIdle=setTimeout(releaseDepthWorker,30000);
-      if(error)reject(error);else resolve(result);
-    };
-    const abort=()=>finish(signal.reason||new DOMException('Avbrote.','AbortError'));
-    const timer=setTimeout(()=>finish(new Error('Djupneberekninga tok for lang tid. Prøv igjen.')),180000);
-    depthCancel=finish;signal.addEventListener('abort',abort,{once:true});
-    worker.onmessage=({data})=>{
-      if(data.type==='progress')onProgress(data);
-      else if(data.type==='error')finish(Object.assign(new Error(data.message),{code:data.code}));
-      else if(data.type==='result')finish(null,{depth:new Float32Array(data.depth),width:data.width,height:data.height});
-    };
-    worker.onerror=()=>finish(new Error('Telefonen kunne ikkje berekne djupna.'));
-    const copy=new Uint8ClampedArray(pixels.data);
-    try{worker.postMessage({rgba:copy.buffer,width:pixels.width,height:pixels.height},[copy.buffer])}catch(error){finish(error)}
-    if(signal.aborted)abort();
-  });
-}
 
 function renderScene(host, cloud, bytes, signal, sourcePixels) {
   const points=new Float32Array(cloud.count*8),depths=new Float32Array(cloud.count),indices=Uint32Array.from(progressiveIndices(cloud.count)),view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),colors=new Float32Array(cloud.count*4),rotation=new Float32Array(9);

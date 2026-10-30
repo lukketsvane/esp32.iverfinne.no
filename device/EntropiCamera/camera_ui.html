@@ -19,13 +19,35 @@
 .sheet,.review,dialog[data-photo-save]{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}dialog[data-photo-save]{height:100dvh!important;touch-action:none!important}
 @media(hover:none),(pointer:coarse){button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible,dialog[data-photo-save] button:focus-visible{outline:0!important}}
 </style>
+<style>
+.capture-adjustments{display:none}.capture-feedback{position:absolute;z-index:14;left:50%;bottom:calc(72px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(420px,calc(100% - 80px));margin:0;text-align:center;font-size:12px;line-height:1.5;color:#ccc;pointer-events:none}
+@media(orientation:landscape){
+#studio .finder,#studio .peer-live{top:50%;width:min(31vw,calc((100dvh - 96px)*4/3));height:auto;max-height:none;aspect-ratio:4/3;box-shadow:none;border:0;image-rendering:auto}
+#studio .finder{left:40%;width:min(58vw,calc((100dvh - 96px)*4/3))}
+#studio[data-stereo="true"] .finder{left:calc(39% - min(15.5vw,calc((100dvh - 96px)*2/3)) - 5px);width:min(31vw,calc((100dvh - 96px)*4/3))}
+#studio .peer-live{left:calc(39% + min(15.5vw,calc((100dvh - 96px)*2/3)) + 5px);display:block;transform:translate(-50%,-50%)}
+#studio .finder canvas{height:auto;aspect-ratio:4/3;image-rendering:auto!important}
+#studio .cross{display:none}
+.capture-adjustments{position:absolute;z-index:12;right:calc(18% + env(safe-area-inset-right));top:50%;transform:translateY(-50%);display:grid;gap:8px}
+.capture-adjustments button{width:44px;height:44px;padding:10px;color:#999;touch-action:none}
+.capture-adjustments svg{width:20px;height:20px;stroke-width:1}
+.capture-adjustments button[data-active="true"]{color:#fff}
+.capture-adjustments output{position:absolute;right:48px;top:50%;transform:translateY(-50%);font-size:12px;font-variant-numeric:tabular-nums;color:#ccc;pointer-events:none}
+#studio .capture-feedback{bottom:calc(8px + env(safe-area-inset-bottom));left:39%;width:min(480px,62vw)}
+}
+</style>
 </head>
 <body>
 <section id="safari-handoff" class="handoff" hidden><h1 class="sr">Tilbake til nettlesaren</h1><p class="sr">Vel å bruke nettet utan internett. Gå tilbake til klargjeringa og trykk «Opne kameraet».</p></section>
 <main id="studio" class="studio">
 <header class="rig-top"><button id="timer-cycle" class="rig-timer" type="button" data-delay="0" aria-label="Utløysar utan forsinking"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/></svg></button></header>
 
-<canvas id="peer-live" class="peer-live" width="168" height="252" aria-hidden="true" hidden></canvas>
+<canvas id="peer-live" class="peer-live" width="320" height="240" role="img" aria-label="Direktebilete frå kamera 2" hidden></canvas>
+<div class="capture-adjustments" role="group" aria-label="Kameralys">
+<button id="capture-brightness" type="button" role="slider" aria-label="Lysstyrke. Dra opp eller ned." aria-valuemin="-2" aria-valuemax="2" aria-valuenow="0"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button>
+<button id="capture-exposure" type="button" role="slider" aria-label="Eksponeringskompensasjon. Dra opp eller ned." aria-valuemin="-2" aria-valuemax="2" aria-valuenow="0"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v8M2 7h8M14 17h8M5 21 19 3"/></svg></button>
+<output id="capture-level" hidden></output></div>
+<p id="capture-feedback" class="capture-feedback" role="status" aria-live="polite" hidden></p>
 <div class="finder" aria-hidden="true"><canvas id="finder"></canvas><span class="cross"></span><div id="progress" class="progress indeterminate" aria-hidden="true" hidden><svg viewBox="0 0 100 150" preserveAspectRatio="none"><rect x=".5" y=".5" width="99" height="149" pathLength="100"/></svg></div></div>
 <button id="capture-plane" class="capture-plane" aria-label="Ta foto" disabled></button>
 <button id="retry-capture" class="access-control capture-retry" aria-label="Ta foto på nytt" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v5h-5"/></svg></button>
@@ -33,7 +55,8 @@
 <section id="camera-feedback" class="camera-feedback" aria-label="Kameratilkopling" hidden><p id="camera-feedback-title" role="status" aria-live="polite"></p><p id="camera-feedback-copy"></p><button id="retry-camera" type="button">Prøv igjen</button></section>
 <button id="connection" class="access-control top right" aria-label="Wi-Fi og tilkopling"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8a14 14 0 0 1 18 0M6 11a9 9 0 0 1 12 0m-9 3a4 4 0 0 1 6 0"/><circle cx="12" cy="18" r=".7"/></svg><span id="connection-label" class="sr"></span></button>
 <button id="last-photo" class="access-control" aria-label="Opne siste foto" hidden><img id="thumbnail" alt="" width="28" height="28" hidden></button>
-<footer class="rig-bottom"><div class="rig-bottom-side"><button id="open-archive" class="rig-tool" type="button" aria-label="Opne fotoarkivet"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="m3 10 6-3 6 3 6-3M8 14h8"/></svg></button></div><button id="shutter" class="rig-shutter" type="button" aria-label="Ta stereofoto" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="12" r="4"/></svg></button></footer>
+<footer class="rig-bottom"><div class="rig-bottom-side"></div><button id="shutter" class="rig-shutter" type="button" aria-label="Ta stereofoto" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="12" r="4"/></svg></button></footer>
+<button id="open-archive" class="access-control gallery-open" type="button" aria-label="Opne fotoarkivet"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="m3 10 6-3 6 3 6-3M8 14h8"/></svg></button>
 </main>
 <section id="archive" class="vault" role="dialog" aria-label="Fotoarkiv" aria-modal="true" hidden><div class="vault-header"><button id="archive-import" class="vault-close" aria-label="Opne Entropi-fil"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M4 17v4h16v-4"/></svg></button><button id="close-archive" class="vault-close" type="button" aria-label="Lukk fotoarkivet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div id="archive-grid" class="vault-grid"></div><div id="archive-detail" class="vault-detail" hidden><span class="archive-pending-mark" aria-hidden="true"></span><img id="archive-photo" alt="Arkivert kamerabilete"><div class="vault-detail-controls"><div id="archive-detail-info" class="vault-detail-info sr"></div><div class="vault-actions"><button id="archive-edit" class="vault-action" aria-label="Opne VATHOgraphy" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 19 4-1L20 7l-4-4L5 14zM14 5l4 4M4 21h16"/></svg></button><button id="archive-left" class="vault-action" aria-label="Lagre venstre"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 5 8l4 4M5 8h11M4 16v5h16v-5"/></svg></button><button id="archive-right" class="vault-action" aria-label="Lagre høgre"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 4 4-4 4M19 8H8M4 16v5h16v-5"/></svg></button><button id="archive-delete" class="vault-action" aria-label="Slett"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg></button><button id="archive-back" class="vault-action" aria-label="Alle bilete"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg></button></div><p id="archive-notice" class="archive-notice sr" role="status"></p></div></div></section>
 <dialog id="onboarding" class="sheet" aria-labelledby="onboarding-title"><div class="sheet-content"><div class="sheet-head"><button id="close-onboarding" class="icon" aria-label="Tilbake til kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button></div><h1 id="onboarding-title" class="sr">Finn kameraet</h1><p id="onboarding-copy"></p><progress id="onboarding-progress" max="100" aria-label="Klargjering" hidden></progress><div id="onboarding-feedback" class="feedback" role="status" aria-live="polite"></div><a id="onboarding-prepare" class="primary" href="https://esp32iverfinneno-iverfinnes-projects.vercel.app/start/" target="_blank" rel="noopener" aria-label="Hent modellen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg></a><button id="onboarding-next" class="quiet" aria-label="Fullfør"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v5h-5"/></svg></button><details id="onboarding-help"><summary aria-label="Hjelp med tilkopling"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 11v6M12 7h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"/></svg></summary><p>Skann QR-koden på riggen og hald tilkoplinga utan internett.</p></details></div></dialog>
@@ -43,7 +66,8 @@
 <img class="mg-output" alt="" aria-hidden="true"><img class="mg-original" alt="" aria-hidden="true"><div class="mg-seam" role="slider" aria-label="Samanlikningsgrense" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"></div>
 <div class="mg-variants" role="group" aria-label="VATHOgraphy-uttrykk"></div>
 <button class="mg-compare" aria-label="Samanlikn med originalfoto" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 3h18v18H3zM3 3h9v18H3z"/></svg></button></div>
-<button id="close-photo" class="access-control top right" aria-label="Ta nytt foto"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></button>
+<button id="review-gallery" class="access-control gallery-open" type="button" aria-label="Opne fotoarkivet"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="m3 10 6-3 6 3 6-3M8 14h8"/></svg></button>
+<button id="close-photo" class="access-control camera-return" aria-label="Tilbake til kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="12" r="4"/></svg></button>
 <button id="recenter-photo" class="access-control top" aria-label="Sentrer biletet" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6"/><path d="M12 3v4m0 10v4M3 12h4m10 0h4"/></svg></button>
 <button id="save-photo" class="access-control right" aria-label="Lagre foto"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4"/></svg></button>
 <button id="retry-scene" class="review-retry" aria-label="Prøv VATHOgraphy på nytt" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v5h-5"/></svg></button>
@@ -84,6 +108,7 @@ const streamUrl=new URL('/stream',location.href);if(globalThis.__ENTROPI_RIG_BRI
 let cameraStatus=null,deviceStatus=null,busy=false,streaming=false,connected=false,connecting=false,frameTimer=0,connectGeneration=0,retryTimer=0,retryCount=0,noticeTimer=0,photoUrl=null,photoBlob=null,photoName='',hasFrame=false,phoneReady=false,phoneWorking=false,phoneTask=null,phoneError='',parentReady=false,parentPort=null,sceneTask=null,sceneViewer=null,sceneVisible=false,sceneGeneration=0,needsSetup=false,sceneError='',captureAfter=0,captureTask=null,captureFailed=false,printBusy=false,printTimer=0;
 let secondId='',secondEnabled=false,secondFirmware=null,secondTask=null,secondSelected=false,secondAutoMode=false,imageRevision=0,photoPair=null,archiveWarning='';
 let photoOriginal=null,artTask=null,artError='',artVisible=false,captureDocument=null,captureArchiveId=null,photoReceivedAt=null,masterSaveTimer=0,captureArchiveSuppressed=false;
+let sweepCapture=null,photoPanorama=null,panoramaDepth=null,sweepPaired=false,sensorControlBusy=false;
 let reviewDown=null,reviewTap=null,photoGestures=null,photoPose={scale:1,x:0,y:0,grain:1,contrast:1};
 const photoView=createPhotoView($('photo'));
 const marigoldView=createMarigoldView($('marigold-view'),{onStatus:update=>{if(artTask&&studioControls.image===2){$('scene-progress').classList.toggle('indeterminate',!Number.isFinite(update.percent));$('scene-progress-bar').style.strokeDasharray=Number.isFinite(update.percent)?Math.max(0,Math.min(100,update.percent))+' 100':'';refreshReview()}},onGesture:()=>{reviewDown=reviewTap=null},onChange:()=>{if(captureDocument)scheduleMasterSave()}});
@@ -98,19 +123,19 @@ const studioControls=attachStudioControls([studio,photoDialog],(kind,level)=>{
     const scheme=COLOR_SCHEMES[level];paletteSelection.photo=scheme.id;saveColorScheme('photo',scheme.id);
     photoView.setPalette(scheme.id);finder.setPalette(scheme.id);photoView.setStyle(scheme.style);finder.setStyle(scheme.style);schedulePreviewSave();
   }else if(kind==='image'){imageRevision++;secondAutoMode=false;finder.monochrome=level===2;refreshReview();controls();if(photoDialog.open){if(level===1)void makeScene();else if(level===2)void makeArt();else schedulePreviewSave()}}
-},()=>!onboarding.open,()=>{reviewDown=reviewTap=null},{vathography:true,photo:profileIndex('photo'),primitive:profileIndex('depth')});
+},()=>!onboarding.open&&!sweepCapture?.active,()=>{reviewDown=reviewTap=null},{vathography:true,photo:profileIndex('photo'),primitive:profileIndex('depth')});
 photoView.setStyle(COLOR_SCHEMES[studioControls.photo].style);finder.setStyle(COLOR_SCHEMES[studioControls.photo].style);
 photoView.setPalette(paletteSelection.photo);finder.setPalette(paletteSelection.photo);
 finder.monochrome=studioControls.image===2;
 let liveGestures=null;
 photoGestures=attachPhotoGestures($('photo'),{enabled:()=>photoDialog.open&&studioControls.image===0&&!onboarding.open,onChange:pose=>{if(pose.scale!==photoPose.scale||pose.x!==photoPose.x||pose.y!==photoPose.y||pose.grain!==photoPose.grain||pose.contrast!==photoPose.contrast){reviewDown=reviewTap=null;photoPose={scale:pose.scale,x:pose.x,y:pose.y,grain:pose.grain,contrast:pose.contrast}}photoView.setTone(pose);finder.setTone(pose);if(liveGestures)Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter();schedulePreviewSave()}});
-liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>!photoDialog.open&&studioControls.image===0&&!onboarding.open&&!busy,onChange:pose=>{if(pose.grain!==photoGestures.state.grain||pose.contrast!==photoGestures.state.contrast)captureAfter=Date.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
+liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>!photoDialog.open&&studioControls.image===0&&!onboarding.open&&!busy&&!sweepCapture?.active,onChange:pose=>{if(pose.grain!==photoGestures.state.grain||pose.contrast!==photoGestures.state.contrast)captureAfter=Date.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
 const printClient=createPrintClient({devicePrinter:createDevicePrinter(),buildJob:cloudPrintJob,report:printFeedback});
 const reviewing=()=>photoDialog.open;
 function notice(text,transient=false){clearTimeout(noticeTimer);$('notice').textContent=text;if(transient)noticeTimer=setTimeout(()=>{$('notice').textContent=''},4500)}
 function printFeedback(message){clearTimeout(printTimer);$('print-status').textContent=message;$('print-status').hidden=!message;if(message)printTimer=setTimeout(()=>{$('print-status').hidden=true},6000)}
 async function printCurrent(){
-  if(printBusy||!photoDialog.open||!photoBlob||studioControls.image===1&&!sceneVisible||studioControls.image===2&&!artVisible)return;
+  if(printBusy||busy||!photoDialog.open||!photoBlob||studioControls.image===1&&!sceneVisible||studioControls.image===2&&!artVisible)return;
   const mode=studioControls.image,blob=photoBlob,source=mode===2?marigoldView:sceneViewer,artResult=marigoldView.result;
   ++connectGeneration;connecting=false;clearTimeout(retryTimer);
   printBusy=true;stopStream();controls();refreshReview();printFeedback('');
@@ -126,17 +151,17 @@ function notifyCamera(type){
   }catch{parentPort?.close();parentPort=null;parentReady=false}
 }
 function controls(){
-  const disabled=busy||printBusy||!connected||connecting||!hasFrame||recoveryPending;
+  const disabled=busy||printBusy||sensorControlBusy||!connected||connecting||!hasFrame||recoveryPending;
   $('capture-plane').disabled=disabled;$('retry-capture').disabled=disabled;$('retry-capture').hidden=!captureFailed||busy;
   $('retry-capture').setAttribute('aria-label',captureFailed&&phoneError?phoneError+' Prøv igjen.':'Ta foto på nytt');
-  $('last-photo').disabled=busy;$('progress').hidden=!(busy||printBusy);
+  $('last-photo').disabled=busy;$('close-photo').disabled=busy||printBusy;$('progress').hidden=!(busy||printBusy);photoDialog.setAttribute('aria-busy',String(busy));for(const id of ['marigold-view','scene','photo'])$(id).inert=busy;
   studio.classList.toggle('connected',connected);studio.classList.toggle('reconnecting',connecting);
   studio.classList.toggle('capturing-splats',busy&&studioControls.image!==0);
   $('connection-label').textContent=connected?'Tilkopla':connecting?'Koplar til':deviceStatus?'Kamera ikkje klart':'Fråkopla';
   updateCameraChrome();renderCameraFeedback();
   if(connected&&hasFrame&&!connecting&&!parentReady){parentReady=true;notifyCamera('entropi-camera-ready')}
 }
-function stopSecond(){secondTask?.abort();secondTask=null;secondEnabled=false;secondFirmware=null}
+function stopSecond(){secondTask?.abort();secondTask=null;secondEnabled=false;secondFirmware=null;$('peer-live').hidden=true;delete studio.dataset.stereo}
 function firmwareNotice(){
   if(!connected||!secondEnabled||secondFirmware===null)return '';
   const own=typeof deviceStatus?.firmware==='string'?deviceStatus.firmware:'',peer=secondFirmware;
@@ -146,7 +171,7 @@ function firmwareNotice(){
 function disconnectSecond(){stopSecond();if(secondAutoMode&&!busy&&!reviewing())studioControls.setImage(0);controls()}
 function peerId(){const id=deviceStatus?.peer?.camera_id;return typeof deviceStatus?.camera_id==='string'&&typeof id==='string'&&/^[a-f0-9]{12}$/.test(deviceStatus.camera_id)&&/^[a-f0-9]{12}$/.test(id)&&id!==deviceStatus.camera_id?id:''}
 async function connectSecond(){
-  if(!connected||connecting||busy||printBusy||reviewing()||document.hidden)return;
+  if(!connected||connecting||busy||printBusy||sensorControlBusy||reviewing()||document.hidden||!$('archive').hidden||sweepCapture?.active)return;
   const expected=peerId();if(!expected){disconnectSecond();return}
   if(secondId!==expected)disconnectSecond();else if(secondTask)return;
   secondId=expected;const task=new AbortController();secondTask=task;let url;
@@ -170,9 +195,9 @@ async function capturePair(signal){
   let metadata=null,blobs;
   if(globalThis.__ENTROPI_RIG_BRIDGE===true){
     const capture=await request('/api/capture','json',45000,signal,'POST');
-    if(!capture||typeof capture.left!=='string'||typeof capture.right!=='string'||!capture.left.startsWith('/api/frame/')||!capture.right.startsWith('/api/frame/'))throw new Error('Kameraa gav ikkje eit gyldig stereopar.');
-    blobs=await Promise.all([request(capture.left,'blob',20000,signal),request(capture.right,'blob',20000,signal)]);
-    metadata={id:capture.id,captured_at:capture.captured_at,transport:capture.transport,hardware_synchronized:capture.hardware_synchronized,timing:capture.timing??null};
+    if(!capture||typeof capture.left!=='string'||!capture.left.startsWith('/api/frame/')||capture.right!==null&&(typeof capture.right!=='string'||!capture.right.startsWith('/api/frame/')))throw new Error('Kameraa gav ikkje eit gyldig opptak.');
+    blobs=await Promise.all([capture.left,...(capture.right===null?[]:[capture.right])].map(path=>request(path,'blob',20000,signal)));
+    metadata={id:capture.id,captured_at:capture.captured_at,transport:capture.transport,hardware_synchronized:capture.hardware_synchronized,timing:capture.timing??null,fallback_reason:capture.fallback_reason??null};
   }else{
     const leftId=cameraStatus?.camera_id,rightId=secondId;
     const pair=await request('/stereo/capture?t='+Date.now(),'pair',20000,signal);
@@ -186,8 +211,8 @@ async function capturePair(signal){
       const image=new Image(),url=URL.createObjectURL(blob);urls.push(url);image.src=url;await image.decode();return image;
     }));
     signal.throwIfAborted();
-    if(!images[0].naturalWidth||!images[0].naturalHeight||images[0].naturalWidth!==images[1].naturalWidth||images[0].naturalHeight!==images[1].naturalHeight)throw new Error('Kameraa må bruke same fotooppløysing.');
-    return {...metadata,left:blobs[0],right:blobs[1]};
+    if(!images[0].naturalWidth||!images[0].naturalHeight||images[1]&&(images[0].naturalWidth!==images[1].naturalWidth||images[0].naturalHeight!==images[1].naturalHeight))throw new Error('Kameraa må bruke same fotooppløysing.');
+    return {...metadata,left:blobs[0],right:blobs[1]??null};
   }finally{urls.forEach(url=>URL.revokeObjectURL(url))}
 }
 async function request(path,type='json',timeout=8000,signal=null,method='GET'){
@@ -229,18 +254,26 @@ async function retryCamera(){
 }
 function acceptStatus(status){deviceStatus=status;cameraStatus=status.camera_ready?status:null;controls()}
 function stopStream(){streaming=false;clearInterval(frameTimer);frameTimer=0;const previous=live;live=null;previous?.removeAttribute('src');hasFrame=false;stopSecond();finder.active=false}
+function landscapeCapture(){return globalThis.matchMedia?.('(orientation: landscape)').matches??false}
+function drawLivePreview(){
+  if(landscapeCapture()){
+    finder.active=false;const canvas=$('finder');
+    if(canvas.width!==source.width||canvas.height!==source.height){canvas.width=source.width;canvas.height=source.height}
+    canvas.getContext('2d').drawImage(source,0,0);
+  }else finder.active=true;
+}
 function startStream(){
   if(streaming||document.hidden||reviewing()||busy||printBusy||!cameraStatus)return;
-  const image=new Image();image.crossOrigin='anonymous';live=image;streaming=true;hasFrame=false;finder.active=true;
+  const image=new Image();image.crossOrigin='anonymous';live=image;streaming=true;hasFrame=false;finder.active=!landscapeCapture();
   image.addEventListener('error',()=>{if(live===image&&streaming&&!connecting&&!busy)loseConnection('Kamerabiletet stoppa. Koplar til på nytt …')});
   image.src=streamUrl.href+'?t='+Date.now()+'&r='+ ++streamRevision;
-  frameTimer=setInterval(()=>{if(live!==image||!streaming||!image.naturalWidth||!image.naturalHeight)return;try{sourceContext.drawImage(image,0,0,source.width,source.height);hasFrame=true}catch{loseConnection('Kamerabiletet kunne ikkje visast.')}},50);
+  frameTimer=setInterval(()=>{if(live!==image||!streaming||!image.naturalWidth||!image.naturalHeight)return;try{sourceContext.drawImage(image,0,0,source.width,source.height);hasFrame=true;drawLivePreview()}catch{loseConnection('Kamerabiletet kunne ikkje visast.')}},50);
 }
-function resumeStream(){if(document.hidden||reviewing()||busy||printBusy)return;void connect()}
+function resumeStream(){if(document.hidden||reviewing()||busy||printBusy||!$('archive').hidden)return;void connect()}
 function scheduleReconnect(){clearTimeout(retryTimer);if(document.hidden||reviewing()||printBusy)return;retryTimer=setTimeout(connect,Math.min(30000,1500*2**Math.min(retryCount++,4)))}
 function loseConnection(message,kind='stream'){connected=false;cameraStatus=null;connectionProblem=kind;if(kind==='network')deviceStatus=null;stopStream();stopSecond();controls();notice(message);if(onboarding.open){renderOnboarding();$('onboarding-feedback').textContent=message}scheduleReconnect()}
 let artNeedsModel=false;
-function needsPhoneModels(){return !phoneReady&&(studioControls.image===1&&!secondEnabled&&!photoPair||studioControls.image===2&&!captureDocument?.result&&globalThis.__ENTROPI_RIG_BRIDGE!==true&&(!secondEnabled&&!photoPair||artNeedsModel))}
+function needsPhoneModels(){return !phoneReady&&(studioControls.image===1&&!secondEnabled&&!photoPair||studioControls.image===2&&!captureDocument?.result&&!panoramaDepth&&globalThis.__ENTROPI_RIG_BRIDGE!==true&&(!secondEnabled&&!photoPair||artNeedsModel))}
 function renderOnboarding(){
   const modelNeeded=needsPhoneModels(),depthArt=studioControls.image===2;
   $('close-onboarding').setAttribute('aria-label',photoDialog.open?'Tilbake til biletet':'Tilbake til kameraet');
@@ -253,7 +286,7 @@ function renderOnboarding(){
   $('onboarding-feedback').textContent=(modelNeeded?phoneError:'')||(!phoneWorking&&!connecting&&!connected&&deviceStatus&&(!deviceStatus.camera_ready||!deviceStatus.stream_ready)?healthMessage(deviceStatus):'')||firmwareNotice();
   if($('onboarding-feedback').textContent)$('onboarding-copy').hidden=true;
 }
-function showOnboarding(){renderOnboarding();if(!onboarding.open)onboarding.showModal()}
+function showOnboarding(){if(sweepCapture?.recording)return;renderOnboarding();if(!onboarding.open)onboarding.showModal()}
 function closeOnboarding(){const returnToPhoto=onboarding.open&&needsPhoneModels()&&(studioControls.image===2?!marigoldView.ready:!sceneViewer);phoneTask?.abort();phoneTask=null;phoneWorking=false;onboarding.close();if(returnToPhoto&&!studioControls.vathography)studioControls.setImage(0);controls();refreshReview()}
 async function setupPhone(source=null){
   if(phoneWorking)return;
@@ -280,7 +313,7 @@ async function checkPhone(silent=false){
   finally{if(phoneTask===task)phoneTask=null;controls();refreshReview()}
 }
 async function connect(){
-  if(connecting||recoveryPending||busy||printBusy||document.hidden||reviewing())return;
+  if(connecting||recoveryPending||busy||printBusy||document.hidden||reviewing()||!$('archive').hidden)return;
   clearTimeout(retryTimer);connecting=true;connected=false;controls();
   const generation=++connectGeneration;stopStream();hasFrame=false;let statusReceived=false;
   try{
@@ -297,49 +330,53 @@ async function connect(){
   }catch(error){if(generation===connectGeneration)loseConnection(error.name==='AbortError'?'Ingen kontakt. Kontroller Wi-Fi og straum.':error.message,statusReceived?(deviceStatus?.camera_ready?'stream':'sensor'):'network')}
   finally{if(generation===connectGeneration){connecting=false;controls();if(connected){void connectSecond();void watchButton()}}}
 }
-async function showPhoto(blob,signal,pair=null,master=null,archiveId=null){
+async function showPhoto(blob,signal,pair=null,master=null,archiveId=null,sweep=null){
   signal?.throwIfAborted();
-  if(!['image/jpeg',...(master||archiveId?['image/png','image/webp']:[])].includes(blob.type)||!blob.size)throw new Error('Ugyldig bilete');
+  if(!['image/jpeg',...(master||archiveId||sweep?.panorama?['image/png','image/webp']:[])].includes(blob.type)||!blob.size)throw new Error('Ugyldig bilete');
   const original=blob;
   let url=URL.createObjectURL(blob);const img=new Image();img.src=url;
   try{
     await img.decode();signal?.throwIfAborted();if(!img.naturalWidth||!img.naturalHeight)throw new Error('Ugyldig bilete');
-    const frame=finder.capture(img);
-    try{blob=await new Promise(resolve=>frame.toBlob(resolve,'image/png'))}finally{frame.width=frame.height=1}
-    signal?.throwIfAborted();if(!blob?.size||blob.type!=='image/png')throw new Error('Fotoet kunne ikkje takast.');
-    const framed=URL.createObjectURL(blob);URL.revokeObjectURL(url);url=framed;img.src=url;await img.decode();signal?.throwIfAborted();
+    if(!landscapeCapture()&&!sweep?.panorama&&!master?.panorama){
+      const frame=finder.capture(img);
+      try{blob=await new Promise(resolve=>frame.toBlob(resolve,'image/png'))}finally{frame.width=frame.height=1}
+      signal?.throwIfAborted();if(!blob?.size||blob.type!=='image/png')throw new Error('Fotoet kunne ikkje takast.');
+      const framed=URL.createObjectURL(blob);URL.revokeObjectURL(url);url=framed;img.src=url;await img.decode();signal?.throwIfAborted();
+    }
   }catch(error){URL.revokeObjectURL(url);throw error}
   if(photoUrl)URL.revokeObjectURL(photoUrl);
   clearScene();
   printFeedback('');
   artNeedsModel=false;photoBlob=blob;photoOriginal=original;photoPair=pair;photoUrl=url;captureDocument=master;captureArchiveId=archiveId;photoReceivedAt=new Date().toISOString();photoName='entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';
+  photoPanorama=master?.panorama??sweep?.panorama??null;panoramaDepth=sweep?.result??null;
   $('photo').src=url;$('thumbnail').src=url;$('thumbnail').hidden=false;photoView.setSource(img);$('last-photo').hidden=false;
   if(!photoDialog.open)photoDialog.showModal();
   photoGestures.reset();
-  refreshReview();if(master){await makeArt();signal?.throwIfAborted()}else if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt();else void persistCurrentPreview().catch(error=>printFeedback(error.message));
+  refreshReview();if(master||photoPanorama){await makeArt();signal?.throwIfAborted()}else if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt();else void persistCurrentPreview().catch(error=>printFeedback(error.message));
 }
-async function takePhoto(){
-  if(busy||printBusy||connecting||!connected||onboarding.open||reviewing()||!$('archive').hidden||Date.now()<captureAfter)return;
-  const paired=secondEnabled||globalThis.__ENTROPI_RIG_BRIDGE===true;if(!paired&&secondAutoMode)studioControls.setImage(0);
-  if(studioControls.vathography)studioControls.setImage(2);
+async function takePhoto(next=false){
+  const replacing=next===true&&reviewing();
+  if(sensorControlBusy||busy||printBusy||connecting||!connected||onboarding.open||sweepCapture?.active||reviewing()&&(!replacing||photoDialog.classList.contains('working'))||!$('archive').hidden||document.hidden||Date.now()<captureAfter)return;
+  const paired=secondEnabled||replacing&&!!photoPair&&secondId===peerId()||globalThis.__ENTROPI_RIG_BRIDGE===true;if(!replacing){if(!paired&&secondAutoMode)studioControls.setImage(0);if(studioControls.vathography)studioControls.setImage(2)}
   ++connectGeneration;clearTimeout(retryTimer);
   archiveWarning='';busy=true;captureFailed=false;stopStream();stopSecond();controls();notice('');
   const held=$('review-finder'),liveFrame=$('finder');held.width=liveFrame.width;held.height=liveFrame.height;held.getContext('2d').drawImage(liveFrame,0,0);
   const task=new AbortController();captureTask=task;
   try{
-    const pair=paired?await capturePair(task.signal):null;
-    const original=pair?.left??await request('/capture?t='+Date.now(),'blob',20000,task.signal);
+    if(replacing){await persistCurrentPreview();task.signal.throwIfAborted()}
+    const captured=paired?await capturePair(task.signal):null,pair=captured?.right?captured:null;
+    const original=captured?.left??await request('/capture?t='+Date.now(),'blob',20000,task.signal);
     task.signal.throwIfAborted();const archived=await archiveCapture(original,pair);
     await showPhoto(original,task.signal,pair,null,archived.id);
     if(archived.warning){archiveWarning=archived.warning;printFeedback(archived.warning)}
-  }catch{if(!task.signal.aborted){task.abort();captureFailed=true;notice('Fotoet kunne ikkje takast.')}}
+  }catch(error){if(!task.signal.aborted){task.abort();captureFailed=true;if(replacing)printFeedback(error.message||'Fotoet kunne ikkje takast.');else notice('Fotoet kunne ikkje takast.')}}
   finally{if(captureTask===task){captureTask=null;busy=false;controls();resumeStream()}}
 }
 let buttonRun=0;
 async function watchButton(){
   const run=++buttonRun;let seen=null;
   while(run===buttonRun&&!document.hidden&&Number.isInteger(deviceStatus?.button_presses)){
-    if(busy||printBusy||connecting||!(connected||reviewing()))seen=null;
+    if(busy||printBusy||connecting||sweepCapture?.active||!(connected||reviewing()))seen=null;
     else try{
       const state=await request('/button','json',2000);
       if(run!==buttonRun)return;
@@ -348,12 +385,12 @@ async function watchButton(){
     await new Promise(resolve=>setTimeout(resolve,250));
   }
 }
-function hardwareShutter(){if(!reviewing())void takePhoto();else if(!photoDialog.classList.contains('working'))photoDialog.close()}
+function hardwareShutter(){if(!reviewing())void takePhoto();else if(!photoDialog.classList.contains('working'))void takePhoto(true)}
 function clearScene(){
   clearTimeout(masterSaveTimer);masterSaveTimer=0;
   photoDialog.classList.remove('working','error');$('scene-progress').hidden=true;$('retry-scene').hidden=true;
   ++sceneGeneration;sceneTask?.abort();sceneTask=null;sceneViewer?.dispose();sceneViewer=null;
-  artTask?.abort();artTask=null;artError='';artVisible=false;marigoldView.reset();photoOriginal=null;captureDocument=null;captureArchiveId=null;photoReceivedAt=null;captureArchiveSuppressed=false;
+  artTask?.abort();artTask=null;artError='';artVisible=false;marigoldView.reset();photoOriginal=null;captureDocument=null;captureArchiveId=null;photoReceivedAt=null;captureArchiveSuppressed=false;photoPanorama=panoramaDepth=null;
   sceneVisible=false;needsSetup=false;sceneError='';
   $('scene').replaceChildren();$('scene').hidden=true;$('photo').hidden=!photoDialog.open||studioControls.image!==0;$('scene-status').textContent='';
 }
@@ -392,7 +429,9 @@ async function makeArt(){
   const generation=sceneGeneration,blob=photoBlob,master=captureDocument,task=new AbortController();artTask=task;artError='';needsSetup=false;$('scene-progress').classList.add('indeterminate');$('scene-progress-bar').style.strokeDasharray='';refreshReview();
   try{
     if(master?.result)await marigoldView.restore(photoOriginal??blob,master.result,master.recipe,task.signal);
-    else await marigoldView.process(photoPair?.left??photoOriginal??blob,task.signal,{right:photoPair?.right});
+    else if(panoramaDepth)await marigoldView.restore(photoOriginal??blob,panoramaDepth,{preset:1,position:0,width:1},task.signal);
+    else await marigoldView.process(photoPair?.left??photoOriginal??blob,task.signal,{right:photoPair?.right,panorama:photoPanorama});
+    if(photoPanorama&&!master)marigoldView.result.provenance={...marigoldView.result.provenance,panorama:{frames:photoPanorama.frames.length,stereo:!!panoramaDepth,hardwareSynchronized:false}};
     if(task.signal.aborted||generation!==sceneGeneration||blob!==photoBlob)return;
     await persistCurrentMaster().catch(error=>printFeedback(error.message));
   }catch(error){
@@ -425,26 +464,43 @@ async function makeScene(){
   }finally{if(sceneTask===task){sceneTask=null;refreshReview();if(sceneVisible)void persistCurrentPreview().catch(error=>printFeedback(error.message))}}
 }
 __ENTROPI_APP_ENHANCEMENTS__
+sweepCapture=createPanoramaCapture({surface:$('capture-plane'),viewport:$('finder'),enabled:()=>!sensorControlBusy&&connected&&hasFrame&&!connecting&&!busy&&!printBusy&&!onboarding.open&&!reviewing()&&$('archive').hidden&&!countdownTimer,capture:async signal=>{
+  if(sweepPaired||globalThis.__ENTROPI_RIG_BRIDGE===true){
+    try{return await capturePair(signal)}catch(error){signal.throwIfAborted();if(globalThis.__ENTROPI_RIG_BRIDGE===true)throw error;sweepPaired=false}
+  }
+  return {left:await request('/capture?t='+Date.now(),'blob',20000,signal),right:null,transport:'wifi',cameraId:cameraStatus?.camera_id,hardware_synchronized:false};
+},onState:phase=>{
+  if(phase)studio.dataset.panorama=phase;else delete studio.dataset.panorama;
+  if(phase==='recording'){sweepPaired=secondEnabled;++connectGeneration;clearTimeout(retryTimer);notice('Hald inne og før kameraet roleg til sida. Slepp for å fullføre.')}
+  if(phase==='processing'){busy=true;stopStream()}
+  if(!phase){busy=false;resumeStream()}
+  controls();
+},onResult:async(sweep,signal)=>{
+  const archived=await archiveCapture(sweep.left,null,sweep.panorama);signal.throwIfAborted();studioControls.setImage(2);
+  const stop=()=>artTask?.abort();signal.addEventListener('abort',stop,{once:true});
+  try{await showPhoto(sweep.left,signal,null,null,archived.id,sweep);if(archived.warning)printFeedback(archived.warning)}finally{signal.removeEventListener('abort',stop)}
+},onError:error=>notice(error.message||'Kunne ikkje setje saman panoramaet.',true)});
 $('capture-plane').addEventListener('click',takePhoto);$('retry-capture').addEventListener('click',takePhoto);
 bindExportGesture($('save-photo'),()=>{const blob=photoBlob,mode=studioControls.image,source=mode===2?marigoldView:sceneViewer,artResult=marigoldView.result;if(!blob||!photoDialog.open||mode===1&&!sceneVisible||mode===2&&!artVisible)return;const isCurrent=()=>photoBlob===blob&&photoDialog.open&&studioControls.image===mode&&(mode===0||mode===1&&sceneViewer===source&&sceneVisible||mode===2&&marigoldView.ready&&!artError&&marigoldView.result===artResult);return {image:()=>snapshotBlob(mode===0?photoView.snapshot(photoGestures.state,true):source.snapshot(true)),document:mode===2?persistCurrentMaster:undefined,name:photoName,isCurrent,onError:error=>printFeedback(error.message)}});
 $('connection').addEventListener('click',showOnboarding);
 $('retry-camera').addEventListener('click',retryCamera);
 $('onboarding-next').addEventListener('click',()=>{if(needsPhoneModels())void setupPhone();else if(connected)onboarding.close();else void retryCamera()});
 $('onboarding').addEventListener('cancel',event=>{event.preventDefault();closeOnboarding()});$('close-onboarding').addEventListener('click',closeOnboarding);
+bindCaptureGesture($('close-photo'),{enabled:()=>photoDialog.open&&!photoDialog.classList.contains('working')&&!busy&&!printBusy&&connected,onCapture:()=>takePhoto(true)});
 $('close-photo').addEventListener('click',()=>photoDialog.close());
 $('recenter-photo').addEventListener('click',()=>{reviewDown=reviewTap=null;if(studioControls.image===0)photoGestures.reset();else if(studioControls.image===2)marigoldView.resetTone();else sceneViewer?.resetView?.();updateRecenter()});
 $('print-photo').addEventListener('click',printCurrent);
 $('retry-scene').addEventListener('click',retryScene);
 photoDialog.addEventListener('contextmenu',event=>{if(!event.target.closest('button,a'))event.preventDefault()});
 
-photoDialog.addEventListener('close',()=>{void persistCurrentPreview().catch(error=>notice(error.message,true));reviewDown=reviewTap=null;cancelArt();closeOnboarding();refreshReview();resumeStream();$('capture-plane').focus({preventScroll:true})});
-$('last-photo').addEventListener('click',()=>{if(photoUrl&&!busy){stopStream();photoDialog.showModal();refreshReview();if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt()}});
+photoDialog.addEventListener('close',()=>{if(photoDialog.dataset.galleryClose){delete photoDialog.dataset.galleryClose;reviewDown=reviewTap=null;refreshReview();return}captureTask?.abort();void persistCurrentPreview().catch(error=>notice(error.message,true));reviewDown=reviewTap=null;cancelArt();closeOnboarding();refreshReview();resumeStream();$('capture-plane').focus({preventScroll:true})});
+$('last-photo').addEventListener('click',()=>{if(photoUrl&&!busy&&!sweepCapture?.active){stopStream();photoDialog.showModal();refreshReview();if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt()}});
 onboarding.addEventListener('click',event=>{if(event.target===onboarding){const rect=onboarding.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeOnboarding()}});
-function suspend(){++connectGeneration;connecting=false;connected=false;clearTimeout(retryTimer);if(captureTask){captureTask.abort();captureTask=null;busy=false}stopSecond();stopStream();controls()}
+function suspend(){sweepCapture.cancel();++connectGeneration;connecting=false;connected=false;clearTimeout(retryTimer);if(captureTask){captureTask.abort();captureTask=null;busy=false}stopSecond();stopStream();controls()}
 function resume(){if(!document.hidden){if(reviewing()){void watchButton();if(studioControls.image===0)photoGestures.refresh?.();else if(studioControls.image===2)void makeArt();else if(photoPair)void makeScene();else if(!phoneReady&&!phoneTask&&!sceneViewer)void checkPhone()}else connect()}}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});window.addEventListener('pagehide',()=>{notifyCamera('entropi-camera-left');parentReady=false;suspend();phoneTask?.abort();cancelArt()});window.addEventListener('pageshow',resume);window.addEventListener('online',resume);
 setInterval(async()=>{
-  if(!connected||busy||printBusy||connecting||document.hidden||reviewing())return;
+  if(!connected||busy||printBusy||sensorControlBusy||connecting||document.hidden||reviewing())return;
   const generation=connectGeneration;let statusReceived=false;
   try{
     const status=await request('/status','json',5000);
@@ -453,7 +509,7 @@ setInterval(async()=>{
     statusReceived=true;acceptStatus(status);if(!status.camera_ready||!status.stream_ready)throw new Error(healthMessage(status));void connectSecond();
   }catch(error){if(generation===connectGeneration&&!document.hidden&&!busy&&!printBusy&&!reviewing()&&connected)loseConnection(error.name==='AbortError'?'Mista kontakten med kameraet. Koplar til på nytt …':error.message,statusReceived?(deviceStatus?.camera_ready?'stream':'sensor'):'network')}
 },10000);
-window.addEventListener('keydown',event=>{if(event.code==='Space'&&!event.repeat&&!onboarding.open&&!reviewing()&&!['INPUT','BUTTON','A'].includes(document.activeElement.tagName)){event.preventDefault();takePhoto()}});
+window.addEventListener('keydown',event=>{if(!event.defaultPrevented&&event.code==='Space'&&!event.repeat&&!onboarding.open&&!['INPUT','BUTTON','A'].includes(document.activeElement.tagName)){event.preventDefault();hardwareShutter()}});
 controls();if(entry.has('setup'))showOnboarding();if(globalThis.__ENTROPI_RIG_BRIDGE!==true&&(entry.has('setup')||studioControls.vathography))void checkPhone(!entry.has('setup'));connect();
 })();
 </script>

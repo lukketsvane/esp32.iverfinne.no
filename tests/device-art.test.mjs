@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {createEntropiDocument} from '../vendor/entropi-document.mjs';
+import {attachGalleryNavigation} from '../vendor/gallery-navigation.mjs';
 
 const html=await readFile(new URL('../device/EntropiCamera/camera_ui.html',import.meta.url),'utf8');
 const section=(start,end)=>{
@@ -24,7 +25,7 @@ test('embedded archive previews use the current photo framing or native splat sn
   const source=enhancement.slice(enhancement.indexOf('async function persistCurrentPreview('),enhancement.indexOf('async function persistCurrentMaster('));
   for(const image of [0,1]){
     const writes=[],frames=[],pose={scale:2,x:4,y:-8,grain:3,contrast:1.5},rendered=new Blob(['processed'],{type:'image/png'});
-    const state=vm.createContext({masterSaveTimer:1,clearTimeout(){},photoBlob:jpeg,captureArchiveId:'capture-1',captureArchiveSuppressed:false,studioControls:{image},sceneError:'',masterWrites:new WeakMap(),
+    const state=vm.createContext({lockPageZoom(){},masterSaveTimer:1,clearTimeout(){},photoBlob:jpeg,captureArchiveId:'capture-1',captureArchiveSuppressed:false,studioControls:{image},sceneError:'',masterWrites:new WeakMap(),
       photoGestures:{state:pose},photoView:{snapshot(value,native){frames.push({kind:'photo',value,native});return {kind:'photo'}}},sceneViewer:{snapshot(native){frames.push({kind:'splat',native});return {kind:'splat'}}},
       snapshotBlob:()=>rendered,archiveStore:{async savePreview(id,blob){writes.push({id,blob})}},marigoldView:{ready:false},persistCurrentMaster(){throw new Error('Unexpected depth work')}
     });
@@ -47,7 +48,7 @@ test('embedded master preserves both originals and updates the original archive 
   const writes=[],right=new Blob(['right-jpeg'],{type:'image/jpeg'}),preview=new Blob(['preview'],{type:'image/png'});
   const result={depth:Float32Array.of(1.25,NaN,3.5,4),width:2,height:2,polarity:'near',model:'Depth Anything V2'};
   const state=vm.createContext({
-    photoBlob:preview,photoOriginal:jpeg,photoPair:{left:jpeg,right},photoReceivedAt:'2026-10-28T13:00:00Z',
+    photoBlob:preview,photoOriginal:jpeg,photoPair:{left:jpeg,right},photoPanorama:null,photoReceivedAt:'2026-10-28T13:00:00Z',
     captureDocument:null,captureArchiveId:'original-record',masterSaveTimer:0,clearTimeout(){},cameraStatus:{camera_id:'primary'},secondId:'secondary',
     createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:()=>preview,printFeedback(){},
     marigoldView:{ready:true,result,recipe:{preset:1,position:0,width:1},snapshot(){return preview}},
@@ -68,7 +69,7 @@ test('embedded master preserves both originals and updates the original archive 
 test('a late master archive write cannot attach its record to a replacement capture',async()=>{
   let finish;const preview=new Blob(['preview'],{type:'image/png'});
   const state=vm.createContext({
-    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:null,masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
+    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoPanorama:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:null,masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
     createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:()=>preview,printFeedback(){},
     marigoldView:{ready:true,result:{depth:Float32Array.of(1),width:1,height:1},recipe:{preset:1,position:0,width:1},snapshot(){}},
     archiveStore:{saveDocument:()=>new Promise(resolve=>{finish=resolve})}
@@ -81,7 +82,7 @@ test('a late master archive write cannot attach its record to a replacement capt
 test('embedded master writes serialize immutable edits and deleted captures remain exportable without recreation',async()=>{
   const writes=[],finishes=[],preview=new Blob(['preview'],{type:'image/png'});
   const state=vm.createContext({
-    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
+    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoPanorama:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
     createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:()=>preview,printFeedback(){},
     marigoldView:{ready:true,result:{depth:Float32Array.of(1),width:1,height:1},recipe:{preset:1,position:0,width:1},snapshot(){}},
     archiveStore:{saveDocument(master,id){writes.push({master,id});return new Promise(resolve=>finishes.push(()=>resolve({id})))}}
@@ -101,7 +102,7 @@ test('editing during the first archive write queues the latest recipe and proces
   let callbacks,finish,started,latest=initial,nextTimer=0;const firstWrite=new Promise(resolve=>{started=resolve});
   const view={ready:false,result:{depth:Float32Array.of(1,2,3,4),width:2,height:2},recipe:{preset:1,position:0,width:1},snapshot:()=>latest,async process(){this.ready=true;callbacks.onChange()}};
   const progress={classList:{add(){},toggle(){}},style:{}};
-  const state=vm.createContext({photoBlob:initial,photoOriginal:jpeg,photoPair:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,cameraStatus:null,secondId:'',
+  const state=vm.createContext({photoBlob:initial,photoOriginal:jpeg,photoPair:null,photoPanorama:null,panoramaDepth:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,cameraStatus:null,secondId:'',
     photoDialog:{open:true},studioControls:{image:2},sceneGeneration:1,artTask:null,artError:'',needsSetup:false,phoneTask:null,AbortController,DOMException,
     createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:value=>value,printFeedback(){},refreshReview(){},needsPhoneModels:()=>false,
     $:()=>progress,createMarigoldView:(_,options)=>{callbacks=options;return view},setTimeout:callback=>{const id=++nextTimer;timers.set(id,callback);return id},clearTimeout:id=>timers.delete(id),
@@ -120,7 +121,7 @@ test('editing during the first archive write queues the latest recipe and proces
 
 test('archived export uses the latest processed preview and preserves the original right image',()=>{
   const preview=new Blob(['latest processed preview'],{type:'image/png'}),master={preview:new Blob(['master preview'],{type:'image/png'}),result:{depth:Float32Array.of(1)}};
-  const record={left:jpeg,right:jpeg,preview,document:master},state=vm.createContext({archiveSelected:'master-1',archiveRecord:record,$:()=>({hidden:false})});
+  const record={left:jpeg,right:jpeg,preview,document:master},state=vm.createContext({archiveGeneration:1,archiveSelected:'master-1',archiveRecord:record,$:()=>({hidden:false})});
   vm.runInContext(enhancement.slice(enhancement.indexOf('function archivedExportOptions('),enhancement.indexOf("for(const kind of ['left','right'])")),state);
   const left=state.archivedExportOptions('left'),right=state.archivedExportOptions('right');
   assert.equal(left.image(),preview);assert.equal(left.document(),master);assert.equal(left.imageExtension,'png');
@@ -167,11 +168,11 @@ function archiveHarness(){
     async remove(id){records.delete(id)}
   };
   const preview=new Blob(['rendered'],{type:'image/png'}),view={ready:false,result:null,recipe:{preset:1,position:0,width:1},snapshot:()=>preview,reset(){this.ready=false;this.result=null},async process(blob,signal,settings){processed.push({blob,signal,settings});this.result={width:2,height:2,depth:Float32Array.of(1,2,3,4)};this.ready=true},async restore(blob,result,recipe,signal){restored.push({blob,result,recipe,signal});this.result=result;this.recipe=recipe;this.ready=true}};
-  const state=vm.createContext({Blob,AbortController,DOMException,document,window:{addEventListener:document.addEventListener},createArchive:()=>store,createEntropiDocument,
+  const state=vm.createContext({lockPageZoom(){},Blob,AbortController,DOMException,document,window:{addEventListener:document.addEventListener},createArchive:()=>store,createEntropiDocument,attachGalleryNavigation,
     $:id=>elements.get(id),studio:elements.get('studio'),photoDialog:elements.get('photo-dialog'),onboarding:elements.get('onboarding'),
     setTimeout:()=>1,clearTimeout(){},stopStream(){},stopSecond(){},resumeStream(){},controls(){},notice(){},printFeedback(){},refreshReview(){},needsPhoneModels:()=>false,bindExportGesture(){},pickEntropiDocument(){},
-    connected:true,connecting:false,busy:false,printBusy:false,connectGeneration:0,retryTimer:0,captureTask:null,sceneGeneration:0,artTask:null,artError:'',artNeedsModel:false,phoneTask:null,needsSetup:false,masterSaveTimer:0,captureArchiveSuppressed:false,
-    photoBlob:null,photoOriginal:null,photoPair:null,photoUrl:null,photoName:'',photoReceivedAt:null,captureDocument:null,captureArchiveId:null,cameraStatus:null,secondId:'',
+    connected:true,connecting:false,busy:false,printBusy:false,hasFrame:true,recoveryPending:false,sensorControlBusy:false,secondEnabled:false,landscapeCapture:()=>false,connectGeneration:0,retryTimer:0,captureTask:null,sceneGeneration:0,artTask:null,artError:'',artNeedsModel:false,phoneTask:null,needsSetup:false,masterSaveTimer:0,captureArchiveSuppressed:false,
+    photoBlob:null,photoOriginal:null,photoPair:null,photoPanorama:null,panoramaDepth:null,sweepCapture:null,photoUrl:null,photoName:'',photoReceivedAt:null,captureDocument:null,captureArchiveId:null,cameraStatus:null,secondId:'',
     studioControls:{image:0,setImage(value){this.image=value}},marigoldView:view,snapshotBlob:value=>value,photoView:{setSource(){},snapshot:()=>preview},photoGestures:{state:{},reset(){}},
     finder:{capture(){return {width:2,height:2,toBlob:callback=>callback(preview)}}},Image:class{naturalWidth=2;naturalHeight=2;async decode(){}},URL:{createObjectURL(blob){const url='blob:'+ ++nextUrl;urls.set(url,blob);return url},revokeObjectURL:url=>urls.delete(url)}
   });
@@ -179,6 +180,17 @@ function archiveHarness(){
   vm.runInContext(enhancement.slice(0,enhancement.indexOf('async function updatePeerPreview('))+'\n'+section('async function showPhoto(','async function takePhoto(')+'\n'+artSource,state);
   return {state,store,records,writes,processed,restored,urls,get:id=>elements.get(id),flush,get activeElement(){return document.activeElement},async key(key,shiftKey=false){const event={key,shiftKey,defaultPrevented:false,preventDefault(){this.defaultPrevented=true}};for(const callback of events.get('keydown')??[])callback(event);await flush();return event}};
 }
+
+test('embedded gallery browses adjacent photos and restores the existing grid and focus',async()=>{
+  const app=archiveHarness(),images=[0,1,2].map(value=>new Blob([String(value)],{type:'image/png'}));
+  for(const image of images)await app.store.save(image,null,image);
+  let lists=0;const list=app.store.list;app.store.list=async()=>{lists++;return list()};
+  await app.state.showArchive();const grid=app.get('archive-grid'),tiles=[...grid.children];grid.scrollTop=475;
+  await tiles[0].emit('click');await app.key('ArrowRight');assert.equal(app.urls.get(app.get('archive-photo').src),images[1]);assert.match(app.get('archive-photo').alt,/2 av 3/);
+  await app.get('archive-back').emit('click');assert.equal(grid.scrollTop,475);assert.equal(grid.children[0],tiles[0]);assert.equal(app.activeElement,tiles[1]);assert.equal(lists,1);
+  await tiles[2].emit('click');await app.key('ArrowRight');assert.equal(app.urls.get(app.get('archive-photo').src),images[2]);
+  await app.key('ArrowLeft');assert.equal(app.urls.get(app.get('archive-photo').src),images[1]);
+});
 
 for(const stereo of [false,true])test(`embedded recovery develops a preserved ${stereo?'stereo pair':'mono original'} using the existing archive identity`,async()=>{
   const app=archiveHarness(),left=new Blob(['left'],{type:'image/jpeg'}),right=stereo?new Blob(['right'],{type:'image/jpeg'}):null;
@@ -226,7 +238,7 @@ function pairHarness(options={}){
 function artHarness(options={}){
   const inputs=[],snapshots=[],progress={classList:{add(){}},style:{}};
   const context=vm.createContext({
-    photoBlob:new Blob(['framed']),photoOriginal:new Blob(['original']),photoPair:null,captureDocument:null,
+    photoBlob:new Blob(['framed']),photoOriginal:new Blob(['original']),photoPair:null,photoPanorama:null,panoramaDepth:null,captureDocument:null,
     photoDialog:{open:true},studioControls:{image:2,setImage(value){this.image=value}},
     sceneGeneration:1,artTask:null,artError:'',artNeedsModel:false,phoneReady:true,phoneTask:null,secondEnabled:false,needsSetup:false,AbortController,DOMException,
     $:()=>progress,refreshReview(){},controls(){},showOnboarding(){},checkPhone(){},async persistCurrentMaster(){},printFeedback(){},
@@ -263,6 +275,14 @@ test('USB capture obtains both frames from one capture ID and preserves measured
   assert.equal(app.revoked.length,2);
 });
 
+test('USB capture accepts only an explicit mono fallback and fetches its verified primary frame once',async()=>{
+  const capture={id:'mono-1',left:'/api/frame/mono-1/left',right:null,transport:'usb',hardware_synchronized:false,fallback_reason:'peer-unavailable'};
+  const app=pairHarness({capture}),result=await app.context.capturePair(new AbortController().signal);
+  assert.equal(result.left,jpeg);assert.equal(result.right,null);assert.equal(result.fallback_reason,'peer-unavailable');assert.equal(app.calls.length,2);assert.equal(app.calls[1][0],capture.left);
+  const incomplete=pairHarness({capture:{left:capture.left}});await assert.rejects(incomplete.context.capturePair(new AbortController().signal),/gyldig opptak/);
+  const empty=pairHarness({capture,dimensions:[[0,0]]});await assert.rejects(empty.context.capturePair(new AbortController().signal),/fotooppløysing/);
+});
+
 test('direct firmware capture receives an atomic pair and verifies both camera identities',async()=>{
   const app=pairHarness({bridge:false}),pair=await app.context.capturePair(new AbortController().signal);
   assert.equal(app.calls.length,1);assert.match(app.calls[0][0],/^\/stereo\/capture\?/);assert.equal(app.calls[0][1],'pair');
@@ -272,7 +292,7 @@ test('direct firmware capture receives an atomic pair and verifies both camera i
 
 test('invalid bridge routes and mismatched frame dimensions cannot enter review',async()=>{
   const invalid=pairHarness({capture:{left:'https://example.invalid/photo',right:'/api/frame/a/right'}});
-  await assert.rejects(invalid.context.capturePair(new AbortController().signal),/gyldig stereopar/);
+  await assert.rejects(invalid.context.capturePair(new AbortController().signal),/gyldig opptak/);
   assert.equal(invalid.calls.length,1);
   const mismatch=pairHarness({dimensions:[[640,480],[320,240]]});
   await assert.rejects(mismatch.context.capturePair(new AbortController().signal),/same fotooppløysing/);
@@ -343,7 +363,7 @@ test('art print and save use rendered snapshots and invalidate a replaced result
   const app=artHarness(),state=app.context,prints=[],saves=[];
   await state.makeArt();
   Object.assign(state,{
-    printBusy:false,sceneVisible:false,artVisible:true,sceneViewer:null,connectGeneration:0,connecting:false,retryTimer:null,
+    printBusy:false,busy:false,sceneVisible:false,artVisible:true,sceneViewer:null,connectGeneration:0,connecting:false,retryTimer:null,
     clearTimeout(){},stopStream(){},controls(){},printFeedback(){},resumeStream(){},
     printClient:{async print(image,isCurrent){prints.push({image,isCurrent})}},
     photoName:'entropi-test.png',snapshotBlob:image=>image,bindExportGesture(button,getOptions){button.addEventListener('click',async()=>{const options=getOptions();saves.push({...options,image:await options.image()})})}
@@ -356,4 +376,46 @@ test('art print and save use rendered snapshots and invalidate a replaced result
   assert.equal(typeof saves[0].document,'function');assert.equal(saves[0].image.depthArt,true);assert.equal(saves[0].image.native,true);assert.equal(saves[0].isCurrent(),true);
   state.marigoldView.result={model:'replacement'};
   assert.equal(prints[0].isCurrent(),false);assert.equal(saves[0].isCurrent(),false);
+});
+
+for(const outcome of ['resolve','reject'])test(`embedded gallery ignores a stale ${outcome} after reopening the same photo`,async()=>{
+  const start=enhancement.indexOf('async function openArchivedPhoto('),source=enhancement.slice(start,enhancement.indexOf('function closeArchive(',start));
+  let resolve,reject,calls=0;const pending=new Promise((yes,no)=>{resolve=yes;reject=no}),elements=new Map(),urls=new Map();
+  const old=new Blob(['old'],{type:'image/png'}),fresh=new Blob(['fresh'],{type:'image/png'});
+  const record=preview=>({id:'same',left:old,preview});
+  const get=id=>{if(!elements.has(id))elements.set(id,{hidden:false,textContent:'',classList:{toggle(){}},setAttribute(){},dataset:{},focus(){}});return elements.get(id)};
+  const state=vm.createContext({$:get,archiveGeneration:1,archiveScroll:0,archiveNavigation:{cancel(){}},disarmArchiveDelete(){},archiveSelected:null,archiveRecord:null,archiveDeleteArmed:false,archiveViewer:null,archiveRecords:[{id:'same',created:0}],archiveDate:()=>'',
+    archiveStore:{get:async()=>++calls===1?pending:record(fresh)},URL:{createObjectURL(blob){const url='blob:'+urls.size;urls.set(url,blob);return url},revokeObjectURL(){}}
+  });
+  vm.runInContext(source,state);const stale=state.openArchivedPhoto('same');
+  get('archive').hidden=true;state.archiveSelected=null;state.archiveGeneration++;
+  get('archive').hidden=false;state.archiveGeneration++;await state.openArchivedPhoto('same');
+  const currentUrl=get('archive-photo').src,urlCount=urls.size;
+  if(outcome==='resolve')resolve(record(old));else reject(new Error('Old read failed'));
+  await stale;
+  assert.equal(get('archive-photo').src,currentUrl);assert.equal(urls.get(currentUrl),fresh);assert.equal(urls.size,urlCount);assert.equal(state.archiveRecord.preview,fresh);
+});
+
+test('embedded right-original export remains an ordinary image when its left preview matches a master',()=>{
+  const start=enhancement.indexOf('function archivedExportOptions('),source=enhancement.slice(start,enhancement.indexOf('for(const kind',start));
+  const right=new Blob(['right'],{type:'image/jpeg'}),document={id:'master'},record={previewMatchesDocument:true,document,right,preview:new Blob(['rendered'],{type:'image/png'})};
+  const state=vm.createContext({archiveGeneration:1,archiveSelected:'capture',archiveRecord:record,$:()=>({hidden:false})});vm.runInContext(source,state);
+  const exported=state.archivedExportOptions('right');assert.equal(exported.defaultFormat,'png');assert.equal(exported.document,undefined);assert.equal(exported.image(),right);assert.equal(state.archivedExportOptions('left').defaultFormat,'tif');
+});
+
+test('embedded export and its errors stay stale after reopening the same archive image',()=>{
+  const start=enhancement.indexOf('function archivedExportOptions('),source=enhancement.slice(start,enhancement.indexOf('for(const kind',start));
+  const archive={hidden:false},notice={textContent:''},state=vm.createContext({archiveGeneration:1,archiveSelected:'same',archiveRecord:{preview:jpeg},$:id=>id==='archive'?archive:notice});vm.runInContext(source,state);
+  const old=state.archivedExportOptions('left');assert.equal(old.isCurrent(),true);
+  archive.hidden=true;state.archiveGeneration++;archive.hidden=false;state.archiveGeneration++;
+  assert.equal(old.isCurrent(),false);old.onError(new Error('Stale export error'));assert.equal(notice.textContent,'');assert.equal(state.archivedExportOptions('left').isCurrent(),true);
+});
+
+for(const outcome of ['resolve','reject'])test(`embedded delayed edit ${outcome} cannot replace a reopened archive session`,async()=>{
+  const source=enhancement.split('\n').find(line=>line.startsWith("$('archive-edit').addEventListener"));
+  let resolve,reject,handler;const pending=new Promise((yes,no)=>{resolve=yes;reject=no}),opened=[],notice={textContent:''},archive={hidden:false};
+  const state=vm.createContext({archiveGeneration:1,archiveSelected:'same',archiveStore:{get:()=>pending},openArchivedCapture:async(record,id)=>opened.push({record,id}),$:id=>id==='archive'?archive:id==='archive-notice'?notice:{addEventListener(_,callback){handler=callback}}});vm.runInContext(source,state);
+  const editing=handler();archive.hidden=true;state.archiveGeneration++;archive.hidden=false;state.archiveGeneration++;
+  if(outcome==='resolve')resolve({left:jpeg});else reject(new Error('Stale edit error'));await editing;
+  assert.equal(opened.length,0);assert.equal(notice.textContent,'');
 });

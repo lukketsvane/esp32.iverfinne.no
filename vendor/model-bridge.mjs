@@ -22,9 +22,9 @@ export async function phoneModelsReady(signal){
   catch(error){signal?.throwIfAborted();if(error.code==='PHONE_SETUP_REQUIRED')return false;throw error}
 }
 
-export function requestPhoneModels(signal,onProgress=()=>{},source=null,sourceOrigin='https://esp32iverfinneno-iverfinnes-projects.vercel.app'){
+export function requestPhoneModels(signal,onProgress=()=>{},source=null,sourceOrigin='https://esp32iverfinneno-iverfinnes-projects.vercel.app',kind='depth'){
   signal?.throwIfAborted();
-  const origin=source?phoneHelperOrigin(sourceOrigin):'https://esp32iverfinneno-iverfinnes-projects.vercel.app';
+  const origin=phoneHelperOrigin(sourceOrigin);
   if(!origin)return Promise.reject(new Error('Opne klargjeringa frå kameraet og prøv igjen.'));
   const helper=source||window.open(origin+'/prepare/?transfer','entropi-models');
   if(!helper)return Promise.reject(new Error('Tillat opning av klargjeringa og prøv igjen.'));
@@ -32,7 +32,7 @@ export function requestPhoneModels(signal,onProgress=()=>{},source=null,sourceOr
   const session=Array.from(random,value=>value.toString(16).padStart(2,'0')).join('');
   return new Promise((resolve,reject)=>{
     let manifest=null,ready=false,busy=false,finished=false,index=0;
-    const keys=['asset','runtime'];
+    const keys=kind==='upscale'?['upscale','runtime']:['asset','runtime'];
     const finish=error=>{
       if(finished)return;finished=true;clearTimeout(timer);window.removeEventListener('message',message);signal?.removeEventListener('abort',abort);
       if(error&&source)try{helper.postMessage({type:'entropi-models-cancel',session},origin)}catch{}
@@ -40,7 +40,7 @@ export function requestPhoneModels(signal,onProgress=()=>{},source=null,sourceOr
       if(error)reject(error);else resolve();
     };
     const abort=()=>finish(signal.reason||new DOMException('Avbrote.','AbortError'));
-    const start=()=>{if(manifest&&ready&&!finished)helper.postMessage({type:'entropi-models-request',session},origin)};
+    const start=()=>{if(manifest&&ready&&!finished)helper.postMessage({type:'entropi-models-request',session,keys},origin)};
     const message=async event=>{
       if(finished||event.origin!==origin||event.source!==helper)return;
       const data=event.data;
@@ -63,6 +63,6 @@ export function requestPhoneModels(signal,onProgress=()=>{},source=null,sourceOr
     window.addEventListener('message',message);signal?.addEventListener('abort',abort,{once:true});
     if(signal?.aborted){abort();return}
     if(source)helper.postMessage({type:'entropi-models-connect'},origin);
-    modelManifest(signal).then(value=>{manifest=value;start()}).catch(finish);
+    modelManifest(signal).then(value=>{manifest=value;if(keys.some(key=>!manifest[key]))throw new Error('Oppdater kameraet for AI-oppskalering.');start()}).catch(finish);
   });
 }

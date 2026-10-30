@@ -71,3 +71,14 @@
 .camera-feedback button{min-width:112px;min-height:44px;margin-top:10px;padding:10px 16px;color:#eee;background:#191919;border:1px solid #444;border-radius:4px;font:inherit;font-size:13px}
 .camera-feedback button:disabled{opacity:.55}
 @media(orientation:landscape) and (max-height:550px){.camera-feedback{left:68%;top:50%;transform:translate(-50%,-50%);width:29%;max-width:260px}}
+
+/* Keep archive rows intrinsic and scrollable on mobile Safari. */
+.vault-grid{min-height:0;grid-auto-rows:max-content;align-items:start}
+.vault-item{position:relative;display:block;width:100%;height:0;min-height:0;padding:75% 0 0;align-self:start}
+.vault-item img{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto;object-fit:contain}
+
+.vault-detail img{touch-action:none;-webkit-user-drag:none}
+.review .camera-return{left:calc(12px + env(safe-area-inset-left));bottom:calc(12px + env(safe-area-inset-bottom))}
+@media(orientation:landscape) and (max-height:550px){.review .camera-return{left:auto;right:calc(12px + env(safe-area-inset-right));bottom:auto;top:calc(8px + env(safe-area-inset-top))}}
+.vault button:active,.access-control:active{opacity:.55}
+.access-control[data-capture-ready="true"]{color:#fff;opacity:1}.access-control[data-capture-ready="true"] svg{transform:scale(.86)}

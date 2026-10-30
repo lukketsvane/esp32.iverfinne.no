@@ -8,7 +8,7 @@ import re
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 import uuid
 
 from PIL import Image
@@ -29,6 +29,8 @@ class Rig:
         self.baudrate = None
         self.preview_supported = None
         self.probe_timeout = 4
+        self.sensor_controls = [{}, {}]
+        self.sensor_checked = [0, 0]
 
     def connection(self):
         import serial
@@ -167,19 +169,20 @@ class Rig:
 
     def latest(self):
         # Any pair answers identity, size and camera-2 checks; one being captured is waited for, never repeated.
-        return self.capture(float('inf'))
+        return self.capture(float('inf'), allow_mono=True)
 
-    def capture(self, max_age=0):
+    def capture(self, max_age=0, allow_mono=False):
         # A USB pair takes seconds; readers of a fresh pair must not queue behind the next one.
         record = self.current
-        if record and time.time() - record['created'] < max_age:
+        if record and (allow_mono or len(record['frames']) == 2) and time.time() - record['created'] < max_age:
             return record
         with self.lock:
-            if self.current and time.time() - self.current['created'] < max_age:
+            if self.current and (allow_mono or len(self.current['frames']) == 2) and time.time() - self.current['created'] < max_age:
                 return self.current
             with self.connection() as link:
                 if not self.identities:
                     self.identify_link(link)
+                fallback = None
                 for attempt in range(2):
                     link.reset_input_buffer()
                     link.write(b'stereo-snap\n')
@@ -190,49 +193,159 @@ class Rig:
                     except FrameError:
                         if attempt:
                             raise
+                    except RuntimeError as error:
+                        if not allow_mono or str(error) not in ('PAIR_ERROR PEER_OFFLINE', 'PAIR_ERROR PEER_ID_OR_SENSOR'):
+                            raise
+                        fallback = str(error)
+                        link.reset_input_buffer()
+                        link.write(b'camera-photo\n')
+                        frame = self.read_photo(link, self.timeout)
+                        with Image.open(io.BytesIO(frame)) as image:
+                            image.load()
+                            size = image.size
+                        frames, metadata = [frame], {}
+                        break
                 if metadata and (metadata['left_camera_id'], metadata['right_camera_id']) != self.identities:
                     raise ValueError('Stereoparet kjem frå feil kamera')
-            record = {'id': uuid.uuid4().hex, 'created': time.time(), 'frames': frames, 'size': size, 'timing': metadata or None}
+            record = {'id': uuid.uuid4().hex, 'created': time.time(), 'frames': frames, 'size': size, 'timing': metadata or None, 'fallback_reason': fallback}
             self.current = record
             self.history[record['id']] = record
             while len(self.history) > 8:
                 del self.history[next(iter(self.history))]
             return record
 
+    def control(self, variable, value, side=0):
+        if variable not in ('brightness', 'ae_level') or type(value) is not int or not -2 <= value <= 2 or type(side) is not int or side not in (0, 1):
+            raise ValueError('Ugyldig sensorinnstilling')
+        with self.lock, self.connection() as link:
+            if not self.identities:
+                self.identify_link(link)
+            link.reset_input_buffer()
+            command = 'peer-control' if side else 'camera-control'
+            link.write(f'{command} {variable} {value}\n'.encode('ascii'))
+            end = time.monotonic() + min(self.timeout, 10)
+            data = b''
+            while time.monotonic() < end:
+                data = (data + link.read(4096))[-16000:]
+                match = re.search(rb'(?:^|\n)CONTROL_STATUS ([^\r\n]+)\r?\n', data)
+                if not match:
+                    continue
+                reply = json.loads(match[1])
+                if not isinstance(reply, dict) or reply.get('camera_id') != self.identities[side] or reply.get('var') != variable or type(reply.get('value')) is not int or reply['value'] != value:
+                    raise RuntimeError('Sensorinnstillinga vart ikkje stadfesta av rett kamera')
+                if reply.get('ok') is not True:
+                    raise RuntimeError(reply.get('error') or 'Sensorinnstillinga vart ikkje teken i bruk')
+                self.sensor_controls[side][variable] = value
+                self.sensor_checked[side] = time.monotonic()
+                self.current = None
+                return reply
+            raise TimeoutError('Kameraet stadfesta ikkje sensorinnstillinga')
+
+    def read_sensor_status(self, side):
+        if time.monotonic() - self.sensor_checked[side] < 5 or not self.lock.acquire(blocking=False):
+            return
+        try:
+            self.sensor_checked[side] = time.monotonic()
+            with self.connection() as link:
+                link.reset_input_buffer()
+                link.write(b'peer-check\n' if side else b'camera-check\n')
+                prefix = rb'PEER_STATUS ' if side else rb'CAMERA_STATUS '
+                end = time.monotonic() + min(self.timeout, 3)
+                data = b''
+                while time.monotonic() < end:
+                    data = (data + link.read(4096))[-16000:]
+                    match = re.search(rb'(?:^|\n)' + prefix + rb'([^\r\n]+)\r?\n', data)
+                    if not match:
+                        continue
+                    status = json.loads(match[1])
+                    if isinstance(status, dict) and status.get('camera_id') == self.identities[side] and status.get('camera_ready') is True:
+                        self.sensor_controls[side].update({key: value for key, value in status.items() if key in ('brightness', 'ae_level') and type(value) is int and -2 <= value <= 2})
+                    break
+        except (ValueError, OSError, RuntimeError):
+            pass
+        finally:
+            self.lock.release()
+
     def status(self, side=0):
-        record = self.latest()
-        return {'camera_id': self.identities[side], 'camera_ready': True, 'stream_ready': True,
-                'peer': {'camera_id': self.identities[1-side]}, 'transport': 'usb',
-                'hardware_synchronized': False, 'width': record['size'][0], 'height': record['size'][1]}
+        record = self.current or next(reversed(tuple(self.history.values())), None) or self.latest()
+        ready = side < len(record['frames'])
+        if ready:
+            self.read_sensor_status(side)
+        return {'camera_id': self.identities[side], 'camera_ready': ready, 'stream_ready': ready,
+                'peer': {'camera_id': self.identities[1-side]} if len(record['frames']) == 2 else None, 'transport': 'usb',
+                'last_error': record.get('fallback_reason', '') if not ready else '',
+                'hardware_synchronized': False, 'width': record['size'][0], 'height': record['size'][1], **self.sensor_controls[side]}
 
 
 class Depth:
-    def __init__(self, size):
+    variants = {'small': 'Small', 'base': 'Base', 'large': 'Large'}
+
+    def __init__(self, size, model='small', device='auto'):
+        if model not in self.variants or device not in ('auto', 'cpu', 'cuda'):
+            raise ValueError('Ukjend djupnemodell eller prosessor')
+        if not isinstance(size, int) or size < 140 or size > 1540 or size % 14:
+            raise ValueError('Djupneoppløysinga må vere eit multiplum av 14 mellom 140 og 1540')
         self.size = size
+        self.model_name = 'Depth Anything V2 ' + self.variants[model]
+        self.model_id = 'depth-anything/Depth-Anything-V2-' + self.variants[model] + '-hf'
+        self.requested_device = device
+        self.device = None
+        self.fallback_reason = None
+        self.revision = None
         self.lock = threading.Lock()
         self.processor = self.model = None
         self.cache = {}
+
+    def cpu_fallback(self, torch, model):
+        model.to('cpu')
+        self.device = 'cpu'
+        self.fallback_reason = 'CUDA-minnet var fullt; bereknar på CPU'
+        torch.cuda.empty_cache()
 
     def predict(self, data):
         key = hashlib.sha256(data).hexdigest()
         with self.lock:
             if key in self.cache:
                 return self.cache[key]
+            with Image.open(io.BytesIO(data)) as original:
+                if original.width < 2 or original.height < 2 or original.width * original.height > 16777216:
+                    raise ValueError('Biletet har ugyldig storleik')
+                image = original.convert('RGB')
             import torch
             from transformers import AutoImageProcessor, AutoModelForDepthEstimation
             if self.model is None:
-                name = 'depth-anything/Depth-Anything-V2-Small-hf'
-                self.processor = AutoImageProcessor.from_pretrained(name, local_files_only=True)
-                self.model = AutoModelForDepthEstimation.from_pretrained(name, local_files_only=True).eval()
+                available = torch.cuda.is_available()
+                if self.requested_device == 'cuda' and not available:
+                    raise RuntimeError('CUDA er ikkje tilgjengeleg i Python-miljøet; bruk --depth-device cpu')
+                self.device = 'cuda' if available and self.requested_device != 'cpu' else 'cpu'
+                processor = AutoImageProcessor.from_pretrained(self.model_id, local_files_only=True)
+                model = AutoModelForDepthEstimation.from_pretrained(self.model_id, local_files_only=True).eval()
+                try:
+                    model.to(self.device)
+                except torch.cuda.OutOfMemoryError:
+                    if self.requested_device != 'auto':
+                        raise
+                    self.cpu_fallback(torch, model)
+                self.processor, self.model = processor, model
+                self.revision = getattr(model.config, '_commit_hash', None)
                 torch.set_num_threads(min(8, os.cpu_count() or 1))
-            image = Image.open(io.BytesIO(data)).convert('RGB')
-            if image.width * image.height > 20000000:
-                raise ValueError('Biletet er for stort')
             inputs = self.processor(images=image, return_tensors='pt', size={'height': self.size, 'width': self.size})
             with torch.inference_mode():
-                predicted = self.model(**inputs).predicted_depth
+                try:
+                    inputs = {name: value.to(self.device) for name, value in inputs.items()}
+                    predicted = self.model(**inputs).predicted_depth.cpu()
+                except torch.cuda.OutOfMemoryError:
+                    if self.device != 'cuda' or self.requested_device != 'auto':
+                        raise
+                    inputs = {name: value.to('cpu') for name, value in inputs.items()}
+                    self.cpu_fallback(torch, self.model)
+                    predicted = self.model(**inputs).predicted_depth.cpu()
                 depth = torch.nn.functional.interpolate(predicted.unsqueeze(1), size=(image.height, image.width), mode='bicubic', align_corners=False)[0, 0]
-            result = (depth.cpu().numpy().astype('<f4').tobytes(), image.width, image.height)
+                if not torch.isfinite(depth).all():
+                    raise ValueError('Djupnemodellen gav ugyldige verdiar')
+            metadata = {'model': self.model_name, 'device': self.device, 'revision': self.revision,
+                        'input_size': self.size, 'fallback_reason': self.fallback_reason}
+            result = (depth.cpu().numpy().astype('<f4').tobytes(), image.width, image.height, metadata)
             self.cache[key] = result
             while len(self.cache) > 3:
                 del self.cache[next(iter(self.cache))]
@@ -266,9 +379,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json({'error': 'Origin rejected'}, 403)
         try:
             if self.path == '/api/capture':
-                record = self.server.rig.capture()
+                record = self.server.rig.capture(allow_mono=True)
                 return self.json({'id': record['id'], 'left': '/api/frame/' + record['id'] + '/left',
-                                  'right': '/api/frame/' + record['id'] + '/right', 'captured_at': record['created'],
+                                  'right': '/api/frame/' + record['id'] + '/right' if len(record['frames']) == 2 else None, 'captured_at': record['created'],
+                                  'fallback_reason': record.get('fallback_reason'),
                                   'transport': 'usb', 'hardware_synchronized': False, 'timing': record.get('timing')})
             if self.path == '/api/depth':
                 length = int(self.headers.get('Content-Length', 0))
@@ -277,9 +391,11 @@ class Handler(SimpleHTTPRequestHandler):
                 data = self.rfile.read(length)
                 if len(data) != length:
                     return self.json({'error': 'Ufullstendig bilete'}, 400)
-                depth, width, height = self.server.depth.predict(data)
+                depth, width, height, metadata = self.server.depth.predict(data)
                 return self.send(depth, 'application/octet-stream', headers={'X-Depth-Width': width, 'X-Depth-Height': height,
-                                 'X-Depth-Polarity': 'near', 'X-Depth-Model': 'Depth Anything V2 Small', 'X-Depth-Input-Size': self.server.depth.size})
+                                 'X-Depth-Polarity': 'near', 'X-Depth-Model': metadata['model'], 'X-Depth-Input-Size': metadata['input_size'],
+                                 'X-Depth-Device': metadata['device'], 'X-Depth-Revision': metadata['revision'] or '',
+                                 'X-Depth-Fallback': metadata['fallback_reason'] or ''})
             self.json({'error': 'Not found'}, 404)
         except Exception as error:
             self.json({'error': str(error)}, 503)
@@ -290,20 +406,27 @@ class Handler(SimpleHTTPRequestHandler):
             if path in ('/status', '/peer/status'):
                 return self.json(self.server.rig.status(int(path.startswith('/peer/'))))
             if path == '/api/health':
-                return self.json({'service': 'ENTROPI', 'port': self.server.rig.port, 'depth_model': 'Depth Anything V2 Small',
-                                  'depth_input_size': self.server.depth.size, 'paired': bool(self.server.rig.identities)})
+                return self.json({'service': 'ENTROPI', 'port': self.server.rig.port, 'depth_model': self.server.depth.model_name,
+                                  'depth_input_size': self.server.depth.size, 'depth_device': self.server.depth.device,
+                                  'depth_revision': self.server.depth.revision, 'depth_fallback': self.server.depth.fallback_reason,
+                                  'paired': bool(self.server.rig.current and len(self.server.rig.current['frames']) == 2)})
             if path.startswith('/api/frame/'):
                 _, _, _, identity, eye = path.split('/')
                 record = self.server.rig.history.get(identity)
-                if record is None or eye not in ('left', 'right'):
+                if record is None or eye not in ('left', 'right') or eye == 'right' and len(record['frames']) < 2:
                     return self.json({'error': 'Opptaket er ikkje tilgjengeleg'}, 404)
                 return self.send(record['frames'][eye == 'right'], 'image/jpeg')
             if path == '/preview':
                 return self.send(self.server.rig.preview(), 'image/jpeg')
             if path == '/peer/preview':
-                return self.send(self.server.rig.latest()['frames'][1], 'image/jpeg')
+                record = self.server.rig.latest()
+                if len(record['frames']) < 2:
+                    return self.json({'error': record.get('fallback_reason')}, 503)
+                return self.send(record['frames'][1], 'image/jpeg')
             if path in ('/capture', '/peer/capture'):
-                record = self.server.rig.capture(20)
+                record = self.server.rig.capture(20, allow_mono=True)
+                if path.startswith('/peer/') and len(record['frames']) < 2:
+                    return self.json({'error': record.get('fallback_reason')}, 503)
                 return self.send(record['frames'][path.startswith('/peer/')], 'image/jpeg')
             if path == '/stream':
                 self.send_response(200)
@@ -319,8 +442,17 @@ class Handler(SimpleHTTPRequestHandler):
                 html = (self.server.root / 'device/preview/index.html').read_text(encoding='utf-8')
                 config = '<script>globalThis.__ENTROPI_RIG_BRIDGE=true;globalThis.__ENTROPI_DEPTH_ENDPOINT="/api/depth";</script>'
                 return self.send(html.replace('<head>', '<head>' + config, 1).encode(), 'text/html; charset=utf-8')
-            if path == '/control':
-                return self.json({'error': 'Sensorinnstillingar er ikkje tilgjengelege over USB'}, 409)
+            if path in ('/control', '/peer/control'):
+                if not self.allowed():
+                    return self.json({'error': 'Origin rejected'}, 403)
+                try:
+                    query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                    if set(query) != {'var', 'val'} or any(len(items) != 1 for items in query.values()) or not re.fullmatch('-?[0-9]+', query['val'][0]):
+                        raise ValueError('Ugyldig sensorinnstilling')
+                    reply = self.server.rig.control(query['var'][0], int(query['val'][0]), int(path.startswith('/peer/')))
+                except ValueError as error:
+                    return self.json({'error': str(error)}, 400)
+                return self.json(reply)
             if '..' in path.split('/') or not (path.startswith(('/vendor/', '/pointcloud/')) or path in ('/favicon.svg', '/style.css')):
                 return self.json({'error': 'Not found'}, 404)
             super().do_GET()
@@ -332,9 +464,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 def warm_up(rig):
     try:
-        rig.capture()
+        rig.capture(allow_mono=True)
     except Exception as error:
-        print('Første stereopar feila: ' + str(error), flush=True)
+        print('Første opptak feila: ' + str(error), flush=True)
 
 
 def main():
@@ -342,16 +474,19 @@ def main():
     parser.add_argument('--serial', required=True)
     parser.add_argument('--port', type=int, default=19305)
     parser.add_argument('--inference-size', type=int, default=770)
+    parser.add_argument('--depth-model', choices=tuple(Depth.variants), default='small')
+    parser.add_argument('--depth-device', choices=('auto', 'cpu', 'cuda'), default='auto')
     parser.add_argument('--cache')
     args = parser.parse_args()
     if args.cache:
         os.environ['HF_HOME'] = args.cache
+    depth = Depth(args.inference_size, args.depth_model, args.depth_device)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
     server.root = Path(__file__).resolve().parents[1]
     server.rig = Rig(args.serial)
     server.rig.identify()
     threading.Thread(target=warm_up, args=(server.rig,), daemon=True).start()
-    server.depth = Depth(args.inference_size)
+    server.depth = depth
     print('ENTROPI http://127.0.0.1:' + str(args.port), flush=True)
     server.serve_forever()
 

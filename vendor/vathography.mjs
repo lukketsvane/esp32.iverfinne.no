@@ -60,14 +60,16 @@ function pchip(knots){
 
 const toneLuts=curves.map(knots=>{const evaluate=pchip(knots);return Float32Array.from({length:4097},(_,i)=>evaluate(i/4096)*255)});
 
-export function toneDepth(depth,width,height,{preset=0,position=0,width:bandWidth=1,outputWidth=width,outputHeight=height,validity}={}){
+export function toneDepth(depth,width,height,{preset=0,position=0,width:bandWidth=1,outputWidth=width,outputHeight=height,validity,bitDepth=8}={}){
   dimensions(depth,width,height);
+  if(bitDepth!==8&&bitDepth!==16)throw new Error('Ugyldig bitdjupn.');
   if(validity&&(validity.length!==depth.length||Array.from(validity).some(value=>value!==0&&value!==1)))throw new Error('Ugyldig stereomaske.');
   if(!Number.isInteger(outputWidth)||!Number.isInteger(outputHeight)||outputWidth<1||outputHeight<1||outputWidth*outputHeight>16777216)throw new Error('Ugyldig biletstorleik.');
   const selected=typeof preset==='string'?VATHOGRAPHY_PRESETS.findIndex(item=>item.id===preset):preset;
   const lut=toneLuts[Number.isInteger(selected)&&selected>=0&&selected<toneLuts.length?selected:0];
   const shift=Number.isFinite(position)?clamp(position,-1,1):0,stretch=Number.isFinite(bandWidth)?clamp(bandWidth,.25,3):1;
-  const output=new Uint8ClampedArray(outputWidth*outputHeight*4),sameSize=width===outputWidth&&height===outputHeight;
+  const precision=bitDepth===16?257:1,opaque=bitDepth===16?65535:255;
+  const output=bitDepth===16?new Uint16Array(outputWidth*outputHeight*4):new Uint8ClampedArray(outputWidth*outputHeight*4),sameSize=width===outputWidth&&height===outputHeight;
   const valueAt=index=>validity?validity[index]===1&&Number.isFinite(depth[index])?depth[index]:NaN:Number.isFinite(depth[index])?depth[index]:.5;
   for(let y=0;y<outputHeight;y++){
     const sy=clamp((y+.5)*height/outputHeight-.5,0,height-1),y0=Math.floor(sy),y1=Math.min(height-1,y0+1),dy=sy-y0;
@@ -82,8 +84,9 @@ export function toneDepth(depth,width,height,{preset=0,position=0,width:bandWidt
       }
       if(validity&&!Number.isFinite(sample))continue;
       const index=clamp((sample-.5-shift)/stretch+.5,0,1)*4096,low=Math.floor(index),high=Math.min(4096,low+1);
-      const value=Math.round(lut[low]+(lut[high]-lut[low])*(index-low)),at=i*4;
-      output[at]=output[at+1]=output[at+2]=value;output[at+3]=255;
+      // Scale the floating-point tone before rounding; never expand quantized 8-bit pixels.
+      const value=Math.round((lut[low]+(lut[high]-lut[low])*(index-low))*precision),at=i*4;
+      output[at]=output[at+1]=output[at+2]=value;output[at+3]=opaque;
     }
   }
   return output;

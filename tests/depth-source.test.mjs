@@ -68,17 +68,37 @@ test('browser inference preserves missing-model error codes for portable setup',
 });
 
 test('depth art bypasses a cached 420px worker and sends higher resolution sensor pixels',async()=>{
-  const original={Image:globalThis.Image,document:globalThis.document,Worker:globalThis.Worker};let request,terminated=0;const workerUrls=[];
+  const original={Image:globalThis.Image,document:globalThis.document,Worker:globalThis.Worker};let request,terminated=0;const workerUrls=[],contexts=[];
   const legacy=message=>message.width>420||message.height>420?{type:'error',message:'Ugyldig biletoppløysing.'}:{type:'result',depth:new Float32Array(message.width*message.height).buffer,width:message.width,height:message.height};
   const cached=new Map([['/pointcloud/depth-worker.mjs',legacy]]);
   globalThis.Image=class{naturalWidth=1600;naturalHeight=1200;async decode(){}};
-  globalThis.document={createElement:()=>({width:0,height:0,getContext:()=>({drawImage(){},getImageData:(_,__,width,height)=>({data:new Uint8ClampedArray(width*height*4)})})})};
+  globalThis.document={createElement:()=>({width:0,height:0,getContext:()=>{const context={drawImage(){},getImageData:(_,__,width,height)=>({data:new Uint8ClampedArray(width*height*4)})};contexts.push(context);return context}})};
   globalThis.Worker=class{constructor(url){this.url=url;workerUrls.push(url)}postMessage(message){request=message;const old=cached.get(new URL(this.url,'http://192.168.4.1').pathname);queueMicrotask(()=>this.onmessage({data:old?old(message):{type:'result',depth:new Float32Array(message.width*message.height).buffer,width:message.width,height:message.height}}))}terminate(){terminated++}};
   try{
     const result=await runBrowserDepth(photo);
     assert.equal(request.width,518);assert.equal(request.height,392);assert.equal(request.rgba.byteLength,518*392*4);
     assert.equal(legacy(request).type,'error');assert.deepEqual(workerUrls,['/pointcloud/depth-worker-v2.mjs']);
     assert.equal(result.sourceWidth,1600);assert.equal(result.sourceHeight,1200);assert.equal(result.width,518);assert.equal(result.height,392);
-    assert.match(result.model,/518 px/);assert.equal(terminated,1);
+    assert.match(result.model,/518 px/);assert.equal(terminated,0);assert.equal(contexts[0].imageSmoothingEnabled,true);assert.equal(contexts[0].imageSmoothingQuality,'high');
+    globalThis.document.hidden=true;
+    const next=await runBrowserDepth(photo);
+    assert.deepEqual(workerUrls,['/pointcloud/depth-worker-v2.mjs']);assert.equal(next.width,518);assert.equal(terminated,1);
   }finally{for(const [key,value]of Object.entries(original)){if(value===undefined)delete globalThis[key];else globalThis[key]=value}}
+});
+
+test('oversized photographs reject before canvas allocation or inference',async()=>{
+  const original={Image:globalThis.Image,document:globalThis.document,Worker:globalThis.Worker};let contextCalls=0,workers=0;
+  globalThis.Image=class{naturalWidth=8192;naturalHeight=4096;async decode(){}};
+  globalThis.document={createElement:()=>({getContext(){contextCalls++;throw Error('must not allocate')}})};
+  globalThis.Worker=class{constructor(){workers++}};
+  try{await assert.rejects(runBrowserDepth(photo),/ugyldig storleik/);assert.equal(contextCalls,0);assert.equal(workers,0)}
+  finally{for(const [key,value]of Object.entries(original)){if(value===undefined)delete globalThis[key];else globalThis[key]=value}}
+});
+
+test('local predictions preserve actual inference model, device, revision and fallback provenance',async()=>{
+  const result=await runLocalDepth(photo,{endpoint,fetcher:async()=>response({'X-Depth-Model':'Depth Anything V2 Base','X-Depth-Device':'cpu','X-Depth-Revision':'cached-revision','X-Depth-Input-Size':'770','X-Depth-Fallback':'CUDA memory exhausted'})});
+  assert.equal(result.model,'Depth Anything V2 Base');
+  assert.deepEqual(result.provenance,{device:'cpu',modelRevision:'cached-revision',inputSize:770,fallbackReason:'CUDA memory exhausted'});
+  const legacy=await runLocalDepth(photo,{endpoint,fetcher:async()=>response()});
+  assert.deepEqual(legacy.provenance,{device:null,modelRevision:null,inputSize:null,fallbackReason:null});
 });

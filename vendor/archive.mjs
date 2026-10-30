@@ -1,3 +1,5 @@
+import {normalizePanorama} from './entropi-document.mjs';
+
 const archiveName='entropi-gallery-v1';
 
 function openArchive(){
@@ -51,16 +53,18 @@ export function createArchive(){
     void navigator.storage.persist().catch(()=>{});
   };
   return {
-    async save(left,right=null,rendered=left){
+    async save(left,right=null,rendered=left,panorama=null){
       requestPersistence();
       if(!(left instanceof Blob)||!left.size||right&&(!(right instanceof Blob)||!right.size))throw new Error('Manglar gyldige originalbilete.');
       if(rendered!==null&&(!(rendered instanceof Blob)||!rendered.size))throw new Error('Manglar gyldig framkalla bilete.');
+      const sweep=normalizePanorama(panorama);
+      if(sweep&&(right!==null||left.size+(rendered?.size??0)+sweep.frames.reduce((sum,frame)=>sum+frame.left.size+(frame.right?.size??0),0)>128*1024*1024))throw new Error('Ugyldig panorama.');
       const db=await connect();
       const id=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
       const preview=await thumbnail(rendered??left).catch(()=>null)??rendered??left;
-      const info={id,created:Date.now(),stereo:!!right,preview,pending:rendered===null};
+      const info={id,created:Date.now(),stereo:!!right||!!sweep?.frames.some(frame=>frame.right),preview,pending:rendered===null,previewMatchesDocument:false};
       await transact(db,['photos','index'],'readwrite',tx=>{
-        tx.objectStore('photos').put({id,left,right,preview:rendered});
+        tx.objectStore('photos').put({id,left,right,preview:rendered,previewMatchesDocument:false,...(sweep?{panorama:sweep}:{})});
         tx.objectStore('index').put(info);
       });
       return info;
@@ -78,7 +82,7 @@ export function createArchive(){
           const index=tx.objectStore('index').get(id);
           index.onsuccess=()=>{
             if(!index.result)return;
-            try{result={...index.result,preview,pending:false};tx.objectStore('photos').put({...photo.result,preview:blob});tx.objectStore('index').put(result)}
+            try{result={...index.result,preview,pending:false,previewMatchesDocument:false};tx.objectStore('photos').put({...photo.result,preview:blob,previewMatchesDocument:false});tx.objectStore('index').put(result)}
             catch(error){reject(error);tx.abort()}
           };
         };
@@ -86,7 +90,8 @@ export function createArchive(){
     },
     async list(){
       const db=await connect(),records=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').getAll());
-      return Promise.all(records.sort((a,b)=>b.created-a.created).map(async record=>{
+      return Promise.all(records.sort((a,b)=>b.created-a.created).map(async stored=>{
+        const record={...stored,previewMatchesDocument:stored.previewMatchesDocument===true};
         if(!record.pending||record.preview)return record;
         const photo=await transact(db,['photos'],'readonly',tx=>tx.objectStore('photos').get(record.id));
         return photo?.left?{...record,preview:await thumbnail(photo.left).catch(()=>null)??photo.left}:record;
@@ -95,17 +100,24 @@ export function createArchive(){
     async saveDocument(document,id=document.id){
       requestPersistence();
       if(!id||!(document.left instanceof Blob)||!document.result?.depth||!(document.preview instanceof Blob))throw new Error('Ugyldig Entropi-dokument.');
+      const panorama=normalizePanorama(document.panorama);if(panorama){if(document.right!=null)throw new Error('Ugyldig panorama.');document={...document,panorama}}
       const db=await connect(),existing=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').get(id));
       const preview=await thumbnail(document.preview).catch(()=>null)??document.preview;
-      const info={id,created:existing?.created??Date.parse(document.created),stereo:!!document.right,preview,pending:false};
+      const info={id,created:existing?.created??Date.parse(document.created),stereo:!!document.right||!!panorama?.frames.some(frame=>frame.right),preview,pending:false,previewMatchesDocument:true};
       await transact(db,['photos','index'],'readwrite',tx=>{
-        tx.objectStore('photos').put({id,left:document.left,right:document.right,document,preview:document.preview});
+        tx.objectStore('photos').put({id,left:document.left,right:document.right,document,preview:document.preview,previewMatchesDocument:true,...(panorama?{panorama}:{})});
         tx.objectStore('index').put(info);
       });
       return info;
     },
     async get(id){
-      const db=await connect();return await transact(db,['photos'],'readonly',tx=>tx.objectStore('photos').get(id));
+      const db=await connect(),record=await transact(db,['photos'],'readonly',tx=>tx.objectStore('photos').get(id));
+      if(!record)return record;
+      // Legacy records are safe only when no independent preview can replace the master.
+      const hasMaster=!!record.document?.result?.depth&&record.document.preview instanceof Blob;
+      const previewMatchesDocument=hasMaster&&(record.previewMatchesDocument===true||
+        record.previewMatchesDocument===undefined&&(!record.preview||record.preview===record.document.preview));
+      return {...record,previewMatchesDocument};
     },
     async remove(id){
       const db=await connect();

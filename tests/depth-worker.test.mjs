@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const scene=(await readFile(new URL('../vendor/scene.mjs',import.meta.url),'utf8')).split('function renderScene(')[0].replace(/^import .*;\r?\n/gm,'');
+const engine=(await readFile(new URL('../vendor/depth-engine.mjs',import.meta.url),'utf8')).replace('export function','function');
 function host(){
   const workers=[],timers=new Map(),events=new Map();let id=0;
   class Worker{
@@ -13,8 +13,8 @@ function host(){
     result(value){this.onmessage({data:{type:'result',depth:new Float32Array([value]).buffer,width:1,height:1}})}
   }
   const document={hidden:false,addEventListener:(name,handler)=>events.set(name,handler)};
-  const context=vm.createContext({Worker,document,DOMException,Float32Array,Uint8ClampedArray,setTimeout:(fn,delay)=>{const n=++id;timers.set(n,{fn,delay});return n},clearTimeout:n=>timers.delete(n),addEventListener:(name,handler)=>events.set(name,handler)});
-  vm.runInContext(scene+'\nglobalThis.run=estimateDepth;',context);
+  const context=vm.createContext({Worker,document,DOMException,ArrayBuffer,Float32Array,Uint8ClampedArray,setTimeout:(fn,delay)=>{const n=++id;timers.set(n,{fn,delay});return n},clearTimeout:n=>timers.delete(n),addEventListener:(name,handler)=>events.set(name,handler)});
+  vm.runInContext(engine+'\nglobalThis.run=estimateDepth;',context);
   return {workers,timers,document,events,run:signal=>context.run({data:new Uint8ClampedArray(16),width:2,height:2},()=>{},signal??new AbortController().signal),expire(delay){for(const [n,timer]of [...timers])if(timer.delay===delay){timers.delete(n);timer.fn()}}};
 }
 
@@ -41,6 +41,27 @@ test('idle expiry never interrupts the next active inference and job timeout fre
 test('backgrounding releases an idle engine and a background result is not retained',async()=>{
   const app=host(),first=app.run();app.workers[0].result(1);await first;app.document.hidden=true;app.events.get('visibilitychange')();assert.equal(app.workers[0].stopped,true);
   const next=app.run();app.workers[1].result(2);await next;assert.equal(app.workers[1].stopped,true);
+});
+
+test('a newer depth job cancels the active one without accepting its late messages',async()=>{
+  const app=host(),first=app.run(),old=app.workers[0],queued=old.onmessage;
+  const rejected=assert.rejects(first,{name:'AbortError'}),next=app.run();await rejected;
+  assert.equal(old.stopped,true);assert.equal(app.workers.length,2);
+  queued({data:{type:'result',depth:new Float32Array([99]).buffer,width:1,height:1}});
+  app.workers[1].result(6);assert.equal((await next).depth[0],6);app.expire(30000);
+});
+
+test('malformed worker results reject and retire the engine before a retry',async()=>{
+  for(const result of [
+    {depth:new ArrayBuffer(4),width:2,height:2},
+    {depth:new ArrayBuffer(4),width:NaN,height:1},
+    {depth:new ArrayBuffer(0),width:0,height:1},
+    {depth:[1],width:1,height:1},
+  ]){
+    const app=host(),pending=app.run();app.workers[0].onmessage({data:{type:'result',...result}});
+    await assert.rejects(pending,/djupnekart/);assert.equal(app.workers[0].stopped,true);
+    const next=app.run();app.workers[1].result(2);assert.equal((await next).depth[0],2);app.expire(30000);
+  }
 });
 
 const worker=(await readFile(new URL('../pointcloud/depth-worker-v2.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replaceAll('import.meta.url',"'https://example.test/pointcloud/depth-worker-v2.mjs'");

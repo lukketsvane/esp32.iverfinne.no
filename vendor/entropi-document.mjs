@@ -1,3 +1,5 @@
+import {normalizePhotoEdits,photoEditsNeutral} from './photo-adjustments.mjs';
+
 const documentLimit=128*1024*1024,pixelLimit=16777216,metadataLimit=65536;
 const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
 const crcTable=Uint32Array.from({length:256},(_,value)=>{for(let n=0;n<8;n++)value=value&1?0xedb88320^(value>>>1):value>>>1;return value>>>0});
@@ -10,7 +12,32 @@ function text(value,fallback=''){if(value==null)return fallback;if(typeof value!
 function floatCopy(values,length){if(!(values instanceof Float32Array)||values.length!==length)invalid('Ugyldige flyttalsdata.');return new Float32Array(values.buffer.slice(values.byteOffset,values.byteOffset+values.byteLength))}
 function blob(value,optional=false){if(optional&&value==null)return null;if(!(value instanceof Blob)||!value.size||value.size>32*1024*1024||!['image/jpeg','image/png','image/webp'].includes(value.type))invalid('Ugyldig originalbilete.');return value}
 
-export function createEntropiDocument({left,right=null,result,recipe={},preview=null,geometry={},capture={},id,created}={}){
+export function normalizePanorama(value){
+  if(value==null)return null;
+  if(typeof value!=='object'||Array.isArray(value)||!Array.isArray(value.frames)||value.frames.length<1||value.frames.length>8||!Array.isArray(value.transforms)||value.transforms.length!==value.frames.length)invalid('Ugyldig panorama.');
+  const {frames,transforms,...metadata}=value;
+  for(const transform of transforms)if(transform!==null&&(!Array.isArray(transform)||transform.length!==9||!transform.every(number=>typeof number==='number'&&Number.isFinite(number))))invalid('Ugyldig panoramatransformasjon.');
+  let bytes=0;
+  const originals=[],details=Array.from(frames,frame=>{
+    if(!frame||typeof frame!=='object'||Array.isArray(frame)||frame.accepted!==undefined&&typeof frame.accepted!=='boolean'||frame.timing!=null&&(typeof frame.timing!=='object'||Array.isArray(frame.timing)))invalid('Ugyldig panoramabilete.');
+    const {left,right=null,...detail}=frame,source={left:blob(left),right:blob(right,true)};
+    bytes+=source.left.size+(source.right?.size??0);if(bytes>documentLimit)invalid('Panoramaet er for stort.');
+    originals.push(source);return detail;
+  });
+  let copy;
+  try{
+    let nodes=0,characters=0;
+    const serialized=JSON.stringify({...metadata,frames:details,transforms},(key,item)=>{
+      characters+=key.length+(typeof item==='string'?item.length:0);
+      if(++nodes>8192||characters>metadataLimit||typeof item==='number'&&!Number.isFinite(item)||['function','symbol','bigint'].includes(typeof item)||item&&typeof item==='object'&&!Array.isArray(item)&&![Object.prototype,null].includes(Object.getPrototypeOf(item)))invalid();
+      return item;
+    });
+    if(encoder.encode(serialized).length>metadataLimit)invalid();copy=JSON.parse(serialized);
+  }catch{invalid('Ugyldige panorama-metadata.')}
+  copy.frames=copy.frames.map((frame,index)=>({...frame,...originals[index]}));return copy;
+}
+
+export function createEntropiDocument({left,right=null,result,recipe={},preview=null,geometry={},capture={},panorama=null,id,created}={}){
   const width=result?.width,height=result?.height,length=width*height;
   if(!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||!Number.isSafeInteger(length)||length>pixelLimit)invalid('Ugyldig djupneoppløysing.');
   if(result.validity!=null&&!(result.validity instanceof Uint8Array))invalid('Ugyldig gyldigheitskart.');
@@ -24,11 +51,21 @@ export function createEntropiDocument({left,right=null,result,recipe={},preview=
   if(({ 'relative-depth':'relative',disparity:'px',depth:'m','display-intensity':'intensity' })[quantity]!==units)invalid('Ugyldig eining for djupnedata.');
   const tone={preset:recipe.preset??1,position:recipe.position??0,width:recipe.width??1};
   if(!Number.isInteger(tone.preset)||tone.preset<0||tone.preset>4||!Number.isFinite(tone.position)||Math.abs(tone.position)>1||!Number.isFinite(tone.width)||tone.width<.25||tone.width>3)invalid('Ugyldig framkalling.');
+  if(recipe.edits!==undefined){const edits=normalizePhotoEdits(recipe.edits);if(!photoEditsNeutral(edits))tone.edits=edits}
   const identity=id??globalThis.crypto?.randomUUID?.()??Date.now().toString(36)+'-'+Math.random().toString(36).slice(2),date=created??new Date().toISOString();
   if(typeof identity!=='string'||!identity.length||identity.length>128||typeof date!=='string'||!Number.isFinite(Date.parse(date)))invalid();
   const spatial=jsonCopy({referenceCamera:'left',calibration:null,...geometry}),timing=jsonCopy({left:null,right:null,synchronized:false,...capture});
   if(quantity==='depth'&&!spatial.calibration)invalid('Metrisk djupn krev kalibrering.');
-  return {id:identity,created:date,left:blob(left),right:blob(right,true),preview:blob(preview,true),recipe:tone,geometry:spatial,capture:timing,result:{depth,width,height,validity,confidence,polarity,quantity,units,normalized:result.normalized===true,model:text(result.model),source:text(result.source),provenance:jsonCopy(result.provenance??null),confidenceDefinition:confidence?text(result.confidenceDefinition,'Source confidence in [0,1]; not a calibrated probability'):null}};
+  const sweep=normalizePanorama(panorama);
+  if(sweep){
+    if(right!==null)invalid('Panoramaet må bruke originalpara frå opptaket.');
+    if((left?.size??0)+(preview?.size??0)+depth.byteLength+validity.byteLength+(confidence?.byteLength??0)+sweep.frames.reduce((sum,frame)=>sum+frame.left.size+(frame.right?.size??0),0)>documentLimit)invalid('Entropi-fila er for stor.');
+  }
+  return {id:identity,created:date,left:blob(left),right:blob(right,true),preview:blob(preview,true),recipe:tone,geometry:spatial,capture:timing,...(sweep?{panorama:sweep}:{}),result:{depth,width,height,validity,confidence,polarity,quantity,units,normalized:result.normalized===true,model:text(result.model),source:text(result.source),provenance:jsonCopy(result.provenance??null),confidenceDefinition:confidence?text(result.confidenceDefinition,'Source confidence in [0,1]; not a calibrated probability'):null}};
+}
+
+function advancedPhotoEdits(edits){
+  return !!edits&&(edits.preset==='HB2'||['saturation','highlights','shadows','temperature','tint'].some(key=>edits[key])||edits.grain?.strength>0||Object.values(edits.hsl??{}).some(channel=>Object.values(channel).some(value=>value!==0)));
 }
 
 async function digest(bytes){
@@ -78,7 +115,7 @@ async function unzip(file){
   const bytes=new Uint8Array(await file.arrayBuffer()),view=new DataView(bytes.buffer),end=bytes.length-22;
   if(view.getUint32(end,true)!==0x06054b50||view.getUint16(end+4,true)||view.getUint16(end+6,true)||view.getUint16(end+20,true))invalid();
   const count=view.getUint16(end+10,true),size=view.getUint32(end+12,true),start=view.getUint32(end+16,true);
-  if(!count||count>16||view.getUint16(end+8,true)!==count||start+size!==end)invalid();
+  if(!count||count>22||view.getUint16(end+8,true)!==count||start+size!==end)invalid();
   const entries=new Map(),spans=[];let cursor=start,total=0;
   for(let i=0;i<count;i++){
     if(cursor+46>end||view.getUint32(cursor,true)!==0x02014b50)invalid();
@@ -98,23 +135,38 @@ async function unzip(file){
 
 export async function encodeEntropiDocument(document){
   const value=createEntropiDocument(document),entries=new Map(),files={};
+  const images=[value.left,value.right,value.preview,...(value.panorama?.frames.flatMap(frame=>[frame.left,frame.right])??[])];
+  if(images.reduce((sum,image)=>sum+(image?.size??0),0)+value.result.depth.byteLength+value.result.validity.byteLength+(value.result.confidence?.byteLength??0)>documentLimit)invalid('Entropi-fila er for stor.');
   const add=async(path,bytes,type)=>{entries.set(path,bytes);files[path]={bytes:bytes.length,sha256:await digest(bytes),type};return path};
   const originals={left:await add('sources/left',new Uint8Array(await value.left.arrayBuffer()),value.left.type),right:value.right?await add('sources/right',new Uint8Array(await value.right.arrayBuffer()),value.right.type):null};
   const {depth,validity,confidence,...result}=value.result;
   result.depth=await add('data/depth.f32',floatBytes(depth),'float32-le');result.validity=await add('data/validity.u8',validity,'uint8');result.confidence=confidence?await add('data/confidence.f32',floatBytes(confidence),'float32-le'):null;
   const preview=value.preview?await add('preview/image',new Uint8Array(await value.preview.arrayBuffer()),value.preview.type):null;
-  const manifest={format:'entropi',version:1,profile:'numerical-float32',id:value.id,created:value.created,originals,result,recipe:value.recipe,geometry:value.geometry,capture:value.capture,preview,files},metadata=encoder.encode(JSON.stringify(manifest));
+  let panorama;
+  if(value.panorama){
+    panorama={...value.panorama,frames:[]};
+    for(const [index,frame]of value.panorama.frames.entries())panorama.frames.push({...frame,left:await add('panorama/'+index+'/left',new Uint8Array(await frame.left.arrayBuffer()),frame.left.type),right:frame.right?await add('panorama/'+index+'/right',new Uint8Array(await frame.right.arrayBuffer()),frame.right.type):null});
+  }
+  const manifest={format:'entropi',version:advancedPhotoEdits(value.recipe.edits)?4:panorama?3:value.recipe.edits?2:1,profile:'numerical-float32',id:value.id,created:value.created,originals,result,recipe:value.recipe,geometry:value.geometry,capture:value.capture,preview,files,...(panorama?{panorama}:{})},metadata=encoder.encode(JSON.stringify(manifest));
   if(metadata.length>metadataLimit)invalid();entries.set('manifest.json',metadata);return zip(entries);
 }
 
 export async function decodeEntropiDocument(file){
   const entries=await unzip(file);let manifest;
   try{manifest=JSON.parse(decoder.decode(entries.get('manifest.json')))}catch{invalid()}
-  if(manifest?.format!=='entropi'||manifest.version!==1||manifest.profile!=='numerical-float32')invalid('Ukjend Entropi-versjon.');
+  if(manifest?.format!=='entropi'||![1,2,3,4].includes(manifest.version)||manifest.profile!=='numerical-float32'||manifest.version===2&&!manifest.recipe?.edits||manifest.version===3&&!manifest.panorama||manifest.version<3&&manifest.panorama!=null||manifest.version<4&&advancedPhotoEdits(manifest.recipe?.edits)||manifest.version===4&&!advancedPhotoEdits(manifest.recipe?.edits))invalid('Ukjend Entropi-versjon.');
   const {files,originals,result}=manifest;
   if(!files||typeof files!=='object'||Array.isArray(files)||!originals||!result||Object.keys(files).length!==entries.size-1)invalid();
   if(!manifest.id||!manifest.created||!manifest.recipe||!manifest.geometry||!manifest.capture||originals.left!=='sources/left'||originals.right!==null&&originals.right!=='sources/right'||result.depth!=='data/depth.f32'||result.validity!=='data/validity.u8'||result.confidence!==null&&result.confidence!=='data/confidence.f32'||manifest.preview!==null&&manifest.preview!=='preview/image')invalid();
   const expected=new Set([originals.left,originals.right,result.depth,result.validity,result.confidence,manifest.preview].filter(Boolean));
+  if(manifest.panorama){
+    const frames=manifest.panorama.frames;
+    if(!Array.isArray(frames)||frames.length<1||frames.length>8||originals.right!==null)invalid('Ugyldig panorama.');
+    for(const [index,frame]of frames.entries()){
+      if(!frame||frame.left!=='panorama/'+index+'/left'||frame.right!==null&&frame.right!=='panorama/'+index+'/right')invalid('Ugyldige panorama-originalar.');
+      expected.add(frame.left);if(frame.right)expected.add(frame.right);
+    }
+  }
   if(expected.size!==Object.keys(files).length)invalid();
   for(const [path,metadata]of Object.entries(files)){
     const bytes=entries.get(path);if(!expected.has(path)||!bytes||metadata?.bytes!==bytes.length||!/^[a-f0-9]{64}$/.test(metadata.sha256)||await digest(bytes)!==metadata.sha256)invalid('Entropi-fila er skadd.');
@@ -122,6 +174,7 @@ export async function decodeEntropiDocument(file){
   const read=(path,type)=>{if(typeof path!=='string'||!Object.hasOwn(files,path)||type&&files[path].type!==type)invalid();return entries.get(path)};
   const image=path=>path==null?null:new Blob([read(path)],{type:files[path].type});
   const depth=floats(read(result.depth,'float32-le')),validity=read(result.validity,'uint8'),confidence=result.confidence==null?null:floats(read(result.confidence,'float32-le'));
-  const value=createEntropiDocument({id:manifest.id,created:manifest.created,left:image(originals.left),right:image(originals.right),preview:image(manifest.preview),result:{...result,depth,validity,confidence},recipe:manifest.recipe,geometry:manifest.geometry,capture:manifest.capture});
+  const panorama=manifest.panorama?{...manifest.panorama,frames:manifest.panorama.frames.map(frame=>({...frame,left:image(frame.left),right:image(frame.right)}))}:null;
+  const value=createEntropiDocument({id:manifest.id,created:manifest.created,left:image(originals.left),right:image(originals.right),preview:image(manifest.preview),result:{...result,depth,validity,confidence},recipe:manifest.recipe,geometry:manifest.geometry,capture:manifest.capture,panorama});
   return value;
 }
