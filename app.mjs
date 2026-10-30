@@ -10,6 +10,8 @@ import { PX10Printer } from './vendor/print/printer.mjs';
 import { cloudPrintJob } from './vendor/print/cloud-raster.mjs';
 import { createPrintClient } from './vendor/print-client.mjs';
 import { createArchive } from './vendor/archive.mjs';
+import { attachGalleryNavigation } from './vendor/gallery-navigation.mjs';
+import { bindCaptureGesture } from './vendor/capture-gesture.mjs';
 import { createEntropiDocument } from './vendor/entropi-document.mjs';
 import { bindExportGesture, pickEntropiDocument } from './vendor/entropi-ui.mjs';
 
@@ -18,7 +20,7 @@ const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 const gallery=createArchive();
 let currentDocument=null,photoRight=null,archiveState={id:null,pending:null,suppressed:false},documentTimer=0,photoReceivedAt=null;
 let facingMode='environment',shutterDelay=0,shutterTimer=null,shutterCountdown=0,galleryOpen=false;
-let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,artTask=null,generation=0,captureGeneration=0,cameraGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
+let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,artTask=null,nextShot=null,generation=0,captureGeneration=0,cameraGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
 const photoView=createPhotoView(photo);
 const depthArt=createMarigoldView($('marigold-view'),{onStatus:progress,onGesture:()=>{pointer=null;lastTap=0;captureAfter=performance.now()+400},onChange:()=>{clearTimeout(documentTimer);documentTimer=setTimeout(()=>void persistDocument().catch(error=>printFeedback(failureText(error,saveFailure))),400)}});
 const paletteSelection={photo:readColorScheme('photo'),depth:readColorScheme('depth')};
@@ -68,17 +70,19 @@ function progress(update){if(studioControls.image===0||mode==='camera'||capturin
 const cameraFailures={InsecureContextError:'Kamera krev ein trygg HTTPS-nettlesar.',NotAllowedError:'Gi kameraet tilgang og prøv igjen.',SecurityError:'Gi kameraet tilgang og prøv igjen.',NotFoundError:'Fann ikkje noko kamera på eininga.',OverconstrainedError:'Fann ikkje noko kamera på eininga.',NotReadableError:'Kameraet er i bruk av ein annan app. Lukk han og prøv igjen.',AbortError:'Kameraet vart avbrote. Prøv igjen.'};
 const saveFailure='Biletet kunne ikkje lagrast på eininga.';
 function failureText(error,fallback){return error?.name==='QuotaExceededError'?'Lagringa på eininga er full.':error?.name==='Error'&&error.message?error.message:fallback}
-async function startCamera(){
-  if(openingCamera||stream||mode!=='camera'||document.hidden||galleryOpen)return;
+async function startCamera(review=false){
+  const expected=review?'done':'camera';
+  if(openingCamera||mode!==expected||document.hidden||galleryOpen)return false;
+  if(stream)return true;
   const current=generation,attempt=++cameraGeneration;openingCamera=true;$('studio').classList.add('opening');$('status').textContent='';
   try{
     if(!navigator.mediaDevices?.getUserMedia)throw Object.assign(new Error('Insecure context'),{name:'InsecureContextError'});
     const media=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode},width:{ideal:1920},height:{ideal:1080}},audio:false});
-    if(attempt!==cameraGeneration||current!==generation||mode!=='camera'||document.hidden){media.getTracks().forEach(track=>track.stop());return}
+    if(attempt!==cameraGeneration||current!==generation||mode!==expected||document.hidden){media.getTracks().forEach(track=>track.stop());return false}
     stream=media;video.srcObject=media;await video.play();
-    if(attempt!==cameraGeneration||current!==generation||mode!=='camera'||document.hidden)return;
-    finder.source=video;hadCamera=true;state('camera');
-  }catch(error){if(attempt===cameraGeneration&&current===generation&&mode==='camera'&&!document.hidden){stopCamera();state('error',cameraFailures[error?.name]??'Kameraet kunne ikkje opnast.')}}
+    if(attempt!==cameraGeneration||current!==generation||mode!==expected||document.hidden)return false;
+    finder.source=video;hadCamera=true;if(!review)state('camera');return true;
+  }catch(error){if(attempt===cameraGeneration&&current===generation&&mode===expected&&!document.hidden){stopCamera();const message=cameraFailures[error?.name]??'Kameraet kunne ikkje opnast.';if(review)printFeedback(message);else state('error',message)}return false}
   finally{if(attempt===cameraGeneration){openingCamera=false;$('studio').classList.remove('opening')}}
 }
 
@@ -134,21 +138,21 @@ async function persistPreview(){
   const write=(async()=>{await pending;if(session.suppressed||!session.id)return;await gallery.savePreview(session.id,image)})();
   session.pending=write.catch(()=>null);await write;
 }
-async function acceptPhoto(blob,name='entropi.jpg',stored=null,recordId=null,right=null){
+async function acceptPhoto(blob,name='entropi.jpg',stored=null,recordId=null,right=null,prepared=null){
   if(!(blob instanceof Blob)||!blob.type.startsWith('image/')||!blob.size||blob.size>40*1024*1024){state('error','Kamerafotoet kunne ikkje lesast.');return}
   if(photoReady&&mode==='done')void persistPreview().catch(error=>printFeedback(failureText(error,saveFailure)));
-  const current=++generation;++captureGeneration;capturing=false;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
+  const current=++generation;++captureGeneration;capturing=false;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=prepared?.src??URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
   state('working');
   currentDocument=stored;photoRight=stored?.right??right;photoReceivedAt=new Date().toISOString();
   if(stored||recordId)studioControls.setImage(2);
   const session=archiveState;session.id=recordId??stored?.id??null;
   session.pending=(recordId?Promise.resolve({id:recordId}):stored?gallery.saveDocument(stored):gallery.save(blob,photoRight,null)).then(record=>{session.id=record?.id??session.id;return record}).catch(()=>{printFeedback('Fotoet er ikkje arkivert automatisk. Bruk lagreknappen før du går vidare.');return null});
-  try{await photo.decode();if(current!==generation)return;photoView.setSource();photoReady=true;photoGestures.reset();if(studioControls.image===1)await makeScene();else if(studioControls.image===2)await makeDepthArt();else state('done')}
+  try{if(!prepared)await photo.decode();if(current!==generation)return;photoView.setSource(prepared??photo);photoReady=true;photoGestures.reset();if(studioControls.image===1)await makeScene();else if(studioControls.image===2)await makeDepthArt();else state('done')}
   catch(error){if(current===generation)state('error',failureText(error,'Fotoet kunne ikkje lesast.'))}
 }
 
 async function capture(){
-  if(mode!=='camera'||openingCamera||galleryOpen||performance.now()<captureAfter)return;
+  if(mode!=='camera'||openingCamera||galleryOpen||nextShot||performance.now()<captureAfter)return;
   if(studioControls.vathography)studioControls.setImage(2);
   if(!stream){await startCamera();return}
   if(!video.videoWidth||video.readyState<2)return;
@@ -163,14 +167,32 @@ async function capture(){
   finally{if(captureId===captureGeneration)capturing=false;if(frame)frame.width=frame.height=1}
 }
 
-function reset(){if(photoReady&&mode==='done')void persistPreview().catch(error=>printFeedback(failureText(error,saveFailure)));++captureGeneration;capturing=false;if(!photoReady){++generation;clearScene();clearPhoto()}stopCamera();finder.clear();pointer=null;lastTap=0;state('camera');if(hadCamera)void startCamera()}
-async function printCurrent(){const source=scene,blob=photoBlob,image=studioControls.image,result=depthArt.result;if(printing||mode!=='done'||!photoReady||image===1&&!source||image===2&&!depthArt.ready)return;printing=true;$('print').disabled=true;try{await printClient.print(image===0?photoView.snapshot(photoGestures.state):image===2?depthArt.snapshot(false):source.snapshot(),()=>mode==='done'&&blob===photoBlob&&image===studioControls.image&&(image===0||image===1&&source===scene||image===2&&result===depthArt.result))}catch(error){printFeedback(failureText(error,'Kunne ikkje skrive ut.'))}finally{printing=false;$('print').disabled=false}}
+function cancelNextCapture(){nextShot=null;$('reset').disabled=false;$('print').disabled=printing;$('reset').setAttribute('aria-busy','false');for(const id of ['marigold-view','scene','photo'])$(id).inert=false}
+async function captureNext(){
+  if(nextShot||capturing||printing||mode!=='done'||galleryOpen||document.hidden)return;
+  const run=nextShot={},original=photoBlob,version=generation,current=()=>nextShot===run&&photoBlob===original&&generation===version&&mode==='done'&&!galleryOpen&&!document.hidden;
+  let frame,url;
+  $('reset').disabled=true;$('print').disabled=true;$('reset').setAttribute('aria-busy','true');for(const id of ['marigold-view','scene','photo'])$(id).inert=true;
+  try{
+    await persistPreview();if(!current()||!await startCamera(true)||!current())return;
+    if(!video.videoWidth||video.readyState<2)throw new Error('Kameraet er ikkje klart. Prøv igjen.');
+    frame=finder.capture(video);const blob=await new Promise(resolve=>frame.toBlob(resolve,'image/png'));
+    if(!current())return;if(!blob?.size)throw new Error('Fotoet kunne ikkje takast.');
+    const prepared=new Image();url=URL.createObjectURL(blob);prepared.src=url;await prepared.decode();
+    if(!current())return;if(!prepared.naturalWidth||!prepared.naturalHeight)throw new Error('Fotoet kunne ikkje lesast.');
+    await acceptPhoto(blob,'entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png',null,null,null,prepared);
+  }catch(error){if(current())printFeedback(failureText(error,'Fotoet kunne ikkje takast.'))}
+  finally{if(url&&url!==photoUrl)URL.revokeObjectURL(url);if(frame)frame.width=frame.height=1;if(nextShot===run){cancelNextCapture();if(mode==='done')stopCamera()}}
+}
+function reset(){cancelNextCapture();if(photoReady&&mode==='done')void persistPreview().catch(error=>printFeedback(failureText(error,saveFailure)));++captureGeneration;capturing=false;if(!photoReady){++generation;clearScene();clearPhoto()}stopCamera();finder.clear();pointer=null;lastTap=0;state('camera');if(hadCamera)void startCamera()}
+async function printCurrent(){const source=scene,blob=photoBlob,image=studioControls.image,result=depthArt.result;if(printing||nextShot||mode!=='done'||!photoReady||image===1&&!source||image===2&&!depthArt.ready)return;printing=true;$('print').disabled=true;try{await printClient.print(image===0?photoView.snapshot(photoGestures.state):image===2?depthArt.snapshot(false):source.snapshot(),()=>mode==='done'&&blob===photoBlob&&image===studioControls.image&&(image===0||image===1&&source===scene||image===2&&result===depthArt.result))}catch(error){printFeedback(failureText(error,'Kunne ikkje skrive ut.'))}finally{printing=false;$('print').disabled=false}}
 function exportOptions(){
   if(!photoBlob||!photoReady||mode!=='done'||studioControls.image===1&&!scene||studioControls.image===2&&!depthArt.ready)return;
   const blob=photoBlob,source=scene,image=studioControls.image,result=depthArt.result;
   return {image:()=>snapshotBlob(image===1?source.snapshot(true):image===2?depthArt.snapshot(true):photoView.snapshot(photoGestures.state,true)),document:image===2?async()=>{const document=makeDocument();void persistDocument().catch(error=>printFeedback(failureText(error,saveFailure)));return document}:undefined,name:photoName,onError:error=>printFeedback(failureText(error,'Kunne ikkje lagre biletet.')),isCurrent:()=>photoBlob===blob&&mode==='done'&&studioControls.image===image&&(image===0||image===1&&scene===source||image===2&&result===depthArt.result)};
 }
 
+bindCaptureGesture($('reset'),{enabled:()=>mode==='done'&&!printing&&!nextShot&&!galleryOpen,onCapture:()=>captureNext()});
 $('capture-plane').addEventListener('click',()=>void capture());$('reset').addEventListener('click',reset);bindExportGesture($('save'),exportOptions);
 $('last-photo').addEventListener('click',()=>{if(!photoReady)return;stopCamera();state('done');if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeDepthArt()});$('print').addEventListener('click',()=>void printCurrent());
 $('recenter').addEventListener('click',()=>{if(studioControls.image===0)photoGestures.reset();else if(studioControls.image===2)depthArt.resetTone();else scene?.resetView?.()});
@@ -180,15 +202,16 @@ $('studio').addEventListener('pointermove',event=>{if(pointer&&Math.hypot(event.
 $('studio').addEventListener('contextmenu',event=>{if(!event.target.closest('button,a'))event.preventDefault()});
 window.addEventListener('message',event=>{if(event.source===window.opener&&allowedOrigins.has(event.origin)&&event.data?.type==='entropi-photo')void acceptPhoto(event.data.blob,typeof event.data.name==='string'?event.data.name:'entropi.jpg')});
 function resume(){finder.active=mode==='camera'&&!document.hidden&&!galleryOpen;if(!document.hidden&&mode==='camera'&&!galleryOpen)void startCamera();else if(!document.hidden){if(studioControls.image===1)scene?.refresh?.();else photoGestures.refresh?.()}}
-function suspend(){stopCamera();if(capturing){++captureGeneration;capturing=false;state('camera')}finder.active=false;pointer=null;lastTap=0}
+function suspend(){cancelNextCapture();stopCamera();if(capturing){++captureGeneration;capturing=false;state('camera')}finder.active=false;pointer=null;lastTap=0}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});
 window.addEventListener('pageshow',event=>{if(event.persisted)resume()});
-window.addEventListener('keydown',event=>{if(event.defaultPrevented||galleryOpen)return;if(event.key==='Escape'&&mode!=='camera'){event.preventDefault();reset()}else if(event.code==='Space'&&!event.repeat&&!['INPUT','BUTTON','A'].includes(document.activeElement?.tagName)){event.preventDefault();if(mode==='camera')void capture()}});
+window.addEventListener('keydown',event=>{if(event.defaultPrevented||galleryOpen)return;if(event.key==='Escape'&&mode!=='camera'){event.preventDefault();reset()}else if(event.code==='Space'&&!event.repeat&&!['INPUT','BUTTON','A'].includes(document.activeElement?.tagName)){event.preventDefault();if(mode==='camera')void capture();else if(mode==='done')void captureNext()}});
 window.addEventListener('pagehide',event=>{suspend();if(!event.persisted){++generation;clearTimeout(printTimer);clearScene();clearPhoto();finder.dispose();photoGestures.dispose();liveGestures.dispose();photoView.dispose();depthArt.dispose();studioControls.dispose();printClient.dispose()}});
 try{const origin=new URL(document.referrer).origin;if(window.opener&&allowedOrigins.has(origin))window.opener.postMessage({type:'entropi-ready'},origin)}catch{}
 if(!document.hidden&&(navigator.standalone||globalThis.matchMedia?.('(display-mode: standalone)')?.matches))void startCamera();
 
-let galleryItems=[],galleryCurrent=null,galleryRecord=null,galleryUrls=[],galleryImageUrl=null,galleryDeleteConfirm=false,galleryFocus=null,galleryGeneration=0;
+let galleryItems=[],galleryCurrent=null,galleryRecord=null,galleryUrls=[],galleryImageUrl=null,galleryDeleteConfirm=false,galleryFocus=null,galleryGeneration=0,galleryScroll=0;
+const galleryNavigation=attachGalleryNavigation($('phone-vault-image'),{enabled:()=>galleryOpen&&!$('phone-vault-detail').hidden,onStep:stepPhoneGallery,onDismiss:closePhoneGallery});
 
 function clearShutterDelay(){
   if(shutterTimer)clearTimeout(shutterTimer);
@@ -237,7 +260,7 @@ async function openPhoneGallery(){
   $('phone-vault-grid').hidden=false;
   $('phone-vault-detail').hidden=true;
   $('phone-vault-status').textContent='';
-  galleryCurrent=null;clearGalleryUrls();
+  galleryCurrent=null;galleryRecord=null;galleryScroll=0;galleryNavigation.cancel();clearGalleryUrls();
   const grid=$('phone-vault-grid');grid.replaceChildren();
   try{
     if(photoReady&&mode==='done')await persistPreview().catch(error=>{if(galleryOpen&&opening===galleryGeneration)$('phone-vault-status').textContent=failureText(error,saveFailure)});
@@ -248,14 +271,16 @@ async function openPhoneGallery(){
     for(const item of galleryItems){
       const button=document.createElement('button');button.type='button';
       button.setAttribute('aria-label',(item.pending?'Ikkje framkalla. ':'')+'Opptak frå '+new Date(item.created).toLocaleString('nn-NO'));
-      const image=document.createElement('img');image.alt='';if(item.preview)image.src=galleryUrl(item.preview);button.append(image);
+      const image=document.createElement('img');image.alt='';image.loading='lazy';image.decoding='async';if(item.preview)image.src=galleryUrl(item.preview);button.append(image);
       if(item.pending){button.classList.add('pending');const mark=document.createElement('span');mark.className='archive-pending-mark';mark.setAttribute('aria-hidden','true');button.append(mark)}
       button.addEventListener('click',()=>void showPhoneRecord(item.id));grid.append(button);
     }
   }catch(error){if(galleryOpen&&opening===galleryGeneration)$('phone-vault-status').textContent=failureText(error,'Arkivet er ikkje tilgjengeleg')}
 }
 async function showPhoneRecord(id){
-  const opening=galleryGeneration,isCurrent=()=>galleryOpen&&opening===galleryGeneration&&galleryCurrent===id;
+  if(!$('phone-vault-grid').hidden)galleryScroll=$('phone-vault-grid').scrollTop;
+  disarmGalleryDelete();galleryNavigation.cancel();
+  const opening=++galleryGeneration,isCurrent=()=>galleryOpen&&opening===galleryGeneration&&galleryCurrent===id;
   galleryCurrent=id;galleryRecord=null;galleryDeleteConfirm=false;
   $('phone-vault-status').textContent='';
   let record;
@@ -267,7 +292,7 @@ async function showPhoneRecord(id){
   $('phone-vault-edit').hidden=!record.document&&!pending;
   $('phone-vault-edit').setAttribute('aria-label',pending?'Framkall originalopptaket':'Framkall Entropi-biletet');
   $('phone-vault-save').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':pending?'Lagre original':'Lagre biletet');
-  $('phone-vault-image').alt=pending?'Originalopptak, ikkje framkalla':'Arkivert foto';
+  $('phone-vault-image').alt=(pending?'Originalopptak, ikkje framkalla':'Arkivert foto')+'. '+(galleryItems.findIndex(item=>item.id===id)+1)+' av '+galleryItems.length;
   $('phone-vault-detail').classList.toggle('pending',pending);
   if(galleryImageUrl)URL.revokeObjectURL(galleryImageUrl);
   galleryImageUrl=URL.createObjectURL(record.preview??record.document?.preview??record.left);
@@ -277,15 +302,27 @@ async function showPhoneRecord(id){
   (pending?$('phone-vault-edit'):$('phone-vault-save')).focus({preventScroll:true});
   $('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed');
 }
+function stepPhoneGallery(direction){
+  if(!galleryOpen||$('phone-vault-detail').hidden)return;
+  const next=galleryItems[galleryItems.findIndex(item=>item.id===galleryCurrent)+direction];
+  if(next)void showPhoneRecord(next.id);
+}
+function backPhoneGallery(){
+  const index=galleryItems.findIndex(item=>item.id===galleryCurrent),grid=$('phone-vault-grid');
+  ++galleryGeneration;galleryCurrent=null;galleryRecord=null;galleryNavigation.cancel();disarmGalleryDelete();
+  $('phone-vault-detail').hidden=true;grid.hidden=false;grid.scrollTop=galleryScroll;
+  $('phone-vault-status').textContent='';
+  (grid.children[index]??$('phone-vault-close')).focus({preventScroll:true});
+}
 function closePhoneGallery(){
-  if(!galleryOpen)return;disarmGalleryDelete();galleryOpen=false;++galleryGeneration;galleryCurrent=null;galleryRecord=null;
+  if(!galleryOpen)return;disarmGalleryDelete();galleryNavigation.cancel();galleryOpen=false;++galleryGeneration;galleryCurrent=null;galleryRecord=null;
   $('phone-vault').hidden=true;clearGalleryUrls();$('phone-vault-image').removeAttribute('src');
   $('studio').inert=false;(galleryFocus&&galleryFocus.isConnected!==false&&!galleryFocus.hidden&&galleryFocus.tagName!=='BODY'?galleryFocus:$('open-gallery')).focus({preventScroll:true});galleryFocus=null;
   if(mode==='camera'&&hadCamera&&!document.hidden)void startCamera();
 }
 $('open-gallery').addEventListener('click',()=>void openPhoneGallery());
 $('phone-vault-close').addEventListener('click',closePhoneGallery);
-$('phone-vault-back').addEventListener('click',()=>void openPhoneGallery());
+$('phone-vault-back').addEventListener('click',backPhoneGallery);
 $('phone-vault-import').addEventListener('click',async()=>{
   try{const document=await pickEntropiDocument();if(!document)return;closePhoneGallery();await acceptPhoto(document.left,document.id+'.entropi',document)}catch(error){$('phone-vault-status').textContent=failureText(error,'Kunne ikkje opne Entropi-fila.')}
 });
@@ -305,7 +342,7 @@ bindExportGesture($('phone-vault-save'),()=>{
 let galleryDeleteTimer=0;
 function disarmGalleryDelete(){clearTimeout(galleryDeleteTimer);galleryDeleteTimer=0;galleryDeleteConfirm=false;$('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed')}
 for(const name of ['pointerdown','click','focusin'])$('phone-vault').addEventListener(name,event=>{if(!event.target.closest('#phone-vault-remove'))disarmGalleryDelete()},true);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)disarmGalleryDelete()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){disarmGalleryDelete();galleryNavigation.cancel()}});
 $('phone-vault-remove').addEventListener('click',async()=>{
   if(!galleryCurrent)return;
   if(!galleryDeleteConfirm){galleryDeleteConfirm=true;$('phone-vault-remove').setAttribute('aria-label','Trykk igjen for å slette');$('phone-vault-remove').classList.add('armed');galleryDeleteTimer=setTimeout(disarmGalleryDelete,3000);return}
@@ -317,7 +354,8 @@ $('phone-vault-remove').addEventListener('click',async()=>{
 });
 window.addEventListener('keydown',event=>{
   if(event.defaultPrevented||!galleryOpen)return;
-  if(event.key==='Escape'&&galleryOpen){event.preventDefault();if(!$('phone-vault-detail').hidden)void openPhoneGallery();else closePhoneGallery()}
+  if(event.key==='Escape'&&galleryOpen){event.preventDefault();if(!$('phone-vault-detail').hidden)backPhoneGallery();else closePhoneGallery()}
+  else if(!$('phone-vault-detail').hidden&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();stepPhoneGallery(event.key==='ArrowRight'?1:-1)}
   else if(event.key==='Tab'){
     const controls=[$('phone-vault-import'),$('phone-vault-close'),...($('phone-vault-detail').hidden?Array.from($('phone-vault-grid').children):[$('phone-vault-edit'),$('phone-vault-save'),$('phone-vault-remove'),$('phone-vault-back')])].filter(button=>button.tagName==='BUTTON'&&!button.hidden&&!button.disabled);
     event.preventDefault();const index=controls.indexOf(document.activeElement),next=index<0?(event.shiftKey?controls.length-1:0):(index+(event.shiftKey?-1:1)+controls.length)%controls.length;

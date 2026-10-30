@@ -43,7 +43,7 @@
 <img class="mg-output" alt="" aria-hidden="true"><img class="mg-original" alt="" aria-hidden="true"><div class="mg-seam" role="slider" aria-label="Samanlikningsgrense" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"></div>
 <div class="mg-variants" role="group" aria-label="VATHOgraphy-uttrykk"></div>
 <button class="mg-compare" aria-label="Samanlikn med originalfoto" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 3h18v18H3zM3 3h9v18H3z"/></svg></button></div>
-<button id="close-photo" class="access-control top right" aria-label="Ta nytt foto"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></button>
+<button id="close-photo" class="access-control camera-return" aria-label="Tilbake til kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="12" r="4"/></svg></button>
 <button id="recenter-photo" class="access-control top" aria-label="Sentrer biletet" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6"/><path d="M12 3v4m0 10v4M3 12h4m10 0h4"/></svg></button>
 <button id="save-photo" class="access-control right" aria-label="Lagre foto"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4"/></svg></button>
 <button id="retry-scene" class="review-retry" aria-label="Prøv VATHOgraphy på nytt" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v5h-5"/></svg></button>
@@ -110,7 +110,7 @@ const reviewing=()=>photoDialog.open;
 function notice(text,transient=false){clearTimeout(noticeTimer);$('notice').textContent=text;if(transient)noticeTimer=setTimeout(()=>{$('notice').textContent=''},4500)}
 function printFeedback(message){clearTimeout(printTimer);$('print-status').textContent=message;$('print-status').hidden=!message;if(message)printTimer=setTimeout(()=>{$('print-status').hidden=true},6000)}
 async function printCurrent(){
-  if(printBusy||!photoDialog.open||!photoBlob||studioControls.image===1&&!sceneVisible||studioControls.image===2&&!artVisible)return;
+  if(printBusy||busy||!photoDialog.open||!photoBlob||studioControls.image===1&&!sceneVisible||studioControls.image===2&&!artVisible)return;
   const mode=studioControls.image,blob=photoBlob,source=mode===2?marigoldView:sceneViewer,artResult=marigoldView.result;
   ++connectGeneration;connecting=false;clearTimeout(retryTimer);
   printBusy=true;stopStream();controls();refreshReview();printFeedback('');
@@ -129,7 +129,7 @@ function controls(){
   const disabled=busy||printBusy||!connected||connecting||!hasFrame||recoveryPending;
   $('capture-plane').disabled=disabled;$('retry-capture').disabled=disabled;$('retry-capture').hidden=!captureFailed||busy;
   $('retry-capture').setAttribute('aria-label',captureFailed&&phoneError?phoneError+' Prøv igjen.':'Ta foto på nytt');
-  $('last-photo').disabled=busy;$('progress').hidden=!(busy||printBusy);
+  $('last-photo').disabled=busy;$('close-photo').disabled=busy||printBusy;$('progress').hidden=!(busy||printBusy);photoDialog.setAttribute('aria-busy',String(busy));for(const id of ['marigold-view','scene','photo'])$(id).inert=busy;
   studio.classList.toggle('connected',connected);studio.classList.toggle('reconnecting',connecting);
   studio.classList.toggle('capturing-splats',busy&&studioControls.image!==0);
   $('connection-label').textContent=connected?'Tilkopla':connecting?'Koplar til':deviceStatus?'Kamera ikkje klart':'Fråkopla';
@@ -170,9 +170,9 @@ async function capturePair(signal){
   let metadata=null,blobs;
   if(globalThis.__ENTROPI_RIG_BRIDGE===true){
     const capture=await request('/api/capture','json',45000,signal,'POST');
-    if(!capture||typeof capture.left!=='string'||typeof capture.right!=='string'||!capture.left.startsWith('/api/frame/')||!capture.right.startsWith('/api/frame/'))throw new Error('Kameraa gav ikkje eit gyldig stereopar.');
-    blobs=await Promise.all([request(capture.left,'blob',20000,signal),request(capture.right,'blob',20000,signal)]);
-    metadata={id:capture.id,captured_at:capture.captured_at,transport:capture.transport,hardware_synchronized:capture.hardware_synchronized,timing:capture.timing??null};
+    if(!capture||typeof capture.left!=='string'||!capture.left.startsWith('/api/frame/')||capture.right!==null&&(typeof capture.right!=='string'||!capture.right.startsWith('/api/frame/')))throw new Error('Kameraa gav ikkje eit gyldig opptak.');
+    blobs=await Promise.all([capture.left,...(capture.right===null?[]:[capture.right])].map(path=>request(path,'blob',20000,signal)));
+    metadata={id:capture.id,captured_at:capture.captured_at,transport:capture.transport,hardware_synchronized:capture.hardware_synchronized,timing:capture.timing??null,fallback_reason:capture.fallback_reason??null};
   }else{
     const leftId=cameraStatus?.camera_id,rightId=secondId;
     const pair=await request('/stereo/capture?t='+Date.now(),'pair',20000,signal);
@@ -186,8 +186,8 @@ async function capturePair(signal){
       const image=new Image(),url=URL.createObjectURL(blob);urls.push(url);image.src=url;await image.decode();return image;
     }));
     signal.throwIfAborted();
-    if(!images[0].naturalWidth||!images[0].naturalHeight||images[0].naturalWidth!==images[1].naturalWidth||images[0].naturalHeight!==images[1].naturalHeight)throw new Error('Kameraa må bruke same fotooppløysing.');
-    return {...metadata,left:blobs[0],right:blobs[1]};
+    if(!images[0].naturalWidth||!images[0].naturalHeight||images[1]&&(images[0].naturalWidth!==images[1].naturalWidth||images[0].naturalHeight!==images[1].naturalHeight))throw new Error('Kameraa må bruke same fotooppløysing.');
+    return {...metadata,left:blobs[0],right:blobs[1]??null};
   }finally{urls.forEach(url=>URL.revokeObjectURL(url))}
 }
 async function request(path,type='json',timeout=8000,signal=null,method='GET'){
@@ -318,21 +318,22 @@ async function showPhoto(blob,signal,pair=null,master=null,archiveId=null){
   photoGestures.reset();
   refreshReview();if(master){await makeArt();signal?.throwIfAborted()}else if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt();else void persistCurrentPreview().catch(error=>printFeedback(error.message));
 }
-async function takePhoto(){
-  if(busy||printBusy||connecting||!connected||onboarding.open||reviewing()||!$('archive').hidden||Date.now()<captureAfter)return;
-  const paired=secondEnabled||globalThis.__ENTROPI_RIG_BRIDGE===true;if(!paired&&secondAutoMode)studioControls.setImage(0);
-  if(studioControls.vathography)studioControls.setImage(2);
+async function takePhoto(next=false){
+  const replacing=next===true&&reviewing();
+  if(busy||printBusy||connecting||!connected||onboarding.open||reviewing()&&(!replacing||photoDialog.classList.contains('working'))||!$('archive').hidden||document.hidden||Date.now()<captureAfter)return;
+  const paired=secondEnabled||replacing&&!!photoPair&&secondId===peerId()||globalThis.__ENTROPI_RIG_BRIDGE===true;if(!replacing){if(!paired&&secondAutoMode)studioControls.setImage(0);if(studioControls.vathography)studioControls.setImage(2)}
   ++connectGeneration;clearTimeout(retryTimer);
   archiveWarning='';busy=true;captureFailed=false;stopStream();stopSecond();controls();notice('');
   const held=$('review-finder'),liveFrame=$('finder');held.width=liveFrame.width;held.height=liveFrame.height;held.getContext('2d').drawImage(liveFrame,0,0);
   const task=new AbortController();captureTask=task;
   try{
-    const pair=paired?await capturePair(task.signal):null;
-    const original=pair?.left??await request('/capture?t='+Date.now(),'blob',20000,task.signal);
+    if(replacing){await persistCurrentPreview();task.signal.throwIfAborted()}
+    const captured=paired?await capturePair(task.signal):null,pair=captured?.right?captured:null;
+    const original=captured?.left??await request('/capture?t='+Date.now(),'blob',20000,task.signal);
     task.signal.throwIfAborted();const archived=await archiveCapture(original,pair);
     await showPhoto(original,task.signal,pair,null,archived.id);
     if(archived.warning){archiveWarning=archived.warning;printFeedback(archived.warning)}
-  }catch{if(!task.signal.aborted){task.abort();captureFailed=true;notice('Fotoet kunne ikkje takast.')}}
+  }catch(error){if(!task.signal.aborted){task.abort();captureFailed=true;if(replacing)printFeedback(error.message||'Fotoet kunne ikkje takast.');else notice('Fotoet kunne ikkje takast.')}}
   finally{if(captureTask===task){captureTask=null;busy=false;controls();resumeStream()}}
 }
 let buttonRun=0;
@@ -348,7 +349,7 @@ async function watchButton(){
     await new Promise(resolve=>setTimeout(resolve,250));
   }
 }
-function hardwareShutter(){if(!reviewing())void takePhoto();else if(!photoDialog.classList.contains('working'))photoDialog.close()}
+function hardwareShutter(){if(!reviewing())void takePhoto();else if(!photoDialog.classList.contains('working'))void takePhoto(true)}
 function clearScene(){
   clearTimeout(masterSaveTimer);masterSaveTimer=0;
   photoDialog.classList.remove('working','error');$('scene-progress').hidden=true;$('retry-scene').hidden=true;
@@ -431,13 +432,14 @@ $('connection').addEventListener('click',showOnboarding);
 $('retry-camera').addEventListener('click',retryCamera);
 $('onboarding-next').addEventListener('click',()=>{if(needsPhoneModels())void setupPhone();else if(connected)onboarding.close();else void retryCamera()});
 $('onboarding').addEventListener('cancel',event=>{event.preventDefault();closeOnboarding()});$('close-onboarding').addEventListener('click',closeOnboarding);
+bindCaptureGesture($('close-photo'),{enabled:()=>photoDialog.open&&!photoDialog.classList.contains('working')&&!busy&&!printBusy&&connected,onCapture:()=>takePhoto(true)});
 $('close-photo').addEventListener('click',()=>photoDialog.close());
 $('recenter-photo').addEventListener('click',()=>{reviewDown=reviewTap=null;if(studioControls.image===0)photoGestures.reset();else if(studioControls.image===2)marigoldView.resetTone();else sceneViewer?.resetView?.();updateRecenter()});
 $('print-photo').addEventListener('click',printCurrent);
 $('retry-scene').addEventListener('click',retryScene);
 photoDialog.addEventListener('contextmenu',event=>{if(!event.target.closest('button,a'))event.preventDefault()});
 
-photoDialog.addEventListener('close',()=>{void persistCurrentPreview().catch(error=>notice(error.message,true));reviewDown=reviewTap=null;cancelArt();closeOnboarding();refreshReview();resumeStream();$('capture-plane').focus({preventScroll:true})});
+photoDialog.addEventListener('close',()=>{captureTask?.abort();void persistCurrentPreview().catch(error=>notice(error.message,true));reviewDown=reviewTap=null;cancelArt();closeOnboarding();refreshReview();resumeStream();$('capture-plane').focus({preventScroll:true})});
 $('last-photo').addEventListener('click',()=>{if(photoUrl&&!busy){stopStream();photoDialog.showModal();refreshReview();if(studioControls.image===1)void makeScene();else if(studioControls.image===2)void makeArt()}});
 onboarding.addEventListener('click',event=>{if(event.target===onboarding){const rect=onboarding.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeOnboarding()}});
 function suspend(){++connectGeneration;connecting=false;connected=false;clearTimeout(retryTimer);if(captureTask){captureTask.abort();captureTask=null;busy=false}stopSecond();stopStream();controls()}
@@ -453,7 +455,7 @@ setInterval(async()=>{
     statusReceived=true;acceptStatus(status);if(!status.camera_ready||!status.stream_ready)throw new Error(healthMessage(status));void connectSecond();
   }catch(error){if(generation===connectGeneration&&!document.hidden&&!busy&&!printBusy&&!reviewing()&&connected)loseConnection(error.name==='AbortError'?'Mista kontakten med kameraet. Koplar til på nytt …':error.message,statusReceived?(deviceStatus?.camera_ready?'stream':'sensor'):'network')}
 },10000);
-window.addEventListener('keydown',event=>{if(event.code==='Space'&&!event.repeat&&!onboarding.open&&!reviewing()&&!['INPUT','BUTTON','A'].includes(document.activeElement.tagName)){event.preventDefault();takePhoto()}});
+window.addEventListener('keydown',event=>{if(!event.defaultPrevented&&event.code==='Space'&&!event.repeat&&!onboarding.open&&!['INPUT','BUTTON','A'].includes(document.activeElement.tagName)){event.preventDefault();hardwareShutter()}});
 controls();if(entry.has('setup'))showOnboarding();if(globalThis.__ENTROPI_RIG_BRIDGE!==true&&(entry.has('setup')||studioControls.vathography))void checkPhone(!entry.has('setup'));connect();
 })();
 </script>

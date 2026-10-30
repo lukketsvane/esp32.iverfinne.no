@@ -27,16 +27,19 @@ Thread(target=server.serve_forever, daemon=True).start()
 scripts = re.findall(r"<script[^>]*>(.*?)</script>", (ROOT / "device/preview/index.html").read_text(encoding="utf-8"), re.S)
 fixture = """async native => {
     const encode = native ? encodeRenderedTiff : (await import('/vendor/entropi-rendered-export.mjs')).encodeRenderedTiff;
+    const presets = native ? PHOTO_PRESETS : (await import('/vendor/photo-adjustments.mjs')).PHOTO_PRESETS;
     const canvas=document.createElement('canvas'); canvas.width=32; canvas.height=24;
     canvas.getContext('2d').fillRect(0,0,32,24);
     const left=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
     const result={depth:new Float32Array([.2,.4,.6,.8]),width:2,height:2,
         validity:new Uint8Array([1,1,1,0]),normalized:true,polarity:'near'};
-    const values=[];
-    for(let preset=0;preset<5;preset++){
-        const blob=await encode({left,result,recipe:{preset,position:.1,width:.9}});
+    const values=[],recipes=Array.from({length:5},(_,preset)=>({preset,position:.1,width:.9}));
+    for(const {id}of presets)recipes.push({preset:1,position:.1,width:.9,edits:{preset:id,strength:.8,
+        exposure:.2,contrast:.1,sharpen:.3,denoise:.4,crop:{x:.125,y:.125,width:.75,height:.75}}});
+    for(const recipe of recipes){
+        const blob=await encode({left,result,recipe});
         const bytes=new Uint8Array(await blob.arrayBuffer());
-        values.push(btoa(String.fromCharCode(...bytes)));
+        values.push({recipe,data:btoa(String.fromCharCode(...bytes))});
     }
     return values;
 }"""
@@ -55,22 +58,36 @@ try:
             for native in [False,True]:
                 encoded=page.evaluate(fixture,native)
                 decoded=[]
-                for preset,data in enumerate(encoded):
-                    with tifffile.TiffFile(io.BytesIO(base64.b64decode(data))) as tif:
+                for item in encoded:
+                    recipe=item["recipe"]
+                    edits=recipe.get("edits")
+                    channels=2 if not edits or edits["preset"] in ["B1","B5","X1"] else 4
+                    width,height=(24,18) if edits else (32,24)
+                    with tifffile.TiffFile(io.BytesIO(base64.b64decode(item["data"]))) as tif:
                         image=tif.asarray()
-                        assert image.shape == (24,32,2), image.shape
+                        assert image.shape == (height,width,channels), image.shape
                         assert image.dtype.name == "uint16", image.dtype
                         assert tif.pages[0].bitspersample == 16
-                        assert image[:,:,1].min() == 0
-                        assert image[:,:,1].max() == 65535
+                        assert tif.pages[0].samplesperpixel == channels
+                        assert int(tif.pages[0].photometric) == (1 if channels == 2 else 2)
+                        assert tuple(map(int,tif.pages[0].extrasamples)) == (2,)
+                        assert image[:,:,-1].min() == 0
+                        assert image[:,:,-1].max() == 65535
+                        assert (image[:,:,:-1] % 257 != 0).any()
                         metadata=json.loads(tif.pages[0].description)
-                        assert metadata["recipe"]["preset"] == preset
+                        assert metadata["recipe"] == recipe
                         assert metadata["sensorRaw"] is False
+                        assert metadata["version"] == (2 if edits else 1)
+                        assert metadata["sourceWidth"] == 32 and metadata["sourceHeight"] == 24
+                        if edits:
+                            assert metadata["outputWidth"] == width and metadata["outputHeight"] == height
+                            assert metadata["channels"] == ("rgba" if channels == 4 else "gray-alpha")
                         decoded.append(image)
-                assert len({value.tobytes() for value in decoded}) == 5
+                assert len(decoded) == 15
+                assert len({value.tobytes() for value in decoded}) == 15
                 outputs.append(decoded)
                 print(json.dumps({"engine":engine.name,"bundle":"firmware" if native else "modules",
-                    "presets":len(decoded),"size":[32,24],"bits":16,"alpha":"verified"}),flush=True)
+                    "depthPresets":5,"photoPresets":10,"sizes":[[32,24],[24,18]],"bits":16,"alpha":"verified"}),flush=True)
             assert all((a==b).all() for a,b in zip(*outputs)), "Firmware/module output mismatch"
             browser.close()
 finally:

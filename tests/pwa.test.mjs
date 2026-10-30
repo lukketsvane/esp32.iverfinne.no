@@ -42,15 +42,14 @@ test('the camera AP route declares and serves its own iOS Home Screen icon',asyn
   assert.ok((server.match(/registerHandler\(cameraHttpd,/g)||[]).length<=maximum);
 });
 
-test('the offline shell contains its complete small module graph without models, WASM or camera data',async()=>{
+test('the offline editor shell fits 416 KiB without models, WASM or camera data',async()=>{
   const app=serviceWorker(worker);let total=0;
   for(const path of app.files){
     assert.doesNotMatch(path,/\.(?:onnx|wasm)$|^\/(?:api|capture|stream|photos)(?:\/|$)/);
     const relative=path==='/'?'index.html':path==='/prepare/'?'prepare/index.html':(rewrites.find(route=>route.source===path)?.destination??path).slice(1);total+=(await stat(new URL(relative,root))).size;
     if(path.endsWith('.mjs'))for(const match of (await read(relative)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm)){const dependency=new URL(match[1],origin+path).pathname;assert.ok(app.files.includes(dependency),path+' -> '+dependency)}
   }
-  // Keep the complete offline graph, including source-size 16-bit TIFF, below 384 KiB.
-  assert.ok(total<384*1024,total+' bytes');
+  assert.ok(total<416*1024,total+' bytes');
   for(const path of ['/pointcloud/depth-worker-v2.mjs','/pointcloud/vendor/ort.wasm.min.mjs','/pointcloud/vendor/ort-wasm-simd-threaded.mjs','/prepare/print.html'])assert.ok(app.files.includes(path));
   await app.lifecycle('install');assert.deepEqual(app.installed,app.files);assert.equal(app.skipped,0);
 });
@@ -109,7 +108,7 @@ test('the canonical start route reuses existing sources with its own offline cac
 
 test('the new depth worker pathname bypasses cached 420px code even when a query version cannot',async()=>{
   const oldPath='/pointcloud/depth-worker.mjs',newPath='/pointcloud/depth-worker-v2.mjs';
-  const legacy=serviceWorker(worker.replaceAll(newPath,oldPath).replace('entropi-app-v55','entropi-app-v38'),async()=>{throw new TypeError('Offline')});
+  const legacy=serviceWorker(worker.replaceAll(newPath,oldPath).replace('entropi-app-v59','entropi-app-v38'),async()=>{throw new TypeError('Offline')});
   await legacy.lifecycle('install');
   const oldCode=(await read(newPath.slice(1))).replaceAll('> 518','> 420');
   legacy.stores.get(legacy.name).set(oldPath,new Response(oldCode));
@@ -133,7 +132,7 @@ test('the fresh print module graph resolves canonical sources and stays availabl
   const destinations={'/print':'/prepare/print.html','/print/':'/prepare/print.html','/print/index.html':'/prepare/print.html','/print/app.mjs':'/prepare/print.mjs','/print/printer.mjs':'/vendor/print/printer.mjs','/print/px10-protocol.mjs':'/vendor/print/px10-protocol.mjs'};
   for(const [path,destination]of Object.entries(destinations)){assert.equal(rewrites.find(route=>route.source===path)?.destination,destination);await stat(new URL(destination.slice(1),root))}
   const html=await read('prepare/print.html'),module=await read('prepare/print.mjs'),printer=await read('vendor/print/printer.mjs');assert.match(html,/src="\/print\/app\.mjs"/);assert.match(module,/from '\/print\/printer\.mjs'/);assert.match(printer,/from '\.\/px10-protocol\.mjs'/);
-  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v55'],[prepare,'/prepare/sw.js','entropi-prepare-v25'],[prepare,'/start/sw.js','entropi-start-v19']]){
+  for(const [source,scriptPath,name]of [[worker,'/sw.js','entropi-app-v59'],[prepare,'/prepare/sw.js','entropi-prepare-v25'],[prepare,'/start/sw.js','entropi-start-v19']]){
     const app=serviceWorker(source,async()=>{throw new TypeError('Offline')},{scriptPath});await app.lifecycle('install');assert.equal(app.name,name);
     for(const path of printFiles){assert.ok(app.files.includes(path));assert.equal(await(await app.request(path)).text(),'cached:'+path);const file=destinations[path].slice(1);if(path.endsWith('.mjs'))for(const match of(await read(file)).matchAll(/^import .*? from ['"]([^'"]+)['"]/gm))assert.ok(app.files.includes(new URL(match[1],origin+path).pathname),path+' -> '+match[1])}
     for(const path of ['/print','/print/index.html'])assert.equal(await(await app.request(path)).text(),'cached:/print/');

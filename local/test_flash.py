@@ -21,11 +21,13 @@ class FakeBoard:
         self.flash[0x9000:0x9010] = b'saved settings!!'
         self.flash[APP_OFFSET:APP_OFFSET + 8] = b'\xe9old-app'
         self.mac, self.corrupt, self.calls = mac, corrupt_first_write, []
+        self.commands = []
 
     def __call__(self, command, stdout, **kwargs):
         args = command[command.index('--after') + 2:]
         verb = args[0]
         self.calls.append(verb)
+        self.commands.append((command, kwargs))
         if verb == 'read-mac':
             stdout.write('Chip is ESP32-D0WD-V3\nMAC: ' + self.mac + '\n')
         elif verb == 'read-flash':
@@ -50,8 +52,32 @@ class FlashTests(unittest.TestCase):
         self.image = self.folder / 'app.bin'
         self.image.write_bytes(b'\xe9' + bytes(range(256)) * 32)
 
-    def flasher(self, board):
-        return Flasher('esptool', 'COM13', self.folder / 'out', run=board)
+    def flasher(self, board, baud=460800):
+        return Flasher('esptool', 'COM13', self.folder / 'out', run=board, baud=baud)
+
+    def test_selected_baud_applies_to_backup_write_verification_and_readback(self):
+        for baud in (115200, 230400, 460800):
+            with self.subTest(baud=baud):
+                board = FakeBoard()
+                record = self.flasher(board, baud).flash(self.image, 'c0b62c0d5020', write=True)
+                self.assertEqual(record['baud'], baud)
+                for index, (command, options) in enumerate(board.commands):
+                    self.assertEqual(command[command.index('--baud') + 1], str(baud) if index else '115200')
+                    self.assertEqual(options['timeout'], 300 * 460800 // baud if index else 300)
+
+    def test_rollback_uses_selected_baud(self):
+        board = FakeBoard(corrupt_first_write=True)
+        with self.assertRaisesRegex(RuntimeError, 'skriven tilbake og kontrollert'):
+            self.flasher(board, 115200).flash(self.image, 'c0b62c0d5020', write=True)
+        for command, options in board.commands[-2:]:
+            self.assertEqual(command[command.index('--baud') + 1], '115200')
+            self.assertEqual(options['timeout'], 1200)
+
+    def test_unsupported_baud_is_rejected_before_touching_the_board(self):
+        board = FakeBoard()
+        with self.assertRaisesRegex(ValueError, 'baudrate'):
+            self.flasher(board, 921600)
+        self.assertEqual(board.calls, [])
 
     def test_camera_ids_map_to_the_mac_esptool_prints(self):
         self.assertEqual(mac_of('c0b62c0d5020'), '20:50:0d:2c:b6:c0')

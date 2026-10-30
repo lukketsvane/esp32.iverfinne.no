@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {createEntropiDocument} from '../vendor/entropi-document.mjs';
+import {attachGalleryNavigation} from '../vendor/gallery-navigation.mjs';
 
 const html=await readFile(new URL('../device/EntropiCamera/camera_ui.html',import.meta.url),'utf8');
 const section=(start,end)=>{
@@ -167,7 +168,7 @@ function archiveHarness(){
     async remove(id){records.delete(id)}
   };
   const preview=new Blob(['rendered'],{type:'image/png'}),view={ready:false,result:null,recipe:{preset:1,position:0,width:1},snapshot:()=>preview,reset(){this.ready=false;this.result=null},async process(blob,signal,settings){processed.push({blob,signal,settings});this.result={width:2,height:2,depth:Float32Array.of(1,2,3,4)};this.ready=true},async restore(blob,result,recipe,signal){restored.push({blob,result,recipe,signal});this.result=result;this.recipe=recipe;this.ready=true}};
-  const state=vm.createContext({Blob,AbortController,DOMException,document,window:{addEventListener:document.addEventListener},createArchive:()=>store,createEntropiDocument,
+  const state=vm.createContext({Blob,AbortController,DOMException,document,window:{addEventListener:document.addEventListener},createArchive:()=>store,createEntropiDocument,attachGalleryNavigation,
     $:id=>elements.get(id),studio:elements.get('studio'),photoDialog:elements.get('photo-dialog'),onboarding:elements.get('onboarding'),
     setTimeout:()=>1,clearTimeout(){},stopStream(){},stopSecond(){},resumeStream(){},controls(){},notice(){},printFeedback(){},refreshReview(){},needsPhoneModels:()=>false,bindExportGesture(){},pickEntropiDocument(){},
     connected:true,connecting:false,busy:false,printBusy:false,connectGeneration:0,retryTimer:0,captureTask:null,sceneGeneration:0,artTask:null,artError:'',artNeedsModel:false,phoneTask:null,needsSetup:false,masterSaveTimer:0,captureArchiveSuppressed:false,
@@ -179,6 +180,17 @@ function archiveHarness(){
   vm.runInContext(enhancement.slice(0,enhancement.indexOf('async function updatePeerPreview('))+'\n'+section('async function showPhoto(','async function takePhoto(')+'\n'+artSource,state);
   return {state,store,records,writes,processed,restored,urls,get:id=>elements.get(id),flush,get activeElement(){return document.activeElement},async key(key,shiftKey=false){const event={key,shiftKey,defaultPrevented:false,preventDefault(){this.defaultPrevented=true}};for(const callback of events.get('keydown')??[])callback(event);await flush();return event}};
 }
+
+test('embedded gallery browses adjacent photos and restores the existing grid and focus',async()=>{
+  const app=archiveHarness(),images=[0,1,2].map(value=>new Blob([String(value)],{type:'image/png'}));
+  for(const image of images)await app.store.save(image,null,image);
+  let lists=0;const list=app.store.list;app.store.list=async()=>{lists++;return list()};
+  await app.state.showArchive();const grid=app.get('archive-grid'),tiles=[...grid.children];grid.scrollTop=475;
+  await tiles[0].emit('click');await app.key('ArrowRight');assert.equal(app.urls.get(app.get('archive-photo').src),images[1]);assert.match(app.get('archive-photo').alt,/2 av 3/);
+  await app.get('archive-back').emit('click');assert.equal(grid.scrollTop,475);assert.equal(grid.children[0],tiles[0]);assert.equal(app.activeElement,tiles[1]);assert.equal(lists,1);
+  await tiles[2].emit('click');await app.key('ArrowRight');assert.equal(app.urls.get(app.get('archive-photo').src),images[2]);
+  await app.key('ArrowLeft');assert.equal(app.urls.get(app.get('archive-photo').src),images[1]);
+});
 
 for(const stereo of [false,true])test(`embedded recovery develops a preserved ${stereo?'stereo pair':'mono original'} using the existing archive identity`,async()=>{
   const app=archiveHarness(),left=new Blob(['left'],{type:'image/jpeg'}),right=stereo?new Blob(['right'],{type:'image/jpeg'}):null;
@@ -263,6 +275,14 @@ test('USB capture obtains both frames from one capture ID and preserves measured
   assert.equal(app.revoked.length,2);
 });
 
+test('USB capture accepts only an explicit mono fallback and fetches its verified primary frame once',async()=>{
+  const capture={id:'mono-1',left:'/api/frame/mono-1/left',right:null,transport:'usb',hardware_synchronized:false,fallback_reason:'peer-unavailable'};
+  const app=pairHarness({capture}),result=await app.context.capturePair(new AbortController().signal);
+  assert.equal(result.left,jpeg);assert.equal(result.right,null);assert.equal(result.fallback_reason,'peer-unavailable');assert.equal(app.calls.length,2);assert.equal(app.calls[1][0],capture.left);
+  const incomplete=pairHarness({capture:{left:capture.left}});await assert.rejects(incomplete.context.capturePair(new AbortController().signal),/gyldig opptak/);
+  const empty=pairHarness({capture,dimensions:[[0,0]]});await assert.rejects(empty.context.capturePair(new AbortController().signal),/fotooppløysing/);
+});
+
 test('direct firmware capture receives an atomic pair and verifies both camera identities',async()=>{
   const app=pairHarness({bridge:false}),pair=await app.context.capturePair(new AbortController().signal);
   assert.equal(app.calls.length,1);assert.match(app.calls[0][0],/^\/stereo\/capture\?/);assert.equal(app.calls[0][1],'pair');
@@ -272,7 +292,7 @@ test('direct firmware capture receives an atomic pair and verifies both camera i
 
 test('invalid bridge routes and mismatched frame dimensions cannot enter review',async()=>{
   const invalid=pairHarness({capture:{left:'https://example.invalid/photo',right:'/api/frame/a/right'}});
-  await assert.rejects(invalid.context.capturePair(new AbortController().signal),/gyldig stereopar/);
+  await assert.rejects(invalid.context.capturePair(new AbortController().signal),/gyldig opptak/);
   assert.equal(invalid.calls.length,1);
   const mismatch=pairHarness({dimensions:[[640,480],[320,240]]});
   await assert.rejects(mismatch.context.capturePair(new AbortController().signal),/same fotooppløysing/);
@@ -343,7 +363,7 @@ test('art print and save use rendered snapshots and invalidate a replaced result
   const app=artHarness(),state=app.context,prints=[],saves=[];
   await state.makeArt();
   Object.assign(state,{
-    printBusy:false,sceneVisible:false,artVisible:true,sceneViewer:null,connectGeneration:0,connecting:false,retryTimer:null,
+    printBusy:false,busy:false,sceneVisible:false,artVisible:true,sceneViewer:null,connectGeneration:0,connecting:false,retryTimer:null,
     clearTimeout(){},stopStream(){},controls(){},printFeedback(){},resumeStream(){},
     printClient:{async print(image,isCurrent){prints.push({image,isCurrent})}},
     photoName:'entropi-test.png',snapshotBlob:image=>image,bindExportGesture(button,getOptions){button.addEventListener('click',async()=>{const options=getOptions();saves.push({...options,image:await options.image()})})}
@@ -364,7 +384,7 @@ for(const outcome of ['resolve','reject'])test(`embedded gallery ignores a stale
   const old=new Blob(['old'],{type:'image/png'}),fresh=new Blob(['fresh'],{type:'image/png'});
   const record=preview=>({id:'same',left:old,preview});
   const get=id=>{if(!elements.has(id))elements.set(id,{hidden:false,textContent:'',classList:{toggle(){}},setAttribute(){},dataset:{},focus(){}});return elements.get(id)};
-  const state=vm.createContext({$:get,archiveGeneration:1,archiveSelected:null,archiveRecord:null,archiveDeleteArmed:false,archiveViewer:null,archiveRecords:[{id:'same',created:0}],archiveDate:()=>'',
+  const state=vm.createContext({$:get,archiveGeneration:1,archiveScroll:0,archiveNavigation:{cancel(){}},disarmArchiveDelete(){},archiveSelected:null,archiveRecord:null,archiveDeleteArmed:false,archiveViewer:null,archiveRecords:[{id:'same',created:0}],archiveDate:()=>'',
     archiveStore:{get:async()=>++calls===1?pending:record(fresh)},URL:{createObjectURL(blob){const url='blob:'+urls.size;urls.set(url,blob);return url},revokeObjectURL(){}}
   });
   vm.runInContext(source,state);const stale=state.openArchivedPhoto('same');

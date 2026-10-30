@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source=(await readFile(new URL('../vendor/marigold-view.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
+const source=(await Promise.all(['photo-adjustments','notch-rail','photo-editor','marigold-view'].map(name=>readFile(new URL('../vendor/'+name+'.mjs',import.meta.url),'utf8')))).map(text=>text.replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'')).join('\n');
 const photo=new Blob(['jpeg'],{type:'image/jpeg'});
 const raw=model=>({depth:Float32Array.of(0,.3,.6,1),width:2,height:2,polarity:'far',model,source:model==='Local model'?'local':'browser',images:new Map()});
 const stereoResult=()=>({...raw('Stereo census'),source:'stereo',polarity:'near',depth:Float32Array.of(4,NaN,8,12),validity:Uint8Array.of(1,0,1,1),quantity:'disparity',units:'px',provenance:{rigId:'fixed-rig',matchedFraction:.75,metric:false,hardwareSynchronized:false}});
@@ -23,14 +23,19 @@ function harness({endpoint=null,localFails=false,browserFails=false,photoWidth=2
     replaceChildren(){this.children=[]}
     getContext(){return {createImageData:(width,height)=>({data:new Uint8ClampedArray(width*height*4)}),putImageData:image=>{this.pixels=image.data.slice();this.paintCount=(this.paintCount??0)+1},drawImage:source=>{this.drawnSource=source;drawSources.push(source)},getImageData:(_,__,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})}}
     async decode(){}
+    focus(){}
+    setPointerCapture(id){this.captured=id}
+    hasPointerCapture(id){return this.captured===id}
+    releasePointerCapture(){this.captured=null}
     remove(){}
     close(){}
-    getBoundingClientRect(){return {left:0,width:390}}
+    getBoundingClientRect(){return {left:0,top:0,width:390,height:844}}
     showModal(){throw new Error('Unexpected upload dialog')}
   }
-  const host=new Element(),documentEvents=new Map(),windowEvents=new Map(),document={createElement:()=>new Element(),body:new Element(),hidden:false,addEventListener:(name,handler)=>documentEvents.set(name,handler),removeEventListener:name=>documentEvents.delete(name)},context=vm.createContext({
-    document,Image:Element,Blob,DOMException,AbortController,matchMedia:()=>({matches:reducedMotion}),Date:{now:()=>time},
-    addEventListener:(name,handler)=>windowEvents.set(name,handler),removeEventListener:name=>windowEvents.delete(name),
+  const add=(events,name,handler)=>{if(!events.has(name))events.set(name,new Set());events.get(name).add(handler)},remove=(events,name,handler)=>events.get(name)?.delete(handler),emit=(events,name)=>{for(const handler of events.get(name)||[])handler()};
+  const host=new Element(),documentEvents=new Map(),windowEvents=new Map(),document={createElement:()=>new Element(),body:new Element(),hidden:false,addEventListener:(name,handler)=>add(documentEvents,name,handler),removeEventListener:(name,handler)=>remove(documentEvents,name,handler)},context=vm.createContext({
+    document,Image:Element,Blob,DOMException,AbortController,Uint8Array,Uint8ClampedArray,Uint16Array,Float32Array,matchMedia:()=>({matches:reducedMotion}),Date:{now:()=>time},
+    addEventListener:(name,handler)=>add(windowEvents,name,handler),removeEventListener:(name,handler)=>remove(windowEvents,name,handler),
     setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,at:time+delay});return id},clearTimeout:id=>timers.delete(id),
     URL:{createObjectURL:()=>{const url='blob:'+urls.length;urls.push(url);return url},revokeObjectURL:url=>revoked.push(url)},
     requestAnimationFrame:callback=>{frames.set(++nextFrame,callback);return nextFrame},cancelAnimationFrame:id=>frames.delete(id),
@@ -39,11 +44,11 @@ function harness({endpoint=null,localFails=false,browserFails=false,photoWidth=2
     runStereoDepth:async(...args)=>{calls.stereo++;return stereoRun?stereoRun(...args):stereoResult()},
     runLocalDepth:async(...args)=>{calls.local++;if(localRun)return localRun(...args);if(localFails)throw new Error('Local service unavailable');return raw('Local model')},
     runBrowserDepth:async(...args)=>{calls.browser++;if(browserRun)return browserRun(...args);if(browserFails)throw Object.assign(new Error('Klargjer telefonen.'),{code:'PHONE_SETUP_REQUIRED'});return raw('Browser model')},
-    normalizeDepth:(depth,options)=>{normalizations.push({depth,...options});return depth},toneDepth:(_,width,height,options)=>{renders.push(options);return new Uint8ClampedArray(width*height*4)},decodeSpectral(){throw new Error('Unexpected color map')},print(){throw new Error('Unexpected print')},
+    normalizeDepth:(depth,options)=>{normalizations.push({depth,...options});return depth},toneDepth:(_,width,height,options)=>{renders.push(options);return new Uint8ClampedArray((options.outputWidth||width)*(options.outputHeight||height)*4)},decodeSpectral(){throw new Error('Unexpected color map')},print(){throw new Error('Unexpected print')},
     VATHOGRAPHY_PRESETS:[{label:'Band'},{label:'Mist'},{label:'Abyss'},{label:'Near'},{label:'Planes'}]
   });
   const original=host.querySelector('.mg-original');original.naturalWidth=photoWidth;original.naturalHeight=photoHeight;
-  vm.runInContext(source,context);return {view:context.createMarigoldView(host,{onStatus:status=>statuses.push(status),onChange:()=>changes++,onGesture:()=>gestures++}),host,calls,renders,drawSources,normalizations,statuses,urls,revoked,timers,frames,get pulse(){return host.children.find(node=>node.className==='mg-pulse')},get changes(){return changes},get gestures(){return gestures},flush(){for(const [id,callback]of [...frames]){frames.delete(id);callback(time)}},advance(ms){const end=time+ms;for(;;){const next=[...timers].filter(([,timer])=>timer.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;const [id,timer]=next;time=timer.at;timers.delete(id);timer.callback()}time=end},blur(){windowEvents.get('blur')?.()},hide(){document.hidden=true;documentEvents.get('visibilitychange')?.()},emit(name,event){host.events.get(name)?.({type:name,target:{closest:()=>false},preventDefault(){},button:0,pointerId:1,clientX:100,clientY:100,...event})}};
+  vm.runInContext(source,context);return {view:context.createMarigoldView(host,{onStatus:status=>statuses.push(status),onChange:()=>changes++,onGesture:()=>gestures++}),host,calls,renders,drawSources,normalizations,statuses,urls,revoked,timers,frames,get pulse(){return host.children.find(node=>node.className==='mg-pulse')},get changes(){return changes},get gestures(){return gestures},flush(){for(const [id,callback]of [...frames]){frames.delete(id);callback(time)}},advance(ms){const end=time+ms;for(;;){const next=[...timers].filter(([,timer])=>timer.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;const [id,timer]=next;time=timer.at;timers.delete(id);timer.callback()}time=end},blur(){emit(windowEvents,'blur')},hide(){document.hidden=true;emit(documentEvents,'visibilitychange')},emit(name,event){host.events.get(name)?.({type:name,target:{closest:()=>false},preventDefault(){},button:0,pointerId:1,clientX:100,clientY:100,...event})}};
 }
 
 test('local raw depth retains provenance without a cloud request',async()=>{
@@ -272,4 +277,77 @@ test('restored documents pulse once and replacing a result cancels its old pulse
   const pending=deferred(),app=harness({browserRun:()=>pending.promise}),result=raw('Saved model'),recipe={preset:3,position:.2,width:1.4};
   await app.view.restore(photo,result,recipe);app.flush();app.advance(600);app.flush();assert.equal(app.pulse.hidden,false);assert.equal(app.calls.browser,0);
   const replacing=app.view.process(photo);assert.equal(app.pulse.hidden,true);assert.equal(app.frames.size,0);pending.resolve(raw('Browser model'));await replacing;assert.equal(app.frames.size,1);app.view.dispose();assert.equal(app.frames.size,0);
+});
+
+const findNode=(parent,className)=>parent.className?.split(' ').includes(className)?parent:parent.children.map(child=>findNode(child,className)).find(Boolean);
+const editorEvent=(node,name='click')=>node.events.get(name)?.({target:node,preventDefault(){},stopPropagation(){}});
+
+test('photo adjustments preview without changing the saved recipe until accepted',async()=>{
+  const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);const before=app.changes;
+  const editor=findNode(app.host,'mg-editor'),rail=findNode(editor,'mg-edit-rail'),range=findNode(editor,'mg-edit-range');
+  editorEvent(rail.children[0]);range.value='1.25';editorEvent(range,'input');app.flush();
+  assert.equal(app.view.recipe.edits,undefined);assert.equal(app.changes,before);assert.equal(app.view.snapshot(true).width,320);
+  editorEvent(findNode(editor,'mg-edit-apply'));app.flush();assert.equal(app.view.recipe.edits.exposure,1.25);assert.equal(app.changes,before+1);
+  editorEvent(rail.children[0]);range.value='-1';editorEvent(range,'input');app.flush();editorEvent(findNode(editor,'mg-edit-cancel'));app.flush();
+  assert.equal(app.view.recipe.edits.exposure,1.25);assert.equal(app.changes,before+1);
+  await app.view.process(photo);assert.equal(app.view.recipe.edits,undefined);app.view.dispose();
+});
+
+test('crop acceptance updates native snapshots and keeps original comparison aligned',async()=>{
+  const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);
+  const editor=findNode(app.host,'mg-editor'),rail=findNode(editor,'mg-edit-rail'),options=findNode(editor,'mg-crop-options');
+  editorEvent(rail.children[4]);editorEvent(options.children.find(node=>node.dataset.ratio==='1:1'));app.flush();
+  assert.equal(app.view.recipe.edits,undefined);assert.equal(app.view.snapshot(true).width,320);
+  editorEvent(findNode(editor,'mg-edit-apply'));app.flush();const snapshot=app.view.snapshot(true),cropped=findNode(app.host,'mg-original-crop');
+  assert.equal(snapshot.width,240);assert.equal(snapshot.height,240);assert.equal(cropped.width,240);assert.equal(cropped.height,240);assert.equal(cropped.hidden,false);
+  assert.equal(app.view.recipe.edits.crop.x,.125);assert.equal(app.view.recipe.edits.crop.width,.75);
+  const recipe=JSON.parse(JSON.stringify(app.view.recipe));await app.view.restore(photo,raw('Saved model'),recipe);assert.deepEqual(JSON.parse(JSON.stringify(app.view.recipe)),recipe);assert.equal(app.view.snapshot(true).width,240);app.view.dispose();
+});
+
+test('invalid archived photo edits are rejected before replacing the current photograph',async()=>{
+  const app=harness();await app.view.process(photo);const current=app.view.result;
+  for(const edits of [{preset:'missing'},{exposure:NaN},{crop:{x:.8,width:.5}}])await assert.rejects(app.view.restore(photo,raw('Saved model'),{preset:1,position:0,width:1,edits}));
+  assert.equal(app.view.result,current);assert.equal(app.view.ready,true);app.view.dispose();
+});
+
+test('photo sliders bound moving previews and restore native detail on release',async()=>{
+  const app=harness({photoWidth:1600,photoHeight:1200});await app.view.process(photo);
+  const editor=findNode(app.host,'mg-editor'),rail=findNode(editor,'mg-edit-rail'),range=findNode(editor,'mg-edit-range');
+  editorEvent(rail.children[0]);range.value='.5';editorEvent(range,'input');app.flush();
+  assert.equal(app.renders.at(-1).outputWidth,512);assert.equal(app.renders.at(-1).outputHeight,384);
+  editorEvent(range,'change');app.flush();assert.equal(app.renders.at(-1).outputWidth,1600);assert.equal(app.renders.at(-1).outputHeight,1200);
+  editorEvent(findNode(editor,'mg-edit-apply'));app.flush();assert.equal(app.view.snapshot(true).width,1600);assert.equal(app.view.recipe.edits.exposure,.5);app.view.dispose();
+});
+
+const positionRail=rail=>rail.children.forEach((button,index)=>{button.getBoundingClientRect=()=>({left:0,top:100*index,width:44,height:44})});
+const railPointer=(rail,name,values={})=>rail.events.get(name)?.({type:name,target:rail,pointerId:17,button:0,clientX:20,clientY:22,preventDefault(){},stopPropagation(){},stopImmediatePropagation(){},...values});
+
+test('left notch scrubbing previews continuously and saves only the final choice',async()=>{
+  const app=harness({photoWidth:1600,photoHeight:1200});await app.view.process(photo);const before=app.changes,rail=app.host.querySelector('.mg-variants');positionRail(rail);
+  railPointer(rail,'pointerdown',{clientY:75});assert.equal(rail.captured,17);app.advance(500);assert.equal(app.host.classList.contains('peeking'),false);
+  railPointer(rail,'pointermove',{clientY:222});app.flush();assert.equal(app.view.selectedName,'Abyss');assert.equal(app.renders.at(-1).outputWidth,512);
+  railPointer(rail,'pointermove',{clientX:300,clientY:422});app.flush();assert.equal(app.view.selectedName,'Planes');assert.equal(app.changes,before);assert.equal(app.view.recipe.preset,1);
+  assert.equal(app.view.snapshot(true).width,1600);assert.equal(app.renders.at(-1).preset,1);app.flush();assert.equal(app.renders.at(-1).preset,4);
+  railPointer(rail,'pointerup',{clientX:300,clientY:422});app.flush();assert.equal(rail.captured,null);assert.equal(app.changes,before+1);assert.equal(app.view.recipe.preset,4);assert.equal(app.renders.at(-1).outputWidth,1600);
+  assert.equal(app.view.recipe.position,0);assert.equal(app.view.recipe.width,1);assert.equal(app.timers.size,0);app.view.dispose();
+});
+
+test('left rail cancellation and app switching release capture without double saving',async()=>{
+  for(const action of ['pointercancel','lostpointercapture','blur','hide','reset','dispose']){
+    const app=harness();await app.view.process(photo);const before=app.changes,rail=app.host.querySelector('.mg-variants');positionRail(rail);
+    railPointer(rail,'pointerdown');railPointer(rail,'pointermove',{clientY:222});
+    if(action==='blur'||action==='hide')app[action]();else if(action==='reset'||action==='dispose')app.view[action]();else railPointer(rail,action);
+    assert.equal(rail.captured,null,action);assert.equal(app.changes,before+(action==='reset'||action==='dispose'?0:1),action);
+    railPointer(rail,'lostpointercapture');railPointer(rail,'pointermove',{clientY:422});assert.equal(app.view.selectedName,'Abyss');assert.equal(app.view.recipe.position,0);
+    if(action!=='dispose')app.view.dispose();assert.equal(app.frames.size,0);
+  }
+});
+
+test('right rail scrubbing opens each nearest tool once and leaves depth gestures untouched',async()=>{
+  const app=harness();await app.view.process(photo);const before=app.changes,editor=findNode(app.host,'mg-editor'),rail=findNode(editor,'mg-edit-rail'),panel=findNode(editor,'mg-edit-panel');positionRail(rail);
+  railPointer(rail,'pointerdown',{clientY:70});railPointer(rail,'pointermove',{clientY:122});assert.equal(panel.hidden,false);assert.equal(rail.children[1].attributes.get('aria-pressed'),'true');
+  railPointer(rail,'pointermove',{clientX:200,clientY:130});assert.equal(panel.hidden,false);assert.equal(rail.children[1].attributes.get('aria-pressed'),'true');
+  railPointer(rail,'pointermove',{clientX:200,clientY:322});assert.equal(rail.children[3].attributes.get('aria-pressed'),'true');railPointer(rail,'pointercancel');app.flush();
+  assert.equal(rail.captured,null);assert.equal(app.changes,before);assert.equal(app.view.recipe.position,0);assert.equal(app.view.recipe.width,1);assert.equal(app.host.classList.contains('peeking'),false);assert.equal(app.timers.size,0);
+  railPointer(rail,'pointerdown',{clientY:322});railPointer(rail,'pointerup',{clientY:322});assert.equal(panel.hidden,true);app.view.dispose();
 });

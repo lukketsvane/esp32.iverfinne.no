@@ -91,3 +91,14 @@ export function encodeGrayscale16Tiff(rgba,width,height,metadata={}){
   ];
   return encodeTiff16(rgba,tags,'image/tiff',4,[0,3]);
 }
+
+export function encodeRgba16Tiff(rgba,width,height,metadata={}){
+  if(!(rgba instanceof Uint16Array)||!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||width*height>16777216||rgba.length!==width*height*4)throw new Error('Ugyldig 16-bits bilete.');
+  const description=JSON.stringify(metadata).replace(/[\u007f-\uffff]/g,char=>'\\u'+char.charCodeAt(0).toString(16).padStart(4,'0'));
+  const tags=[
+    [254,4,0],[256,4,width],[257,4,height],[258,3,[16,16,16,16]],[259,3,1],[262,3,2],
+    [270,2,description],[273,4,0],[274,3,1],[277,3,4],[278,4,height],[279,4,width*height*8],
+    [282,5,[[72,1]]],[283,5,[[72,1]]],[284,3,1],[296,3,2],[305,2,'Entropi'],[338,3,2],[339,3,[1,1,1,1]]
+  ];
+  return encodeTiff16(rgba,tags,'image/tiff',4,[0,1,2,3]);
+}

@@ -106,6 +106,7 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.begin(ssid);
 #endif
+  WiFi.setSleep(false);
   beginRigNetwork();
   startCameraServer();
   beginCaptureButton();

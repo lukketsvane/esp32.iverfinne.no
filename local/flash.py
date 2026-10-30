@@ -56,16 +56,20 @@ def app_partition_size(table):
 
 
 class Flasher:
-    def __init__(self, esptool, port, out, run=subprocess.run):
+    def __init__(self, esptool, port, out, run=subprocess.run, baud=460800):
+        if baud not in (115200, 230400, 460800):
+            raise ValueError('Ugyldig baudrate')
         self.esptool_path, self.port, self.out, self.run = esptool, port, Path(out), run
+        self.baud = baud
         self.out.mkdir(parents=True, exist_ok=True)
 
-    def esptool(self, label, args, after='no-reset', baud='460800'):
+    def esptool(self, label, args, after='no-reset', baud=None):
         log = self.out / (label + '.log')
+        timeout = 300 if baud is not None else 300 * 460800 // self.baud
         with log.open('w', encoding='utf-8') as handle:
-            result = self.run([str(self.esptool_path), '--chip', 'esp32', '--port', self.port, '--baud', baud,
+            result = self.run([str(self.esptool_path), '--chip', 'esp32', '--port', self.port, '--baud', str(baud or self.baud),
                                '--before', 'default-reset', '--after', after, *args],
-                              stdout=handle, stderr=subprocess.STDOUT, text=True, timeout=300)
+                              stdout=handle, stderr=subprocess.STDOUT, text=True, timeout=timeout)
         output = log.read_text(encoding='utf-8', errors='replace')
         if result.returncode:
             raise RuntimeError(label + ' feila: ' + output[-800:])
@@ -86,7 +90,7 @@ class Flasher:
         size = app_partition_size(original[TABLE_OFFSET:TABLE_OFFSET + 0x1000])
         if len(data) > size:
             raise ValueError('Biletet er større enn app-partisjonen; ingenting er skrive')
-        record = {'port': self.port, 'camera_id': camera_id, 'mac': mac, 'image_bytes': len(data),
+        record = {'port': self.port, 'baud': self.baud, 'camera_id': camera_id, 'mac': mac, 'image_bytes': len(data),
                   'image_sha256': hashlib.sha256(data).hexdigest(), 'backup': str(backup),
                   'backup_sha256': hashlib.sha256(original).hexdigest(), 'app_partition_bytes': size, 'written': False}
         if write:
@@ -125,6 +129,7 @@ def main():
     parser = argparse.ArgumentParser(description='Ta full backup av eitt ENTROPI-kamera og skriv ny app med kontroll.')
     parser.add_argument('--role', choices=sorted(CAMERAS), required=True)
     parser.add_argument('--port', required=True)
+    parser.add_argument('--baud', type=int, choices=(115200, 230400, 460800), default=460800)
     parser.add_argument('--image', type=Path, required=True)
     parser.add_argument('--camera-id', help='overstyr kamera-ID-en for rolla')
     parser.add_argument('--write', action='store_true', help='skriv appen; utan dette blir berre identitet og backup kontrollerte')
@@ -135,7 +140,7 @@ def main():
     check_build(args.image, args.role, args.allow_unpaired)
     root = Path(__file__).resolve().parents[1]
     out = args.out or root / 'device/firmware/backups' / (datetime.now().strftime('%Y%m%d-%H%M%S-') + args.role)
-    record = Flasher(args.esptool or find_esptool(), args.port, out).flash(args.image, args.camera_id or CAMERAS[args.role], args.write)
+    record = Flasher(args.esptool or find_esptool(), args.port, out, baud=args.baud).flash(args.image, args.camera_id or CAMERAS[args.role], args.write)
     print(json.dumps(record, indent=2))
 
 

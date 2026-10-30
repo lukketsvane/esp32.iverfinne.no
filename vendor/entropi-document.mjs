@@ -1,3 +1,5 @@
+import {normalizePhotoEdits,photoEditsNeutral} from './photo-adjustments.mjs';
+
 const documentLimit=128*1024*1024,pixelLimit=16777216,metadataLimit=65536;
 const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
 const crcTable=Uint32Array.from({length:256},(_,value)=>{for(let n=0;n<8;n++)value=value&1?0xedb88320^(value>>>1):value>>>1;return value>>>0});
@@ -24,6 +26,7 @@ export function createEntropiDocument({left,right=null,result,recipe={},preview=
   if(({ 'relative-depth':'relative',disparity:'px',depth:'m','display-intensity':'intensity' })[quantity]!==units)invalid('Ugyldig eining for djupnedata.');
   const tone={preset:recipe.preset??1,position:recipe.position??0,width:recipe.width??1};
   if(!Number.isInteger(tone.preset)||tone.preset<0||tone.preset>4||!Number.isFinite(tone.position)||Math.abs(tone.position)>1||!Number.isFinite(tone.width)||tone.width<.25||tone.width>3)invalid('Ugyldig framkalling.');
+  if(recipe.edits!==undefined){const edits=normalizePhotoEdits(recipe.edits);if(!photoEditsNeutral(edits))tone.edits=edits}
   const identity=id??globalThis.crypto?.randomUUID?.()??Date.now().toString(36)+'-'+Math.random().toString(36).slice(2),date=created??new Date().toISOString();
   if(typeof identity!=='string'||!identity.length||identity.length>128||typeof date!=='string'||!Number.isFinite(Date.parse(date)))invalid();
   const spatial=jsonCopy({referenceCamera:'left',calibration:null,...geometry}),timing=jsonCopy({left:null,right:null,synchronized:false,...capture});
@@ -103,14 +106,14 @@ export async function encodeEntropiDocument(document){
   const {depth,validity,confidence,...result}=value.result;
   result.depth=await add('data/depth.f32',floatBytes(depth),'float32-le');result.validity=await add('data/validity.u8',validity,'uint8');result.confidence=confidence?await add('data/confidence.f32',floatBytes(confidence),'float32-le'):null;
   const preview=value.preview?await add('preview/image',new Uint8Array(await value.preview.arrayBuffer()),value.preview.type):null;
-  const manifest={format:'entropi',version:1,profile:'numerical-float32',id:value.id,created:value.created,originals,result,recipe:value.recipe,geometry:value.geometry,capture:value.capture,preview,files},metadata=encoder.encode(JSON.stringify(manifest));
+  const manifest={format:'entropi',version:value.recipe.edits?2:1,profile:'numerical-float32',id:value.id,created:value.created,originals,result,recipe:value.recipe,geometry:value.geometry,capture:value.capture,preview,files},metadata=encoder.encode(JSON.stringify(manifest));
   if(metadata.length>metadataLimit)invalid();entries.set('manifest.json',metadata);return zip(entries);
 }
 
 export async function decodeEntropiDocument(file){
   const entries=await unzip(file);let manifest;
   try{manifest=JSON.parse(decoder.decode(entries.get('manifest.json')))}catch{invalid()}
-  if(manifest?.format!=='entropi'||manifest.version!==1||manifest.profile!=='numerical-float32')invalid('Ukjend Entropi-versjon.');
+  if(manifest?.format!=='entropi'||![1,2].includes(manifest.version)||manifest.profile!=='numerical-float32'||manifest.version===2&&!manifest.recipe?.edits)invalid('Ukjend Entropi-versjon.');
   const {files,originals,result}=manifest;
   if(!files||typeof files!=='object'||Array.isArray(files)||!originals||!result||Object.keys(files).length!==entries.size-1)invalid();
   if(!manifest.id||!manifest.created||!manifest.recipe||!manifest.geometry||!manifest.capture||originals.left!=='sources/left'||originals.right!==null&&originals.right!=='sources/right'||result.depth!=='data/depth.f32'||result.validity!=='data/validity.u8'||result.confidence!==null&&result.confidence!=='data/confidence.f32'||manifest.preview!==null&&manifest.preview!=='preview/image')invalid();

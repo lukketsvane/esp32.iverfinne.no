@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {encodeRenderedTiff} from '../vendor/entropi-rendered-export.mjs';
-import {encodeGrayscale16Tiff} from '../vendor/entropi-export.mjs';
+import {encodeGrayscale16Tiff,encodeRgba16Tiff} from '../vendor/entropi-export.mjs';
 import {createEntropiDocument,encodeEntropiDocument,decodeEntropiDocument} from '../vendor/entropi-document.mjs';
 import {normalizeDepth,toneDepth} from '../vendor/vathography.mjs';
+import {PHOTO_PRESETS,applyPhotoEdits} from '../vendor/photo-adjustments.mjs';
 
 const left=new Blob([Uint8Array.of(255,216,255,217)],{type:'image/jpeg'});
 function document(values,recipe={preset:1,position:0,width:1},options={}){
@@ -87,6 +88,38 @@ test('reopened documents use original image dimensions and preserve the current 
   }}));
   assert.deepEqual(decoded.tags.get(256),[9]);assert.deepEqual(decoded.tags.get(257),[3]);
   assert.deepEqual(decoded.metadata.recipe,input.recipe);
+});
+
+test('all ten photo presets export matching 16-bit tones, crop and transparency after reopening',async()=>{
+  const outputs=new Set();
+  for(const {id}of PHOTO_PRESETS){
+    const input=document([.1,.3,NaN,.55,.7,.9],{preset:1,position:.05,width:1.1,edits:{preset:id,strength:.8,exposure:.15,contrast:.1,sharpen:.2,denoise:.3,crop:{x:.125,y:.125,width:.75,height:.75}}},{width:3,height:2});
+    const depth=input.result.depth.slice(),validity=input.result.validity.slice(),recipe=structuredClone(input.recipe);
+    const reopened=await decodeEntropiDocument(await encodeEntropiDocument(input)),decoded=await inspect(await encodeRenderedTiff(reopened,size(16,8)));
+    const rgba=toneDepth(input.result.depth,3,2,{...recipe,outputWidth:16,outputHeight:8,bitDepth:16,validity});
+    const expected=applyPhotoEdits(rgba,16,8,recipe.edits,{bitDepth:16}),gray=['B1','B5','X1'].includes(id),channels=gray?2:4;
+    const pixels=gray?Array.from(expected.data).filter((_,i)=>i%4===0||i%4===3):Array.from(expected.data);
+    assert.deepEqual(decoded.pixels,pixels,id);outputs.add(JSON.stringify(decoded.pixels));
+    assert.deepEqual(decoded.tags.get(256),[12]);assert.deepEqual(decoded.tags.get(257),[6]);
+    assert.deepEqual(decoded.tags.get(258),Array(channels).fill(16));assert.deepEqual(decoded.tags.get(277),[channels]);
+    assert.deepEqual(decoded.tags.get(262),[gray?1:2]);assert.deepEqual(decoded.tags.get(338),[2]);assert.deepEqual(decoded.tags.get(339),Array(channels).fill(1));
+    const alpha=decoded.pixels.filter((_,i)=>i%channels===channels-1);
+    assert.ok(alpha.includes(0));assert.ok(alpha.includes(65535));assert.ok(decoded.pixels.some(value=>value%257!==0));
+    assert.equal(decoded.metadata.version,2);assert.equal(decoded.metadata.channels,gray?'gray-alpha':'rgba');assert.deepEqual(decoded.metadata.recipe,recipe);
+    assert.equal(decoded.metadata.sourceWidth,16);assert.equal(decoded.metadata.sourceHeight,8);assert.equal(decoded.metadata.outputWidth,12);assert.equal(decoded.metadata.outputHeight,6);
+    assert.equal(decoded.metadata.mapWidth,3);assert.equal(decoded.metadata.mapHeight,2);
+    assert.deepEqual(input.result.depth,depth);assert.deepEqual(input.result.validity,validity);assert.deepEqual(input.recipe,recipe);
+  }
+  assert.equal(outputs.size,10);
+});
+
+test('RGBA TIFF preserves all four 16-bit channels exactly and rejects incompatible input',async()=>{
+  const source=Uint16Array.of(1,2,65534,65535,301,4097,32768,0),copy=source.slice();
+  const {pixels,tags}=await inspect(encodeRgba16Tiff(source,2,1));
+  assert.deepEqual(pixels,Array.from(source));assert.deepEqual(tags.get(279),[16]);assert.deepEqual(tags.get(258),[16,16,16,16]);
+  assert.deepEqual(source,copy);
+  for(const values of [new Uint8Array(8),new Uint16Array(7),null])assert.throws(()=>encodeRgba16Tiff(values,2,1));
+  assert.throws(()=>encodeRgba16Tiff(source,1.5,1));
 });
 
 test('bad source dimensions, recipes and masks reject instead of exporting a misleading image',async()=>{

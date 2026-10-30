@@ -1,3 +1,4 @@
+import { estimateDepth } from './depth-engine.mjs';
 import { inferenceSize } from '../pointcloud/math.mjs';
 
 export function localDepthEndpoint(location=globalThis.location,configured=globalThis.__ENTROPI_DEPTH_ENDPOINT){
@@ -26,7 +27,8 @@ export async function runLocalDepth(blob,{signal,onProgress=()=>{},fetcher=fetch
     for(let i=0;i<depth.length;i++)depth[i]=data.getFloat32(i*4,true);
     const polarity=response.headers.get('X-Depth-Polarity')||'near';
     if(!['near','far'].includes(polarity))throw new Error('Ukjend djupneretning.');
-    return {depth,width,height,polarity,model:response.headers.get('X-Depth-Model')||'Lokal djupnemodell',source:'local',images:new Map()};
+    const inputSize=Number(response.headers.get('X-Depth-Input-Size')),provenance={device:response.headers.get('X-Depth-Device')||null,modelRevision:response.headers.get('X-Depth-Revision')||null,inputSize:Number.isInteger(inputSize)&&inputSize>0&&inputSize<=4096?inputSize:null,fallbackReason:response.headers.get('X-Depth-Fallback')||null};
+    return {depth,width,height,polarity,model:response.headers.get('X-Depth-Model')||'Lokal djupnemodell',source:'local',provenance,images:new Map()};
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort)}
 }
 
@@ -36,24 +38,12 @@ export async function runBrowserDepth(blob,{signal,onProgress=()=>{}}={}){
   let pixels,size,sourceWidth,sourceHeight;
   try{
     image.src=url;await image.decode();signal?.throwIfAborted();sourceWidth=image.naturalWidth;sourceHeight=image.naturalHeight;
+    if(!Number.isInteger(sourceWidth)||!Number.isInteger(sourceHeight)||sourceWidth<1||sourceHeight<1||sourceWidth*sourceHeight>16777216)throw new Error('Fotoet har ugyldig storleik.');
     size=inferenceSize(sourceWidth,sourceHeight,518);canvas.width=size.width;canvas.height=size.height;
     const context=canvas.getContext('2d');if(!context)throw new Error('Kunne ikkje lese fotoet.');
+    context.imageSmoothingEnabled=true;context.imageSmoothingQuality='high';
     context.drawImage(image,0,0,size.width,size.height);pixels=context.getImageData(0,0,size.width,size.height);
   }finally{URL.revokeObjectURL(url);canvas.width=canvas.height=1}
-  return new Promise((resolve,reject)=>{
-    const worker=new Worker('/pointcloud/depth-worker-v2.mjs',{type:'module'});
-    let finished=false;
-    const finish=(error,result)=>{if(finished)return;finished=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);worker.terminate();if(error)reject(error);else resolve(result)};
-    const abort=()=>finish(signal.reason||new DOMException('Avbrote.','AbortError'));
-    const timer=setTimeout(()=>finish(new Error('Djupneberekninga tok for lang tid.')),180000);
-    signal?.addEventListener('abort',abort,{once:true});
-    worker.onmessage=({data})=>{
-      if(data.type==='progress')onProgress(data);
-      else if(data.type==='error')finish(Object.assign(new Error(data.message),{code:data.code||'DEPTH_FAILED'}));
-      else if(data.type==='result')finish(null,{depth:new Float32Array(data.depth),width:data.width,height:data.height,sourceWidth,sourceHeight,polarity:'near',model:'Depth Anything V2 Small · nettlesar 518 px',source:'browser',images:new Map()});
-    };
-    worker.onerror=()=>finish(new Error('Djupnearbeidaren stoppa.'));
-    try{worker.postMessage({rgba:pixels.data.buffer,...size},[pixels.data.buffer])}catch(error){finish(error)}
-    if(signal?.aborted)abort();
-  });
+  const result=await estimateDepth({data:pixels.data,...size},onProgress,signal);
+  return {...result,sourceWidth,sourceHeight,polarity:'near',model:'Depth Anything V2 Small · nettlesar 518 px',source:'browser',images:new Map()};
 }

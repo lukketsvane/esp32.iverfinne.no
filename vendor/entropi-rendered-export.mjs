@@ -1,5 +1,6 @@
 import {normalizeDepth,toneDepth} from './vathography.mjs';
-import {encodeGrayscale16Tiff} from './entropi-export.mjs';
+import {encodeGrayscale16Tiff,encodeRgba16Tiff} from './entropi-export.mjs';
+import {normalizePhotoEdits,photoEditsNeutral,applyPhotoEdits} from './photo-adjustments.mjs';
 
 const pixelLimit=16777216;
 function checkSize(width,height){
@@ -15,8 +16,6 @@ async function sourceImageSize(blob){
   }finally{URL.revokeObjectURL(url)}
 }
 
-// Render the document's current monochrome recipe at the decoded original size.
-// The 16-bit values come from float depth + tone curves, never an 8-bit canvas.
 export async function encodeRenderedTiff(document,{readSourceSize=sourceImageSize}={}){
   const result=document?.result,{depth,width,height}=result??{},source=document?.left;
   checkSize(width,height);
@@ -38,12 +37,17 @@ export async function encodeRenderedTiff(document,{readSourceSize=sourceImageSiz
   // Do not substitute the smaller inference map or a thumbnail for this size.
   const {width:sourceWidth,height:sourceHeight}=await readSourceSize(source);
   checkSize(sourceWidth,sourceHeight);
-  const recipe={preset,position,width:bandWidth};
+  const recipe={preset,position,width:bandWidth},edits=normalizePhotoEdits(document.recipe?.edits);
+  if(!photoEditsNeutral(edits))recipe.edits=edits;
   const normalized=result.normalized===true?depth:normalizeDepth(depth,{polarity,validity});
   const rgba=toneDepth(normalized,width,height,{...recipe,outputWidth:sourceWidth,outputHeight:sourceHeight,validity,bitDepth:16});
-  return encodeGrayscale16Tiff(rgba,sourceWidth,sourceHeight,{
-    format:'entropi-rendered-image',version:1,encoding:'uint16-display-tones',bitDepth:16,
+  const rendered=applyPhotoEdits(rgba,sourceWidth,sourceHeight,edits,{bitDepth:16,referenceWidth:sourceWidth,referenceHeight:sourceHeight});
+  let grayscale=true;
+  for(let i=0;i<rendered.data.length;i+=4)if(rendered.data[i]!==rendered.data[i+1]||rendered.data[i]!==rendered.data[i+2]){grayscale=false;break}
+  return (grayscale?encodeGrayscale16Tiff:encodeRgba16Tiff)(rendered.data,rendered.width,rendered.height,{
+    format:'entropi-rendered-image',version:recipe.edits?2:1,encoding:'uint16-display-tones',bitDepth:16,
     recipe,sourceWidth,sourceHeight,mapWidth:width,mapHeight:height,
+    ...(recipe.edits?{outputWidth:rendered.width,outputHeight:rendered.height,channels:grayscale?'gray-alpha':'rgba'}:{}),
     resampling:'bilinear-depth-before-tone',sourceValidSamples:validCount,
     validityPreserved:true,alpha:'unassociated',invalidSamples:'transparent',
     model:String(result.model??''),source:String(result.source??''),sensorRaw:false

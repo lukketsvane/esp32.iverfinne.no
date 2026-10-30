@@ -51,6 +51,42 @@ test('ordinary ZIP reader and independent SHA-256 recover stored samples',async(
   assert.equal(depth.readFloatLE(0),document.result.depth[0]);assert.ok(Object.is(depth.readFloatLE(4),-0));assert.ok(Number.isNaN(depth.readFloatLE(8)));
 });
 
+test('photo edits use version 2 and retain uncropped originals and exact depth bits when reopened',async()=>{
+  const input=example();new Uint32Array(input.result.depth.buffer)[2]=0x7fc54321;
+  input.recipe.edits={exposure:.35,contrast:-.2,sharpen:.6,denoise:.4,preset:'P5',strength:.7,crop:{x:.1,y:.2,width:.75,height:.6}};
+  const saved=createEntropiDocument(input),expected=structuredClone(saved.recipe),bits=rawBytes(saved.result.depth).slice();
+  input.recipe.edits.crop.x=.2;
+  const file=await encodeEntropiDocument(saved),entries=members(await file.arrayBuffer()),manifest=JSON.parse(entries.find(item=>item.name==='manifest.json').data);
+  assert.equal(manifest.version,2);assert.deepEqual(manifest.recipe,expected);
+  const reopened=await decodeEntropiDocument(file);
+  assert.equal(reopened.id,saved.id);assert.equal(reopened.created,saved.created);
+  assert.deepEqual(reopened.recipe,expected);assert.deepEqual(rawBytes(reopened.result.depth),bits);
+  assert.deepEqual(reopened.result.validity,saved.result.validity);
+  assert.equal(reopened.result.width,3);assert.equal(reopened.result.height,2);
+  assert.deepEqual(await reopened.left.arrayBuffer(),await left.arrayBuffer());assert.deepEqual(await reopened.right.arrayBuffer(),await right.arrayBuffer());
+  reopened.recipe.edits.crop={x:0,y:0,width:1,height:1};
+  const uncropped=await decodeEntropiDocument(await encodeEntropiDocument(reopened));
+  assert.deepEqual(rawBytes(uncropped.result.depth),bits);assert.deepEqual(uncropped.recipe.edits.crop,{x:0,y:0,width:1,height:1});
+});
+
+test('neutral photo edits retain the version 1 recipe and disabled preset strength is neutral',async()=>{
+  for(const edits of [{},{exposure:0,contrast:0,sharpen:0,denoise:0,crop:{x:0,y:0,width:1,height:1}},{preset:'P5',strength:0}]){
+    const input=example();input.recipe.edits=edits;
+    const output=await encodeEntropiDocument(input),entries=members(await output.arrayBuffer()),manifest=JSON.parse(entries.find(item=>item.name==='manifest.json').data);
+    assert.equal(manifest.version,1);assert.equal('edits' in manifest.recipe,false);
+    assert.deepEqual((await decodeEntropiDocument(output)).recipe,example().recipe);
+  }
+});
+
+test('malformed photo edits and version 2 without edits are rejected on import',async()=>{
+  const file=await encodeEntropiDocument(example()),buffer=await file.arrayBuffer();
+  for(const edits of [null,[],{preset:'unknown'},{exposure:4},{contrast:-2},{sharpen:-.1},{denoise:1.1},{strength:'1'},{crop:{x:.5,width:.6}},{crop:{height:0}}]){
+    const input=example();input.recipe.edits=edits;assert.throws(()=>createEntropiDocument(input));
+    await assert.rejects(decodeEntropiDocument(updateManifest(members(buffer),manifest=>{manifest.version=2;manifest.recipe.edits=edits})));
+  }
+  await assert.rejects(decodeEntropiDocument(updateManifest(members(buffer),manifest=>manifest.version=2)),/versjon/);
+});
+
 test('HTTP and browsers without compression APIs retain full integrity and compatibility',async()=>{
   const crypto=Object.getOwnPropertyDescriptor(globalThis,'crypto'),compression=Object.getOwnPropertyDescriptor(globalThis,'CompressionStream');
   try{

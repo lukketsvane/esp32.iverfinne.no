@@ -1,5 +1,6 @@
 const archiveStore=createArchive(),masterWrites=new WeakMap();
-let archiveRecords=[],archiveSelected=null,archiveRecord=null,archiveViewer=null,archiveUrls=[],archiveDeleteArmed=false,archiveFocus=null,archiveGeneration=0;
+let archiveRecords=[],archiveSelected=null,archiveRecord=null,archiveViewer=null,archiveUrls=[],archiveDeleteArmed=false,archiveFocus=null,archiveGeneration=0,archiveScroll=0;
+const archiveNavigation=attachGalleryNavigation($('archive-photo'),{enabled:()=>!$('archive').hidden&&!$('archive-detail').hidden,onStep:stepArchive,onDismiss:closeArchive});
 let selfTimer=0,countdown=0,countdownTimer=null,peerPreviewBusy=false,peerFinder=null;
 
 function updateCameraChrome(){
@@ -100,7 +101,7 @@ async function showArchive(){
   $('archive').hidden=false;
   studio.inert=true;$('close-archive').focus({preventScroll:true});
   $('archive-grid').hidden=false;$('archive-detail').hidden=true;
-  archiveSelected=null;
+  archiveSelected=null;archiveRecord=null;archiveScroll=0;archiveNavigation.cancel();
   clearArchiveUrls();
   const grid=$('archive-grid');grid.replaceChildren();
   try{
@@ -113,7 +114,7 @@ async function showArchive(){
     for(const record of archiveRecords){
       const button=document.createElement('button');button.className='vault-item';button.type='button';
       button.setAttribute('aria-label',(record.pending?'Ikkje framkalla. ':'')+(record.stereo?'Stereoopptak ':'Foto ')+archiveDate(record.created));
-      const image=document.createElement('img');image.alt='';if(record.preview)image.src=archiveUrl(record.preview);button.append(image);
+      const image=document.createElement('img');image.alt='';image.loading='lazy';image.decoding='async';if(record.preview)image.src=archiveUrl(record.preview);button.append(image);
       if(record.pending){button.classList.add('pending');const mark=document.createElement('span');mark.className='archive-pending-mark';mark.setAttribute('aria-hidden','true');button.append(mark)}
       button.addEventListener('click',()=>void openArchivedPhoto(record.id));
       grid.append(button);
@@ -124,7 +125,9 @@ async function showArchive(){
   }
 }
 async function openArchivedPhoto(id){
-  const opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;
+  if(!$('archive-grid').hidden)archiveScroll=$('archive-grid').scrollTop;
+  disarmArchiveDelete();archiveNavigation.cancel();
+  const opening=++archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;
   archiveSelected=id;archiveRecord=null;archiveDeleteArmed=false;
   const record=await archiveStore.get(id).catch(()=>null);
   if(!record||!isCurrent())return;
@@ -133,7 +136,7 @@ async function openArchivedPhoto(id){
   if(archiveViewer)URL.revokeObjectURL(archiveViewer);
   archiveViewer=URL.createObjectURL(record.preview??record.document?.preview??record.left);
   $('archive-photo').src=archiveViewer;
-  $('archive-photo').alt=pending?'Originalopptak, ikkje framkalla':'Arkivert kamerabilete';
+  $('archive-photo').alt=(pending?'Originalopptak, ikkje framkalla':'Arkivert kamerabilete')+'. '+(archiveRecords.findIndex(record=>record.id===id)+1)+' av '+archiveRecords.length;
   $('archive-detail').classList.toggle('pending',pending);
   $('archive-detail-info').textContent=archiveDate(archiveRecords.find(entry=>entry.id===id)?.created??Date.now())+'  ·  '+(record.right?'STEREO':'FOTO');
   $('archive-left').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':pending?(record.right?'Lagre venstre original':'Lagre original'):'Lagre biletet');
@@ -145,15 +148,27 @@ async function openArchivedPhoto(id){
   $('archive-grid').hidden=true;$('archive-detail').hidden=false;
   (pending?$('archive-edit'):$('archive-left')).focus({preventScroll:true});
 }
+function stepArchive(direction){
+  if($('archive').hidden||$('archive-detail').hidden)return;
+  const next=archiveRecords[archiveRecords.findIndex(record=>record.id===archiveSelected)+direction];
+  if(next)void openArchivedPhoto(next.id);
+}
+function backArchive(){
+  const index=archiveRecords.findIndex(record=>record.id===archiveSelected),grid=$('archive-grid');
+  ++archiveGeneration;archiveSelected=null;archiveRecord=null;archiveNavigation.cancel();disarmArchiveDelete();
+  $('archive-detail').hidden=true;grid.hidden=false;grid.scrollTop=archiveScroll;
+  $('archive-notice').textContent='';
+  (grid.children[index]??$('close-archive')).focus({preventScroll:true});
+}
 function closeArchive(){
   if($('archive').hidden)return;
-  disarmArchiveDelete();$('archive').hidden=true;++archiveGeneration;archiveSelected=null;archiveRecord=null;archiveDeleteArmed=false;
+  disarmArchiveDelete();archiveNavigation.cancel();$('archive').hidden=true;++archiveGeneration;archiveSelected=null;archiveRecord=null;archiveDeleteArmed=false;
   $('archive-photo').removeAttribute('src');
   clearArchiveUrls();studio.inert=false;(archiveFocus&&archiveFocus.isConnected!==false&&!archiveFocus.hidden&&archiveFocus.tagName!=='BODY'?archiveFocus:$('open-archive')).focus({preventScroll:true});archiveFocus=null;resumeStream();
 }
 $('open-archive').addEventListener('click',()=>void showArchive());
 $('close-archive').addEventListener('click',closeArchive);
-$('archive-back').addEventListener('click',()=>void showArchive());
+$('archive-back').addEventListener('click',backArchive);
 
 function archivedExportOptions(kind){
   const id=archiveSelected,record=archiveRecord,opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;if(!id||!record||!isCurrent())return;
@@ -164,7 +179,7 @@ for(const kind of ['left','right'])bindExportGesture($('archive-'+kind),()=>arch
 let archiveDeleteTimer=0;
 function disarmArchiveDelete(){clearTimeout(archiveDeleteTimer);archiveDeleteTimer=0;archiveDeleteArmed=false;$('archive-delete').setAttribute('aria-label','Slett');$('archive-delete').dataset.armed='false'}
 for(const name of ['pointerdown','click','focusin'])$('archive').addEventListener(name,event=>{if(!event.target.closest('#archive-delete'))disarmArchiveDelete()},true);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)disarmArchiveDelete()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){disarmArchiveDelete();archiveNavigation.cancel()}});
 $('archive-delete').addEventListener('click',async()=>{
   const id=archiveSelected;if(!id)return;
   if(!archiveDeleteArmed){
@@ -176,7 +191,8 @@ $('archive-delete').addEventListener('click',async()=>{
 });
 window.addEventListener('keydown',event=>{
   if(event.defaultPrevented||$('archive').hidden)return;
-  if(event.key==='Escape'&&!$('archive').hidden){event.preventDefault();if(!$('archive-detail').hidden)void showArchive();else closeArchive()}
+  if(event.key==='Escape'&&!$('archive').hidden){event.preventDefault();if(!$('archive-detail').hidden)backArchive();else closeArchive()}
+  else if(!$('archive-detail').hidden&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();stepArchive(event.key==='ArrowRight'?1:-1)}
   else if(event.key==='Tab'){
     const controls=[$('archive-import'),$('close-archive'),...($('archive-detail').hidden?Array.from($('archive-grid').children):[$('archive-edit'),$('archive-left'),$('archive-right'),$('archive-delete'),$('archive-back')])].filter(button=>button.tagName==='BUTTON'&&!button.hidden&&!button.disabled);
     event.preventDefault();const index=controls.indexOf(document.activeElement),next=index<0?(event.shiftKey?controls.length-1:0):(index+(event.shiftKey?-1:1)+controls.length)%controls.length;
