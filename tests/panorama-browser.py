@@ -66,6 +66,7 @@ fixture="""(() => {
     indexedDB.open=(name,...args)=>{const request=open(name,...args);if(name==='entropi-gallery-v1')request.addEventListener('success',()=>window.fixtureArchiveDb=request.result);return request};
     window.readRecords=()=>new Promise((resolve,reject)=>{const db=window.fixtureArchiveDb;if(!db){resolve([]);return}const request=db.transaction('photos','readonly').objectStore('photos').getAll();request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)});
     window.fixtureMoving=false;window.fixtureVideoIndex=0;
+    if(!navigator.mediaDevices)Object.defineProperty(navigator,'mediaDevices',{value:{}});
     navigator.mediaDevices.getUserMedia=async()=>{
         const images=await Promise.all(Array.from({length:8},async(_,i)=>{const image=new Image();image.src=new URL('/fixture/frame/'+i+'.jpg',location.href).href;await image.decode();return image}));
         const canvas=document.createElement('canvas');canvas.width=640;canvas.height=480;const context=canvas.getContext('2d');
@@ -121,6 +122,20 @@ try:
                         results.append(result);print(json.dumps(result),flush=True);context.close();continue
                     page.locator(shutter).click();page.wait_for_function('document.querySelector("#video").videoWidth>0')
                 else: page.wait_for_function('!document.querySelector("#shutter").disabled')
+                storage=page.evaluate('''()=>new Promise(resolve=>{
+                    const request=indexedDB.open('panorama-storage-probe',1);
+                    request.onupgradeneeded=()=>request.result.createObjectStore('probe');
+                    request.onerror=()=>resolve({ok:false,error:String(request.error)});
+                    request.onsuccess=()=>{
+                        const db=request.result,tx=db.transaction('probe','readwrite');let error='';
+                        const finish=result=>{db.close();indexedDB.deleteDatabase('panorama-storage-probe');resolve(result)};
+                        tx.oncomplete=()=>finish({ok:true});tx.onabort=()=>finish({ok:false,error:error||String(tx.error)});
+                        try{const write=tx.objectStore('probe').put(new Blob(['probe'],{type:'image/jpeg'}),'blob');write.onerror=()=>{error=String(write.error)}}catch(cause){finish({ok:false,error:String(cause)})}
+                    };
+                })''')
+                if not storage['ok']:
+                    result=dict(engine=engine.name,app=app,skipped=True,scope='archive integration',reason='Headless engine cannot persist Blob data in IndexedDB: '+storage['error'])
+                    results.append(result);print(json.dumps(result),flush=True);context.close();continue
                 def records(count,panorama=False):
                     deadline=time.monotonic()+30
                     while time.monotonic()<deadline:

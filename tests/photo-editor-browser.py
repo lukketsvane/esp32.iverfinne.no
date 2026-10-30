@@ -69,6 +69,8 @@ try:
                 continue
             browser = engine.launch(headless=True)
             for app in ['phone', 'device']:
+                if os.environ.get('ENTROPI_APP') and app!=os.environ['ENTROPI_APP']:
+                    continue
                 for width, height in [(390,844), (844,390)]:
                     context = browser.new_context(viewport={'width':width,'height':height}, has_touch=True, service_workers='block', reduced_motion='reduce')
                     context.add_init_script(fixture)

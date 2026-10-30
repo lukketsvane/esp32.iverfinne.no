@@ -133,7 +133,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
   const end=event=>{
     if(!points.has(event.pointerId))return;
     const tap=gesture,wasPeeking=peeking;if(gestureMode==='compare'&&points.size===1&&tap&&!tap.moved&&event.type==='pointerup')adjust({clientX:tap.x});cancelHold();peek(false);points.delete(event.pointerId);previous=points.size?measure():null;gesture=null;
-    if(!points.size&&(art.width!==sourceWidth||art.height!==sourceHeight))schedule();
+    if(!points.size&&gestureMode!=='view'&&(art.width!==sourceWidth||art.height!==sourceHeight))schedule();
     if(event.type==='pointercancel'||event.type==='lostpointercapture'){lastTap=multiTap=lastMultiTap=null;if(!points.size)gestureMode=null;navigationStart=null;if(gestureChanged){gestureChanged=false;onChange();schedule()}return}
     if(!points.size){
       const now=Number.isFinite(event.timeStamp)?event.timeStamp:Date.now();

@@ -406,3 +406,13 @@ test('navigation survives expression changes but reopening starts at fit and con
   assert.deepEqual(navigationPose(app),pose);assert.equal(app.changes,before);assert.equal(app.timers.size,0);
   const recipe=JSON.parse(JSON.stringify(app.view.recipe));await app.view.restore(photo,raw('Saved model'),recipe);assert.deepEqual(navigationPose(app),{scale:1,x:0,y:0});assert.deepEqual(JSON.parse(JSON.stringify(app.view.recipe)),recipe);app.view.dispose();
 });
+
+
+test('panning a cropped image does not regenerate its pixel buffer',async()=>{
+  const app=harness({photoWidth:320,photoHeight:240,reducedMotion:true});
+  await app.view.restore(photo,raw('Saved model'),{preset:1,position:0,width:1,edits:{crop:{x:.1,y:.1,width:.8,height:.8}}});app.flush();
+  const before=app.renders.length,pixels=findNode(app.host,'mg-art').pixels;
+  beginPair(app);movePair(app,115,315,392);endPair(app);
+  assert.equal(app.renders.length,before);assert.equal(findNode(app.host,'mg-art').pixels,pixels);assert.equal(navigationPose(app).scale,2);
+  app.view.dispose();
+});
