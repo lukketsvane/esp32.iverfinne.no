@@ -90,7 +90,7 @@ test('reopened documents use original image dimensions and preserve the current 
   assert.deepEqual(decoded.metadata.recipe,input.recipe);
 });
 
-test('all ten photo presets export matching 16-bit tones, crop and transparency after reopening',async()=>{
+test('all photo presets export matching 16-bit tones, crop and transparency after reopening',async()=>{
   const outputs=new Set();
   for(const {id}of PHOTO_PRESETS){
     const input=document([.1,.3,NaN,.55,.7,.9],{preset:1,position:.05,width:1.1,edits:{preset:id,strength:.8,exposure:.15,contrast:.1,sharpen:.2,denoise:.3,crop:{x:.125,y:.125,width:.75,height:.75}}},{width:3,height:2});
@@ -110,7 +110,7 @@ test('all ten photo presets export matching 16-bit tones, crop and transparency 
     assert.equal(decoded.metadata.mapWidth,3);assert.equal(decoded.metadata.mapHeight,2);
     assert.deepEqual(input.result.depth,depth);assert.deepEqual(input.result.validity,validity);assert.deepEqual(input.recipe,recipe);
   }
-  assert.equal(outputs.size,10);
+  assert.equal(outputs.size,PHOTO_PRESETS.length);
 });
 
 test('RGBA TIFF preserves all four 16-bit channels exactly and rejects incompatible input',async()=>{
@@ -151,4 +151,16 @@ test('browser source decoder uses natural image size and revokes object URLs on 
     assert.deepEqual(fallback.tags.get(256),[3]);assert.deepEqual(fallback.tags.get(257),[2]);
     assert.equal(revoked.length,3);
   }finally{if(previous===undefined)delete globalThis.Image;else globalThis.Image=previous}
+});
+
+test('HSL, light, white balance and source-scaled colored grain survive reopening into exact 16-bit TIFF pixels',async()=>{
+  const input=document([.1,.3,NaN,.55,.7,.9],{preset:1,position:.05,width:1.1,edits:{preset:'P5',strength:.75,saturation:.3,highlights:-.4,shadows:.2,temperature:.12,tint:-.08,hsl:{blue:{hue:-.4,saturation:.6,lightness:.2},green:{hue:.3}},grain:{strength:.6,size:.7,color:.5},crop:{x:.125,y:.125,width:.75,height:.75}}},{width:3,height:2});
+  const bits=new Uint8Array(input.result.depth.buffer).slice(),recipe=structuredClone(input.recipe);
+  const reopened=await decodeEntropiDocument(await encodeEntropiDocument(input)),decoded=await inspect(await encodeRenderedTiff(reopened,size(16,8)));
+  const rgba=toneDepth(input.result.depth,3,2,{...recipe,outputWidth:16,outputHeight:8,bitDepth:16,validity:input.result.validity});
+  const expected=applyPhotoEdits(rgba,16,8,recipe.edits,{bitDepth:16,referenceWidth:16,referenceHeight:8});
+  assert.deepEqual(decoded.pixels,Array.from(expected.data));assert.deepEqual(decoded.metadata.recipe,recipe);
+  assert.deepEqual(decoded.tags.get(258),[16,16,16,16]);assert.deepEqual(decoded.tags.get(256),[12]);assert.deepEqual(decoded.tags.get(257),[6]);
+  assert.ok(decoded.pixels.some(value=>value%257!==0));assert.deepEqual(new Uint8Array(input.result.depth.buffer),bits);
+  const repeat=await inspect(await encodeRenderedTiff(reopened,size(16,8)));assert.deepEqual(repeat.pixels,decoded.pixels);
 });

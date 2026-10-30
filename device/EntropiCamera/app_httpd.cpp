@@ -55,6 +55,7 @@ static framesize_t photoSize = FRAMESIZE_UXGA;
 static int previewQuality = 14;
 static int photoQuality = 8;
 static int brightness = 0;
+static int exposureLevel = 0;
 static int ledDuty = 0;
 static volatile unsigned captureFailures = 0;
 static volatile unsigned previewFailures = 0;
@@ -238,7 +239,7 @@ static bool initializeCamera() {
   }
 #endif
   if (sensor->set_framesize(sensor, previewSize) != 0 || sensor->set_quality(sensor, previewQuality) != 0 ||
-      sensor->set_brightness(sensor, brightness) != 0) {
+      sensor->set_brightness(sensor, brightness) != 0 || sensor->set_ae_level(sensor, exposureLevel) != 0) {
     cameraMessage("Could not restore camera settings");
     return false;
   }
@@ -326,6 +327,7 @@ static String cameraStatusJson() {
   json += ",\"preview_quality\":" + String(previewQuality);
   json += ",\"photo_quality\":" + String(photoQuality);
   json += ",\"brightness\":" + String(brightness);
+  json += ",\"ae_level\":" + String(exposureLevel);
   json += ",\"led_intensity\":" + String(ledDuty);
   CaptureButtonSnapshot button;
   if (captureButtonSnapshot(button)) {
@@ -374,6 +376,37 @@ static esp_err_t recoverHandler(httpd_req_t *request) {
   return sendJson(request, cameraStatusJson());
 }
 
+static const char *applyCameraControl(const char *variable, long value) {
+  bool preview = strcmp(variable, "framesize") == 0;
+  bool photo = strcmp(variable, "photo_framesize") == 0;
+  bool light = strcmp(variable, "brightness") == 0;
+  bool exposure = strcmp(variable, "ae_level") == 0;
+  bool flash = strcmp(variable, "led_intensity") == 0;
+  if ((!preview && !photo && !light && !exposure && !flash) || (preview && !previewAllowed(value)) || (photo && !photoAllowed(value)) ||
+      ((light || exposure) && (value < -2 || value > 2)) || (flash && (value < 0 || value > 255)))
+    return "Unsupported setting";
+  if (!lockCamera(1000)) return "Camera is busy";
+  sensor_t *sensor = cameraReady ? esp_camera_sensor_get() : nullptr;
+  if (!sensor) {
+    unlockCamera();
+    return "Camera is unavailable";
+  }
+  int result = preview ? sensor->set_framesize(sensor, static_cast<framesize_t>(value)) :
+               light ? sensor->set_brightness(sensor, value) : exposure ? sensor->set_ae_level(sensor, value) : 0;
+  if (result == 0) {
+    if (preview) previewSize = static_cast<framesize_t>(value);
+    if (photo) photoSize = static_cast<framesize_t>(value);
+    if (light) brightness = value;
+    if (exposure) exposureLevel = value;
+    if (flash) ledDuty = value;
+    if (preferencesReady && preferences.getInt(variable, INT32_MIN) != value) preferences.putInt(variable, value);
+  } else {
+    setCameraError("Could not change camera setting");
+  }
+  unlockCamera();
+  return result == 0 ? nullptr : "Setting was not applied";
+}
+
 static esp_err_t controlHandler(httpd_req_t *request) {
   char variable[32], text[16];
   if (!queryValue(request, "var", variable, sizeof(variable)) || !queryValue(request, "val", text, sizeof(text)))
@@ -381,31 +414,9 @@ static esp_err_t controlHandler(httpd_req_t *request) {
   char *end;
   long value = strtol(text, &end, 10);
   if (!text[0] || *end) return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid value");
-  bool preview = strcmp(variable, "framesize") == 0;
-  bool photo = strcmp(variable, "photo_framesize") == 0;
-  bool light = strcmp(variable, "brightness") == 0;
-  bool flash = strcmp(variable, "led_intensity") == 0;
-  if ((!preview && !photo && !light && !flash) || (preview && !previewAllowed(value)) || (photo && !photoAllowed(value)) ||
-      (light && (value < -2 || value > 2)) || (flash && (value < 0 || value > 255)))
-    return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Unsupported setting");
-  if (!lockCamera(1000)) return unavailable(request, "Camera is busy");
-  sensor_t *sensor = cameraReady ? esp_camera_sensor_get() : nullptr;
-  if (!sensor) {
-    unlockCamera();
-    return unavailable(request, "Camera is unavailable");
-  }
-  int result = preview ? sensor->set_framesize(sensor, static_cast<framesize_t>(value)) : light ? sensor->set_brightness(sensor, value) : 0;
-  if (result == 0) {
-    if (preview) previewSize = static_cast<framesize_t>(value);
-    if (photo) photoSize = static_cast<framesize_t>(value);
-    if (light) brightness = value;
-    if (flash) ledDuty = value;
-    if (preferencesReady) preferences.putInt(variable, value);
-  } else {
-    setCameraError("Could not change camera setting");
-  }
-  unlockCamera();
-  if (result != 0) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Setting was not applied");
+  const char *error = applyCameraControl(variable, value);
+  if (error) return strcmp(error, "Unsupported setting") == 0 ?
+    httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, error) : unavailable(request, error);
   return httpd_resp_send(request, "", 0);
 }
 
@@ -841,6 +852,64 @@ static esp_err_t peerHandler(httpd_req_t *request) {
   return result;
 }
 
+static const char *applyPeerControl(const char *variable, long value) {
+  if ((strcmp(variable, "brightness") && strcmp(variable, "ae_level")) || value < -2 || value > 2)
+    return "Unsupported setting";
+  String origin = rigIsPrimary() ? rigPeerOrigin() : "";
+  if (!origin.length()) return "Paired camera is unavailable";
+  uint8_t *data = nullptr;
+  size_t length = 0;
+  if (!peerGet(origin, "/status", 2048, &data, &length) || !length) {
+    free(data);
+    return "Paired camera did not respond";
+  }
+  String status(reinterpret_cast<const char *>(data));
+  free(data);
+  if (status.indexOf("\"camera_id\":" + quoted(rigPeerId())) < 0 || origin != rigPeerOrigin())
+    return "Paired camera identity did not match";
+  if (status.indexOf("\"camera_ready\":true") < 0) return "Paired camera is not ready";
+  data = nullptr;
+  if (!peerGet(origin, "/control?var=" + String(variable) + "&val=" + String(value), 2048, &data, &length)) {
+    free(data);
+    return "Paired camera setting was not applied";
+  }
+  free(data);
+  return origin == rigPeerOrigin() ? nullptr : "Paired camera changed";
+}
+
+static esp_err_t peerControlHandler(httpd_req_t *request) {
+  char variable[32], text[16];
+  if (!queryValue(request, "var", variable, sizeof(variable)) || !queryValue(request, "val", text, sizeof(text)))
+    return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Missing control");
+  char *end;
+  long value = strtol(text, &end, 10);
+  if (!text[0] || *end) return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid value");
+  const char *error = applyPeerControl(variable, value);
+  if (error) return strcmp(error, "Unsupported setting") == 0 ?
+    httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, error) : unavailable(request, error);
+  return httpd_resp_send(request, "", 0);
+}
+
+void serialCameraControl(const char *command, bool peer) {
+  char own[13];
+  snprintf(own, sizeof(own), "%012llx", static_cast<unsigned long long>(ESP.getEfuseMac()));
+  char variable[16] = {}, text[16] = {}, extra, *end;
+  long value = 0;
+  const char *error = "Unsupported setting";
+  if (sscanf(command, "%15s %15s %c", variable, text, &extra) == 2) {
+    value = strtol(text, &end, 10);
+    if (text[0] && !*end && (!strcmp(variable, "brightness") || !strcmp(variable, "ae_level")))
+      error = peer ? applyPeerControl(variable, value) : applyCameraControl(variable, value);
+  }
+  String json = "{\"ok\":" + String(error ? "false" : "true");
+  json += ",\"camera_id\":" + quoted(peer ? rigPeerId() : own);
+  json += ",\"var\":" + quoted(variable) + ",\"value\":" + String(value);
+  if (error) json += ",\"error\":" + quoted(error);
+  json += "}";
+  Serial.print("CONTROL_STATUS ");
+  Serial.println(json);
+}
+
 static esp_err_t assetHandler(httpd_req_t *request) {
   size_t length = strcspn(request->uri, "?");
   for (const CameraAsset &asset : cameraAssets) {
@@ -977,6 +1046,7 @@ void startCameraServer() {
     if (previewAllowed(savedPreview)) previewSize = static_cast<framesize_t>(savedPreview);
     if (photoAllowed(savedPhoto)) photoSize = static_cast<framesize_t>(savedPhoto);
     brightness = constrain(savedBrightness, -2, 2);
+    exposureLevel = constrain(preferences.getInt("ae_level", 0), -2, 2);
     ledDuty = constrain(preferences.getInt("led_intensity", 0), 0, 255);
   }
 #if defined(LED_GPIO_NUM)
@@ -985,7 +1055,7 @@ void startCameraServer() {
 #endif
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_open_sockets = 4;
-  config.max_uri_handlers = 17;
+  config.max_uri_handlers = 18;
   config.uri_match_fn = httpd_uri_match_wildcard;
   config.stack_size = 8192;
   config.send_wait_timeout = 3;
@@ -1001,6 +1071,7 @@ void startCameraServer() {
     registerHandler(cameraHttpd, "/stereo/capture", stereoCaptureHandler);
     registerHandler(cameraHttpd, "/preview", previewHandler);
     registerHandler(cameraHttpd, "/peer/status", peerHandler);
+    registerHandler(cameraHttpd, "/peer/control", peerControlHandler);
     registerHandler(cameraHttpd, "/peer/recover", peerRecoverHandler, HTTP_POST);
     registerHandler(cameraHttpd, "/peer/preview", peerHandler);
     registerHandler(cameraHttpd, "/peer/capture", peerHandler);

@@ -25,6 +25,7 @@ alignment = (shared / "pointcloud/stereo-rig.mjs").read_text(encoding="utf-8").r
 stereo = re.sub(r"^import .*?;\s*", "", (shared / "vendor/stereo-depth.mjs").read_text(encoding="utf-8").replace("export ", ""), flags=re.MULTILINE)
 scene = depth_engine + "const createDepthScene = (() => {\n" + math + "\n" + alignment + "\n" + stereo + "\n" + primitive + "\n" + gestures + "\n" + scene + "\nreturn createDepthScene;\n})();"
 studio = (shared / "vendor/studio.mjs").read_text(encoding="utf-8").replace("export ", "")
+studio += "\n" + (shared / "vendor/page-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
 studio += "\n" + (shared / "vendor/photo-gestures.mjs").read_text(encoding="utf-8").replace("export ", "")
 studio += "\n" + (shared / "vendor/gallery-navigation.mjs").read_text(encoding="utf-8").replace("export ", "")
 studio += "\n" + (shared / "vendor/capture-gesture.mjs").read_text(encoding="utf-8").replace("export ", "")
@@ -37,7 +38,7 @@ printing += "\n" + (shared / "vendor/photo.mjs").read_text(encoding="utf-8").rep
 photo_view = (shared / "vendor/photo-view.mjs").read_text(encoding="utf-8").replace("export ", "")
 photo_view = re.sub(r"^import .*?;\s*", "", photo_view, flags=re.MULTILINE)
 printing += "\n" + photo_view
-printing += "\n" + (shared / "vendor/archive.mjs").read_text(encoding="utf-8").replace("export ", "")
+printing += "\n" + re.sub(r"^import .*?;\s*", "", (shared / "vendor/archive.mjs").read_text(encoding="utf-8").replace("export ", ""), flags=re.MULTILINE)
 assets = (shared / "pointcloud/assets.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replace("export ", "")
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
@@ -53,14 +54,17 @@ photo_editor = re.sub(r"^import .*?;\s*", "", photo_editor, flags=re.MULTILINE)
 photo_editor = "const { createPhotoEditor } = (() => {\n" + photo_editor + "\nreturn { createPhotoEditor };\n})();"
 marigold = "\n".join((shared / name).read_text(encoding="utf-8").replace("export ", "") for name in ["pointcloud/math.mjs", "pointcloud/stereo-rig.mjs", "vendor/stereo-depth.mjs", "vendor/vathography.mjs", "vendor/depth-source.mjs", "vendor/marigold-view.mjs"])
 marigold = re.sub(r"^import .*?;\s*", "", marigold, flags=re.MULTILINE)
-marigold = photo_adjustments + "\n" + notch_rail + "\n" + photo_editor + "\nconst createMarigoldView = (() => {\n" + marigold + "\nreturn createMarigoldView;\n})();"
+marigold = photo_adjustments + "\n" + notch_rail + "\n" + photo_editor + "\nconst { createMarigoldView, runStereoDepth } = (() => {\n" + marigold + "\nreturn { createMarigoldView, runStereoDepth };\n})();"
 source = source.replace("__ENTROPI_MARIGOLD__", marigold)
 documents = []
-for module, names in [("stereo-pair", "readStereoPairResponse"), ("entropi-document", "createEntropiDocument, encodeEntropiDocument, decodeEntropiDocument"), ("vathography", "normalizeDepth, toneDepth"), ("entropi-export", "encodeDepthTiff, encodeDepthDng, encodeGrayscale16Tiff, encodeRgba16Tiff"), ("entropi-rendered-export", "encodeRenderedTiff"), ("entropi-ui", "bindExportGesture, pickEntropiDocument")]:
+for module, names in [("stereo-pair", "readStereoPairResponse"), ("entropi-document", "createEntropiDocument, encodeEntropiDocument, decodeEntropiDocument, normalizePanorama"), ("vathography", "normalizeDepth, toneDepth"), ("entropi-export", "encodeDepthTiff, encodeDepthDng, encodeGrayscale16Tiff, encodeRgba16Tiff"), ("entropi-rendered-export", "encodeRenderedTiff"), ("entropi-ui", "bindExportGesture, pickEntropiDocument"), ("live-capture-gesture", "bindLiveCaptureGesture"), ("sweep-capture", "createSweepCapture"), ("panorama", "buildPanorama, applyPanoramaMask"), ("panorama-capture", "createPanoramaCapture")]:
     code = (shared / ("vendor/" + module + ".mjs")).read_text(encoding="utf-8").replace("export ", "")
     code = re.sub(r"^import .*?;\s*", "", code, flags=re.MULTILINE)
     documents.append("const { " + names + " } = (() => {\n" + code + "\nreturn { " + names + " };\n})();")
-source = source.replace("__ENTROPI_DOCUMENT__", "\n".join(documents))
+upscale = "\n".join((shared / name).read_text(encoding="utf-8").replace("export ", "") for name in ["pointcloud/assets.mjs", "pointcloud/upscale-core.mjs", "vendor/upscale.mjs"])
+upscale = re.sub(r"^import .*?;\s*", "", upscale, flags=re.MULTILINE)
+upscale = "const { warmUpscaleAssets, prepareUpscaleAssets, upscaleImage } = (() => {\n" + upscale + "\nreturn { warmUpscaleAssets, prepareUpscaleAssets, upscaleImage };\n})();\n"
+source = source.replace("__ENTROPI_DOCUMENT__", upscale + "\n".join(documents))
 source = source.replace("__ENTROPI_APP_ENHANCEMENTS__", (sketch / "camera-ui-v2.js").read_text(encoding="utf-8"))
 source = source.replace("__ENTROPI_ICON__", "data:image/svg+xml," + quote((shared / "favicon.svg").read_text(encoding="utf-8"), safe=""))
 

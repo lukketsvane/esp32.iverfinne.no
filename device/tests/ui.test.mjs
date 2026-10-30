@@ -196,7 +196,7 @@ function harness(options = {}) {
       getItem(key) { if (options.storageDenied) throw new Error('Storage denied'); return stored.get(key) ?? null; },
       setItem(key, value) { if (options.storageDenied) throw new Error('Storage denied'); stored.set(key, value); },
     },
-    COLOR_SCHEMES,readStereoPairResponse,phoneHelperOrigin,
+    COLOR_SCHEMES,readStereoPairResponse,phoneHelperOrigin,createPanoramaCapture:()=>({active:false,recording:false,cancel(){},dispose(){}}),
     Viewfinder: class { constructor(canvas) { this.canvas = canvas;this.tone={grain:1,contrast:1};this.captures=[];finders.push(this) }capture(source){const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;this.captures.push({source,url:source.src,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}} },
     attachStudioControls: (hosts, onChange, enabled, onGesture) => { studioBindings.push({ hosts, onChange, enabled, onGesture }); return studioControls; },
     readColorScheme:kind=>stored.get('entropi-screen-'+kind+'-v2')??'macintosh',

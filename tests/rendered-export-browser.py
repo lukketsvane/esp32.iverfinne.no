@@ -28,6 +28,7 @@ scripts = re.findall(r"<script[^>]*>(.*?)</script>", (ROOT / "device/preview/ind
 fixture = """async native => {
     const encode = native ? encodeRenderedTiff : (await import('/vendor/entropi-rendered-export.mjs')).encodeRenderedTiff;
     const presets = native ? PHOTO_PRESETS : (await import('/vendor/photo-adjustments.mjs')).PHOTO_PRESETS;
+    const normalize = native ? normalizePhotoEdits : (await import('/vendor/photo-adjustments.mjs')).normalizePhotoEdits;
     const canvas=document.createElement('canvas'); canvas.width=32; canvas.height=24;
     canvas.getContext('2d').fillRect(0,0,32,24);
     const left=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
@@ -36,7 +37,9 @@ fixture = """async native => {
     const values=[],recipes=Array.from({length:5},(_,preset)=>({preset,position:.1,width:.9}));
     for(const {id}of presets)recipes.push({preset:1,position:.1,width:.9,edits:{preset:id,strength:.8,
         exposure:.2,contrast:.1,sharpen:.3,denoise:.4,crop:{x:.125,y:.125,width:.75,height:.75}}});
+    recipes.push({preset:1,position:0,width:1,edits:{preset:'P5',strength:.6,saturation:.3,highlights:-.4,shadows:.2,temperature:.15,tint:-.1,hsl:{blue:{hue:-.4,saturation:.5,lightness:.2}},grain:{strength:.5,size:.7,color:.4},crop:{x:.125,y:.125,width:.75,height:.75}}});
     for(const recipe of recipes){
+        if(recipe.edits)recipe.edits=normalize(recipe.edits);
         const blob=await encode({left,result,recipe});
         const bytes=new Uint8Array(await blob.arrayBuffer());
         values.push({recipe,data:btoa(String.fromCharCode(...bytes))});
@@ -83,11 +86,11 @@ try:
                             assert metadata["outputWidth"] == width and metadata["outputHeight"] == height
                             assert metadata["channels"] == ("rgba" if channels == 4 else "gray-alpha")
                         decoded.append(image)
-                assert len(decoded) == 15
-                assert len({value.tobytes() for value in decoded}) == 15
+                assert len(decoded) == 17
+                assert len({value.tobytes() for value in decoded}) == 17
                 outputs.append(decoded)
                 print(json.dumps({"engine":engine.name,"bundle":"firmware" if native else "modules",
-                    "depthPresets":5,"photoPresets":10,"sizes":[[32,24],[24,18]],"bits":16,"alpha":"verified"}),flush=True)
+                    "depthPresets":5,"photoPresets":11,"advancedEdits":1,"sizes":[[32,24],[24,18]],"bits":16,"alpha":"verified"}),flush=True)
             assert all((a==b).all() for a,b in zip(*outputs)), "Firmware/module output mismatch"
             browser.close()
 finally:

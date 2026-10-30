@@ -8,7 +8,7 @@ import re
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 import uuid
 
 from PIL import Image
@@ -29,6 +29,8 @@ class Rig:
         self.baudrate = None
         self.preview_supported = None
         self.probe_timeout = 4
+        self.sensor_controls = [{}, {}]
+        self.sensor_checked = [0, 0]
 
     def connection(self):
         import serial
@@ -212,13 +214,67 @@ class Rig:
                 del self.history[next(iter(self.history))]
             return record
 
+    def control(self, variable, value, side=0):
+        if variable not in ('brightness', 'ae_level') or type(value) is not int or not -2 <= value <= 2 or type(side) is not int or side not in (0, 1):
+            raise ValueError('Ugyldig sensorinnstilling')
+        with self.lock, self.connection() as link:
+            if not self.identities:
+                self.identify_link(link)
+            link.reset_input_buffer()
+            command = 'peer-control' if side else 'camera-control'
+            link.write(f'{command} {variable} {value}\n'.encode('ascii'))
+            end = time.monotonic() + min(self.timeout, 10)
+            data = b''
+            while time.monotonic() < end:
+                data = (data + link.read(4096))[-16000:]
+                match = re.search(rb'(?:^|\n)CONTROL_STATUS ([^\r\n]+)\r?\n', data)
+                if not match:
+                    continue
+                reply = json.loads(match[1])
+                if not isinstance(reply, dict) or reply.get('camera_id') != self.identities[side] or reply.get('var') != variable or type(reply.get('value')) is not int or reply['value'] != value:
+                    raise RuntimeError('Sensorinnstillinga vart ikkje stadfesta av rett kamera')
+                if reply.get('ok') is not True:
+                    raise RuntimeError(reply.get('error') or 'Sensorinnstillinga vart ikkje teken i bruk')
+                self.sensor_controls[side][variable] = value
+                self.sensor_checked[side] = time.monotonic()
+                self.current = None
+                return reply
+            raise TimeoutError('Kameraet stadfesta ikkje sensorinnstillinga')
+
+    def read_sensor_status(self, side):
+        if time.monotonic() - self.sensor_checked[side] < 5 or not self.lock.acquire(blocking=False):
+            return
+        try:
+            self.sensor_checked[side] = time.monotonic()
+            with self.connection() as link:
+                link.reset_input_buffer()
+                link.write(b'peer-check\n' if side else b'camera-check\n')
+                prefix = rb'PEER_STATUS ' if side else rb'CAMERA_STATUS '
+                end = time.monotonic() + min(self.timeout, 3)
+                data = b''
+                while time.monotonic() < end:
+                    data = (data + link.read(4096))[-16000:]
+                    match = re.search(rb'(?:^|\n)' + prefix + rb'([^\r\n]+)\r?\n', data)
+                    if not match:
+                        continue
+                    status = json.loads(match[1])
+                    if isinstance(status, dict) and status.get('camera_id') == self.identities[side] and status.get('camera_ready') is True:
+                        self.sensor_controls[side].update({key: value for key, value in status.items() if key in ('brightness', 'ae_level') and type(value) is int and -2 <= value <= 2})
+                    break
+        except (ValueError, OSError, RuntimeError):
+            pass
+        finally:
+            self.lock.release()
+
     def status(self, side=0):
-        record = self.latest()
+        record = self.current or next(reversed(tuple(self.history.values())), None) or self.latest()
         ready = side < len(record['frames'])
+        if ready:
+            self.read_sensor_status(side)
         return {'camera_id': self.identities[side], 'camera_ready': ready, 'stream_ready': ready,
                 'peer': {'camera_id': self.identities[1-side]} if len(record['frames']) == 2 else None, 'transport': 'usb',
                 'last_error': record.get('fallback_reason', '') if not ready else '',
-                'hardware_synchronized': False, 'width': record['size'][0], 'height': record['size'][1]}
+                'hardware_synchronized': False, 'width': record['size'][0], 'height': record['size'][1], **self.sensor_controls[side]}
 
 
 class Depth:
@@ -386,8 +442,17 @@ class Handler(SimpleHTTPRequestHandler):
                 html = (self.server.root / 'device/preview/index.html').read_text(encoding='utf-8')
                 config = '<script>globalThis.__ENTROPI_RIG_BRIDGE=true;globalThis.__ENTROPI_DEPTH_ENDPOINT="/api/depth";</script>'
                 return self.send(html.replace('<head>', '<head>' + config, 1).encode(), 'text/html; charset=utf-8')
-            if path == '/control':
-                return self.json({'error': 'Sensorinnstillingar er ikkje tilgjengelege over USB'}, 409)
+            if path in ('/control', '/peer/control'):
+                if not self.allowed():
+                    return self.json({'error': 'Origin rejected'}, 403)
+                try:
+                    query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                    if set(query) != {'var', 'val'} or any(len(items) != 1 for items in query.values()) or not re.fullmatch('-?[0-9]+', query['val'][0]):
+                        raise ValueError('Ugyldig sensorinnstilling')
+                    reply = self.server.rig.control(query['var'][0], int(query['val'][0]), int(path.startswith('/peer/')))
+                except ValueError as error:
+                    return self.json({'error': str(error)}, 400)
+                return self.json(reply)
             if '..' in path.split('/') or not (path.startswith(('/vendor/', '/pointcloud/')) or path in ('/favicon.svg', '/style.css')):
                 return self.json({'error': 'Not found'}, 404)
             super().do_GET()

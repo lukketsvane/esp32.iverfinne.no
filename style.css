@@ -4,7 +4,7 @@
 .studio video{position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none}
 .studio .finder{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:clamp(104px,30vw,148px);aspect-ratio:2/3;background:#000;pointer-events:none;overflow:hidden;box-shadow:0 0 0 1px #ffffff18;transition:opacity .3s}.studio .finder canvas{width:100%;height:100%;display:block}
 .studio .cross{position:absolute;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);opacity:.4}.studio .cross:before,.studio .cross:after{content:'';position:absolute;background:#fff}.studio .cross:before{left:8px;top:0;width:1px;height:16px}.studio .cross:after{left:0;top:8px;width:16px;height:1px}
-.studio .photo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;filter:grayscale(1);background:#000;-webkit-touch-callout:none;user-select:none}
+.studio .photo{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:76%;height:76%;object-fit:contain;filter:grayscale(1);background:#000;-webkit-touch-callout:none;user-select:none}
 .studio .progress{position:absolute;inset:0;width:100%;height:100%;z-index:4;overflow:visible;pointer-events:none;fill:none}.studio .progress svg{display:block;width:100%;height:100%;overflow:visible}
 .studio .progress rect{stroke:#ffffffb3;stroke-width:1;vector-effect:non-scaling-stroke;stroke-dasharray:0 100;stroke-linecap:round;transition:stroke-dasharray .2s}.studio .progress.indeterminate rect{stroke-dasharray:22 78;animation:frame-progress 1.8s linear infinite}
 .studio .capture-plane,.studio .retry-plane{position:absolute;inset:0;width:100%;height:100%;border:0;padding:0;background:transparent;cursor:crosshair;touch-action:none}.studio .capture-plane:focus-visible{outline:0}

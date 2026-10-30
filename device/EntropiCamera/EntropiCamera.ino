@@ -21,6 +21,7 @@ void serialCameraCheck();
 void serialCameraRetry();
 void serialPeerCheck();
 void serialPeerRetry();
+void serialCameraControl(const char *command, bool peer);
 #if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
 void serialStereoPair();
 void serialCameraPhoto();
@@ -123,7 +124,7 @@ void setup() {
 
 void loop() {
   pollRigNetwork();
-  static char command[20];
+  static char command[48];
   static unsigned used = 0;
   static uint32_t lastByte = 0;
   if (used && millis() - lastByte > 1000) used = 0;
@@ -140,6 +141,8 @@ void loop() {
       else if (!strcmp(command, "button-check")) checkCaptureButton();
       else if (!strcmp(command, "peer-check")) serialPeerCheck();
       else if (!strcmp(command, "peer-retry")) serialPeerRetry();
+      else if (!strncmp(command, "camera-control ", 15)) serialCameraControl(command + 15, false);
+      else if (!strncmp(command, "peer-control ", 13)) serialCameraControl(command + 13, true);
 #if defined(ENTROPI_USB_STEREO_TEST) && ENTROPI_USB_STEREO_TEST
       else if (!strcmp(command, "stereo-snap")) serialStereoPair();
       else if (!strcmp(command, "camera-photo")) serialCameraPhoto();

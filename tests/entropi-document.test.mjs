@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {crc32,inflateRawSync} from 'node:zlib';
-import {createEntropiDocument,encodeEntropiDocument,decodeEntropiDocument} from '../vendor/entropi-document.mjs';
+import {createEntropiDocument,encodeEntropiDocument,decodeEntropiDocument,normalizePanorama} from '../vendor/entropi-document.mjs';
 
 const left=new Blob([Uint8Array.of(255,216,1,3,255,217)],{type:'image/jpeg'}),right=new Blob([Uint8Array.of(255,216,2,4,255,217)],{type:'image/jpeg'});
 const example=()=>createEntropiDocument({left,right,result:{width:3,height:2,depth:Float32Array.of(.12345678,-0,NaN,Infinity,-Infinity,21.875),model:'Depth Anything',source:'browser'},recipe:{preset:4,position:.2,width:1.25},preview:new Blob(['preview'],{type:'image/png'})});
@@ -27,6 +27,60 @@ function rebuild(entries){
 }
 function updateManifest(entries,change){const entry=entries.find(item=>item.name==='manifest.json'),manifest=JSON.parse(entry.data.toString());change(manifest);entry.data=Buffer.from(JSON.stringify(manifest));return rebuild(entries)}
 const rawBytes=values=>new Uint8Array(values.buffer,values.byteOffset,values.byteLength);
+const panorama=()=>({frames:[{id:'first',left,right,accepted:true,capturedAt:1793340000000,timing:{left:12,right:14,synchronized:false}},{id:'second',left:new Blob(['unaltered png bytes'],{type:'image/png'}),right:null,accepted:true,capturedAt:'2026-10-30T08:00:01Z'},{id:'rejected',left:new Blob(['rejected original'],{type:'image/jpeg'}),right,accepted:false,reason:'Insufficient overlap'}],transforms:[[1,0,0,0,1,0,0,0,1],[1,0,24,0,1,2,0,0,1],null],analysis:{width:640,height:480},output:{width:1040,height:480,scale:1,origin:[0,-2]},metadata:{coverage:.85}});
+
+test('version 3 preserves every panorama original and homography independently of the derived image',async()=>{
+  const input=example();input.right=null;input.panorama=panorama();input.result.source='stereo-panorama';input.result.provenance={panorama:{accepted:2,total:3,metric:false}};
+  input.recipe.edits={preset:'P5',exposure:.2};new Uint32Array(input.result.depth.buffer)[2]=0x7fc45678;
+  const document=createEntropiDocument(input),bits=rawBytes(document.result.depth).slice();
+  input.panorama.transforms[1][2]=999;input.panorama.frames[0].timing.left=99;input.panorama.metadata.coverage=0;
+  const file=await encodeEntropiDocument(document),entries=members(await file.arrayBuffer()),manifest=JSON.parse(entries.find(item=>item.name==='manifest.json').data);
+  assert.equal(manifest.version,3);assert.equal(manifest.originals.right,null);assert.equal(manifest.panorama.frames[1].left,'panorama/1/left');
+  const reopened=await decodeEntropiDocument(file);
+  assert.equal(reopened.id,document.id);assert.equal(reopened.created,document.created);assert.equal(reopened.right,null);
+  assert.deepEqual(reopened.recipe,document.recipe);assert.deepEqual(reopened.result.provenance,document.result.provenance);assert.deepEqual(rawBytes(reopened.result.depth),bits);
+  assert.deepEqual(reopened.result.validity,document.result.validity);assert.deepEqual(await reopened.left.arrayBuffer(),await left.arrayBuffer());
+  assert.deepEqual(reopened.panorama.transforms,document.panorama.transforms);assert.equal(reopened.panorama.transforms[1][2],24);
+  assert.equal(reopened.panorama.frames[0].timing.left,12);assert.equal(reopened.panorama.metadata.coverage,.85);assert.equal(reopened.panorama.frames[2].accepted,false);
+  for(const [index,frame]of document.panorama.frames.entries())for(const side of ['left','right']){
+    const loaded=reopened.panorama.frames[index][side];
+    if(!frame[side]){assert.equal(loaded,null);continue}
+    const bytes=Buffer.from(await frame[side].arrayBuffer()),path='panorama/'+index+'/'+side;
+    assert.deepEqual(Buffer.from(await loaded.arrayBuffer()),bytes);assert.equal(loaded.type,frame[side].type);
+    assert.deepEqual(entries.find(entry=>entry.name===path).data,bytes);assert.equal(manifest.files[path].sha256,createHash('sha256').update(bytes).digest('hex'));
+  }
+  reopened.recipe.edits.crop={x:.1,y:.1,width:.8,height:.8};
+  const edited=await decodeEntropiDocument(await encodeEntropiDocument(reopened));
+  assert.deepEqual(edited.panorama.transforms,document.panorama.transforms);assert.deepEqual(rawBytes(edited.result.depth),bits);
+  assert.deepEqual(await edited.panorama.frames[2].left.arrayBuffer(),await document.panorama.frames[2].left.arrayBuffer());
+});
+
+test('eight paired panorama frames fit the bounded 22-member archive and do not require photo edits',async()=>{
+  const input=example();input.right=null;input.result.confidence=Float32Array.of(.1,.2,.3,.4,.5,.6);
+  input.panorama={frames:Array.from({length:8},(_,id)=>({id,left,right})),transforms:Array.from({length:8},(_,i)=>[1,0,i*10,0,1,0,0,0,1])};
+  const file=await encodeEntropiDocument(input),entries=members(await file.arrayBuffer()),manifest=JSON.parse(entries.find(item=>item.name==='manifest.json').data);
+  assert.equal(entries.length,22);assert.equal(manifest.version,3);assert.equal(manifest.recipe.edits,undefined);
+  const reopened=await decodeEntropiDocument(file);assert.equal(reopened.panorama.frames.length,8);assert.deepEqual(reopened.result.confidence,input.result.confidence);
+});
+
+test('panorama validation rejects malformed metadata, transforms and images before archiving',()=>{
+  const changes=[value=>value.frames=[],value=>value.frames=Array(1),value=>value.frames=Array(9).fill(value.frames[0]),value=>value.transforms=[],value=>value.transforms[0]=[1,0,0],value=>value.transforms[0][0]=Infinity,value=>value.frames[0].left=new Blob(),value=>value.frames[0].right=new Blob(['x'],{type:'text/plain'}),value=>value.frames[0].accepted='yes',value=>value.frames[0].timing=[],value=>value.metadata.bad=NaN,value=>value.metadata.bad=()=>1,value=>value.metadata.bad=new Uint8Array(1),value=>value.metadata.circular=value,value=>value.metadata.large='x'.repeat(65537)];
+  for(const change of changes){const value=panorama();change(value);assert.throws(()=>normalizePanorama(value));}
+  const input=example();input.panorama=panorama();assert.throws(()=>createEntropiDocument(input),/originalpara/);
+  const large=new Blob(['x'],{type:'image/jpeg'});Object.defineProperty(large,'size',{value:32*1024*1024+1});
+  const oversized=panorama();oversized.frames[0].left=large;assert.throws(()=>normalizePanorama(oversized),/originalbilete/);
+  const bounded=new Blob(['x'],{type:'image/jpeg'});Object.defineProperty(bounded,'size',{value:32*1024*1024});
+  const full={frames:Array.from({length:4},()=>({left:bounded,right:null})),transforms:Array(4).fill(null)};
+  input.right=null;input.panorama=full;assert.throws(()=>createEntropiDocument(input),/for stor/);
+});
+
+test('panorama import rejects source aliasing, omitted sources, invalid transforms and mismatched versions',async()=>{
+  const input=example();input.right=null;input.panorama=panorama();const bytes=await (await encodeEntropiDocument(input)).arrayBuffer();
+  for(const change of [value=>value.version=1,value=>value.version=2,value=>delete value.panorama,value=>value.panorama.frames[0].left='sources/left',value=>value.panorama.frames[1].left='panorama/0/left',value=>delete value.panorama.frames[0].right,value=>value.panorama.frames.pop(),value=>value.panorama.transforms[1]=[1,2,3],value=>value.files['panorama/0/left'].type='text/html'])await assert.rejects(decodeEntropiDocument(updateManifest(members(bytes),change)));
+  const damaged=members(bytes);damaged.find(entry=>entry.name==='panorama/0/right').data[2]^=1;
+  await assert.rejects(decodeEntropiDocument(rebuild(damaged)),/skadd/);
+  const missing=members(bytes).filter(entry=>entry.name!=='panorama/2/left');await assert.rejects(decodeEntropiDocument(rebuild(missing)));
+});
 
 test('numerical master roundtrips raw float bits, originals, validity, recipe and identity',async()=>{
   const document=example();new Uint32Array(document.result.depth.buffer)[2]=0x7fc12345;
@@ -171,5 +225,33 @@ test('rejects expanded archives over the bound before allocating output',async()
 test('validation rejects invalid mask, confidence, dimensions and non-float samples',()=>{
   for(const change of [item=>item.result.width=1.5,item=>item.result.depth=[1,2,3,4,5,6],item=>item.result.validity=Uint8Array.of(1,1,1,1,1,1),item=>item.result.validity=Float32Array.of(.5,0,0,0,0,0),item=>item.result.confidence=Float32Array.of(2,0,0,0,0,0),item=>item.recipe.width=0,item=>item.left=new Blob(['bad'],{type:'text/html'})]){
     const document=example();change(document);assert.throws(()=>createEntropiDocument(document));
+  }
+});
+
+test('version 4 preserves independent color channels, grain and tone edits with untouched sources',async()=>{
+  for(const withPanorama of [false,true]){
+    const input=example();if(withPanorama){input.right=null;input.panorama=panorama()}
+    input.recipe.edits={preset:'HB2',strength:.48,saturation:.2,highlights:-.4,shadows:.3,temperature:-.15,tint:.08,
+      hsl:{red:{hue:.25,saturation:-.1,lightness:.05},orange:{hue:-1,saturation:.76},blue:{lightness:-.3}},
+      grain:{strength:.4,size:.875,color:.2}};
+    const saved=createEntropiDocument(input),recipe=structuredClone(saved.recipe),bits=rawBytes(saved.result.depth).slice();
+    input.recipe.edits.hsl.red.hue=-.8;input.recipe.edits.grain.strength=.9;
+    const file=await encodeEntropiDocument(saved),entries=members(await file.arrayBuffer()),manifest=JSON.parse(entries.find(item=>item.name==='manifest.json').data);
+    assert.equal(manifest.version,4);assert.deepEqual(manifest.recipe,recipe);
+    const reopened=await decodeEntropiDocument(file);
+    assert.deepEqual(reopened.recipe,recipe);assert.deepEqual(rawBytes(reopened.result.depth),bits);
+    assert.deepEqual(await reopened.left.arrayBuffer(),await saved.left.arrayBuffer());
+    if(withPanorama)assert.deepEqual(await reopened.panorama.frames[1].left.arrayBuffer(),await saved.panorama.frames[1].left.arrayBuffer());
+    for(const version of [1,2,3])await assert.rejects(decodeEntropiDocument(updateManifest(members(await file.arrayBuffer()),value=>value.version=version)),/versjon/);
+  }
+});
+
+test('advanced defaults remain legacy compatible and malformed channel values reject before saving',async()=>{
+  const neutral={saturation:0,highlights:0,shadows:0,temperature:0,tint:0,hsl:{orange:{hue:0}},grain:{strength:0,size:1,color:1}};
+  const input=example();input.recipe.edits=neutral;
+  const entries=members(await (await encodeEntropiDocument(input)).arrayBuffer());
+  assert.equal(JSON.parse(entries.find(item=>item.name==='manifest.json').data).version,1);
+  for(const edits of [{saturation:2},{highlights:NaN},{temperature:'1'},{grain:{strength:1.01}},{grain:{size:-.01}},{grain:{color:Infinity}},{hsl:{red:{hue:1.01}}},{hsl:{orange:{lightness:-2}}},{hsl:{blue:null}}]){
+    assert.throws(()=>createEntropiDocument({...example(),recipe:{edits}}));
   }
 });

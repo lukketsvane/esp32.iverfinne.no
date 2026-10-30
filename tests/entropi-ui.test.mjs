@@ -8,7 +8,7 @@ const photoSource=(await readFile(new URL('../vendor/photo.mjs',import.meta.url)
 const png=new Blob(['png'],{type:'image/png'}),masterBlob=new Blob(['master'],{type:'application/x-entropi'}),tiff=new Blob(['tiff'],{type:'image/tiff'}),dng=new Blob(['dng'],{type:'image/dng'});
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
 function harness({photoSave=async()=>{},decode=async()=>({restored:true}),share=null,secure=true,deferredClose=false}={}){
-  const calls={encode:[],tiff:[],dng:[],photo:[],decode:[],shares:[],downloads:[],revoked:[],timers:[],focus:0},urls=new Map(),closeEvents=[];let now=1000;
+  const calls={upscale:[],encode:[],tiff:[],dng:[],photo:[],decode:[],shares:[],downloads:[],revoked:[],timers:[],focus:0},urls=new Map(),closeEvents=[];let now=1000;
   class Element{
     constructor(tag){this.tag=tag;this.children=[];this.attributes=new Map();this.listeners=new Map();this.style={};this.open=false;this.disabled=false;this.textContent='';this.parent=null}
     setAttribute(name,value){this.attributes.set(name,value)}
@@ -25,14 +25,15 @@ function harness({photoSave=async()=>{},decode=async()=>({restored:true}),share=
     focus(){calls.focus++;document.activeElement=this}
     contains(element){return element===this||this.children.some(child=>child.contains(element))}
     closest(selector){for(let element=this;element;element=element.parent)if(selector==='dialog[open]'&&element.tag==='dialog'&&element.open)return element;return null}
-    getBoundingClientRect(){if(this.rect)return this.rect;if(this.tag==='button'&&this.parent?.parent?.attributes.has('data-entropi-export')){const dialog=this.parent.parent,index=this.parent.children.indexOf(this),left=parseFloat(dialog.style.left)+4,top=parseFloat(dialog.style.top)+4+(this.parent.children.length-1-index)*48;return {left,top,right:left+88,bottom:top+48,width:88,height:48}}return {left:280,top:740,right:328,bottom:788,width:48,height:48}}
+    getBoundingClientRect(){if(this.rect)return this.rect;if(this.tag==='button'&&this.parent?.parent?.attributes.has('data-entropi-export')){const dialog=this.parent.parent,full=this.style.gridColumn==='1 / -1',column=full?1:Number(this.style.gridColumn),left=parseFloat(dialog.style.left)+4+(column-1)*52,top=parseFloat(dialog.style.top)+4+(Number(this.style.gridRow)-1)*48,width=full?156:52;return {left,top,right:left+width,bottom:top+48,width,height:48}}return {left:280,top:740,right:328,bottom:788,width:48,height:48}}
   }
   const body=new Element('body'),focus=new Element('button');
   const document=new Element('document');Object.assign(document,{body,activeElement:focus,createElement:tag=>new Element(tag),querySelector:selector=>{const find=node=>node.children.find(element=>element.tag==='dialog'&&element.attributes.has('data-entropi-export'))??node.children.map(find).find(Boolean);return selector==='dialog[data-entropi-export]'?find(body)??null:null}});
   const window=new Element('window');
-  const context=vm.createContext({document,Blob,File,TextEncoder,DOMException,Date:{now:()=>now},innerWidth:390,innerHeight:844,isSecureContext:secure,addEventListener:window.addEventListener.bind(window),removeEventListener:window.removeEventListener.bind(window),navigator:{canShare:()=>!!share,share:async payload=>{calls.shares.push(payload);return await share(payload)}},
+  const context=vm.createContext({document,Blob,File,TextEncoder,DOMException,AbortController,Date:{now:()=>now},innerWidth:390,innerHeight:844,isSecureContext:secure,addEventListener:window.addEventListener.bind(window),removeEventListener:window.removeEventListener.bind(window),navigator:{canShare:()=>!!share,share:async payload=>{calls.shares.push(payload);return await share(payload)}},
     URL:{createObjectURL:blob=>{const url='blob:'+urls.size;urls.set(url,blob);return url},revokeObjectURL:url=>calls.revoked.push(url)},setTimeout:(handler,time)=>{calls.timers.push({handler,time,active:true});return calls.timers.length-1},clearTimeout:id=>{if(calls.timers[id])calls.timers[id].active=false},
     encodeEntropiDocument:async document=>{calls.encode.push(document);return masterBlob},decodeEntropiDocument:async file=>{calls.decode.push(file);return await decode(file)},
+    warmUpscaleAssets:async()=>true,prepareUpscaleAssets:async()=>{},upscaleImage:async(blob,factor)=>{calls.upscale.push({blob,factor});return png},
     encodeRenderedTiff:document=>{calls.tiff.push(document);return tiff},encodeDepthDng:result=>{calls.dng.push(result);return dng},
     savePhoto:async(...args)=>{calls.photo.push(args);return await photoSave(...args)}
   });
@@ -46,7 +47,7 @@ const master=()=>({id:'preserved',left:new Blob(['original'],{type:'image/jpeg'}
 test('format chooser stays quiet until selection and PNG uses the existing photo save path',async()=>{
   const app=harness();let images=0,documents=0;
   app.api.showExportOptions({name:'capture.jpg',image:()=>{images++;return png},document:()=>{documents++;return master()}});
-  const dialog=app.dialog();assert.deepEqual(options(dialog).map(item=>item.textContent),['PNG','.entropi','TIFF','DNG']);assert.equal(images,0);assert.equal(documents,0);
+  const dialog=app.dialog();assert.deepEqual(options(dialog).map(item=>item.textContent),['PNG','.entropi','TIFF','DNG','AI 2×','AI 4×','AI 8×']);assert.equal(images,0);assert.equal(documents,0);
   app.api.showExportOptions({image:()=>png,document:master});assert.equal(app.body.children.length,1);
   await button(dialog,'PNG').click();assert.equal(images,1);assert.equal(documents,0);assert.equal(app.calls.photo[0][0],png);assert.equal(app.calls.photo[0][1],'capture.png');assert.equal(app.calls.downloads.length,0);assert.equal(app.dialog(),null);
 });
@@ -116,13 +117,13 @@ function gesture(app,settings={}){
 test('ordinary taps download TIFF from master data without showing a picker',async()=>{
   const app=harness();let reads=0;const action=gesture(app,{name:'photo.jpg',document:()=>{reads++;return master()}});
   await action.down();await action.up();await action.trigger.click();assert.equal(app.dialog(),null);assert.equal(reads,1);assert.equal(app.calls.photo.length,0);assert.equal(app.calls.downloads[0].blob,tiff);assert.equal(app.calls.downloads[0].name,'photo.tif');
-  const original=harness(),plain=gesture(original,{document:null,imageExtension:'jpg',name:'original.jpg'});await plain.down();original.hold();assert.equal(original.dialog(),null);await plain.up();await plain.trigger.click();assert.equal(original.calls.photo[0][1],'original.jpg');
+  const original=harness(),plain=gesture(original,{document:null,imageExtension:'jpg',name:'original.jpg'});await plain.down();assert.equal(original.dialog(),null);await plain.up();await plain.trigger.click();assert.equal(original.calls.photo[0][1],'original.jpg');
 });
 
 test('holding and dragging upward chooses each file format on release and suppresses the ghost click',async()=>{
   for(const [label,key,extension]of [['PNG','photo','png'],['.entropi','downloads','entropi'],['TIFF','downloads','tif'],['DNG','downloads','dng']]){
     const app=harness(),action=gesture(app,{name:'capture.jpg'});await action.down();app.hold();
-    const dialog=app.dialog(),rect=button(dialog,label).getBoundingClientRect();assert.equal(app.calls.photo.length+app.calls.downloads.length,0);assert.equal(options(dialog).length,4);
+    const dialog=app.dialog(),rect=button(dialog,label).getBoundingClientRect();assert.equal(app.calls.photo.length+app.calls.downloads.length,0);assert.equal(options(dialog).length,7);
     await action.move(rect.left+44,rect.top+24);assert.equal(button(dialog,label).attributes.get('aria-current'),'true');
     await action.up(rect.left+44,rect.top+24);await action.trigger.click();assert.equal(app.calls[key].length,1);assert.equal(app.calls.photo.length+app.calls.downloads.length,1);assert.equal(app.dialog(),null);
     assert.equal(key==='photo'?app.calls.photo[0][1]:app.calls.downloads[0].name,'capture.'+extension);
@@ -196,4 +197,14 @@ test('independent archive previews default to the displayed image while retainin
   const app=harness(),document=master(),action=gesture(app,{image:()=>png,document:()=>document,defaultFormat:'png'});
   await action.trigger.click();assert.equal(app.calls.photo[0][0],png);assert.equal(app.calls.tiff.length,0);
   await action.down();app.hold();await button(app.dialog(),'TIFF').click();assert.equal(app.calls.tiff[0],document);assert.equal(app.calls.downloads[0].blob,tiff);
+});
+
+test('AI export uses the displayed image at each chosen scale and preserves the master',async()=>{
+  for(const factor of [2,4,8]){
+    const app=harness(),document=master(),values=document.result.depth.slice();let reads=0;
+    app.api.showExportOptions({name:'capture.jpg',image:()=>png,document:()=>{reads++;return document}});
+    await button(app.dialog(),'AI '+factor+'×').click();
+    assert.equal(app.calls.upscale.length,1);assert.equal(app.calls.upscale[0].factor,factor);assert.equal(app.calls.upscale[0].blob,png);
+    assert.equal(app.calls.photo[0][1],'capture-ai-'+factor+'x.png');assert.equal(reads,0);assert.deepEqual(document.result.depth,values);assert.equal(app.dialog(),null);
+  }
 });

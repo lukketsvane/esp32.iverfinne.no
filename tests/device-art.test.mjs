@@ -25,7 +25,7 @@ test('embedded archive previews use the current photo framing or native splat sn
   const source=enhancement.slice(enhancement.indexOf('async function persistCurrentPreview('),enhancement.indexOf('async function persistCurrentMaster('));
   for(const image of [0,1]){
     const writes=[],frames=[],pose={scale:2,x:4,y:-8,grain:3,contrast:1.5},rendered=new Blob(['processed'],{type:'image/png'});
-    const state=vm.createContext({masterSaveTimer:1,clearTimeout(){},photoBlob:jpeg,captureArchiveId:'capture-1',captureArchiveSuppressed:false,studioControls:{image},sceneError:'',masterWrites:new WeakMap(),
+    const state=vm.createContext({lockPageZoom(){},masterSaveTimer:1,clearTimeout(){},photoBlob:jpeg,captureArchiveId:'capture-1',captureArchiveSuppressed:false,studioControls:{image},sceneError:'',masterWrites:new WeakMap(),
       photoGestures:{state:pose},photoView:{snapshot(value,native){frames.push({kind:'photo',value,native});return {kind:'photo'}}},sceneViewer:{snapshot(native){frames.push({kind:'splat',native});return {kind:'splat'}}},
       snapshotBlob:()=>rendered,archiveStore:{async savePreview(id,blob){writes.push({id,blob})}},marigoldView:{ready:false},persistCurrentMaster(){throw new Error('Unexpected depth work')}
     });
@@ -48,7 +48,7 @@ test('embedded master preserves both originals and updates the original archive 
   const writes=[],right=new Blob(['right-jpeg'],{type:'image/jpeg'}),preview=new Blob(['preview'],{type:'image/png'});
   const result={depth:Float32Array.of(1.25,NaN,3.5,4),width:2,height:2,polarity:'near',model:'Depth Anything V2'};
   const state=vm.createContext({
-    photoBlob:preview,photoOriginal:jpeg,photoPair:{left:jpeg,right},photoReceivedAt:'2026-10-28T13:00:00Z',
+    photoBlob:preview,photoOriginal:jpeg,photoPair:{left:jpeg,right},photoPanorama:null,photoReceivedAt:'2026-10-28T13:00:00Z',
     captureDocument:null,captureArchiveId:'original-record',masterSaveTimer:0,clearTimeout(){},cameraStatus:{camera_id:'primary'},secondId:'secondary',
     createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:()=>preview,printFeedback(){},
     marigoldView:{ready:true,result,recipe:{preset:1,position:0,width:1},snapshot(){return preview}},
@@ -69,7 +69,7 @@ test('embedded master preserves both originals and updates the original archive 
 test('a late master archive write cannot attach its record to a replacement capture',async()=>{
   let finish;const preview=new Blob(['preview'],{type:'image/png'});
   const state=vm.createContext({
-    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:null,masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
+    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoPanorama:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:null,masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
     createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:()=>preview,printFeedback(){},
     marigoldView:{ready:true,result:{depth:Float32Array.of(1),width:1,height:1},recipe:{preset:1,position:0,width:1},snapshot(){}},
     archiveStore:{saveDocument:()=>new Promise(resolve=>{finish=resolve})}
@@ -82,7 +82,7 @@ test('a late master archive write cannot attach its record to a replacement capt
 test('embedded master writes serialize immutable edits and deleted captures remain exportable without recreation',async()=>{
   const writes=[],finishes=[],preview=new Blob(['preview'],{type:'image/png'});
   const state=vm.createContext({
-    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
+    photoBlob:preview,photoOriginal:jpeg,photoPair:null,photoPanorama:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,clearTimeout(){},cameraStatus:null,secondId:'',
     createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:()=>preview,printFeedback(){},
     marigoldView:{ready:true,result:{depth:Float32Array.of(1),width:1,height:1},recipe:{preset:1,position:0,width:1},snapshot(){}},
     archiveStore:{saveDocument(master,id){writes.push({master,id});return new Promise(resolve=>finishes.push(()=>resolve({id})))}}
@@ -102,7 +102,7 @@ test('editing during the first archive write queues the latest recipe and proces
   let callbacks,finish,started,latest=initial,nextTimer=0;const firstWrite=new Promise(resolve=>{started=resolve});
   const view={ready:false,result:{depth:Float32Array.of(1,2,3,4),width:2,height:2},recipe:{preset:1,position:0,width:1},snapshot:()=>latest,async process(){this.ready=true;callbacks.onChange()}};
   const progress={classList:{add(){},toggle(){}},style:{}};
-  const state=vm.createContext({photoBlob:initial,photoOriginal:jpeg,photoPair:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,cameraStatus:null,secondId:'',
+  const state=vm.createContext({photoBlob:initial,photoOriginal:jpeg,photoPair:null,photoPanorama:null,panoramaDepth:null,photoReceivedAt:null,captureDocument:null,captureArchiveId:'original',masterSaveTimer:0,cameraStatus:null,secondId:'',
     photoDialog:{open:true},studioControls:{image:2},sceneGeneration:1,artTask:null,artError:'',needsSetup:false,phoneTask:null,AbortController,DOMException,
     createEntropiDocument,masterWrites:new WeakMap(),captureArchiveSuppressed:false,snapshotBlob:value=>value,printFeedback(){},refreshReview(){},needsPhoneModels:()=>false,
     $:()=>progress,createMarigoldView:(_,options)=>{callbacks=options;return view},setTimeout:callback=>{const id=++nextTimer;timers.set(id,callback);return id},clearTimeout:id=>timers.delete(id),
@@ -168,11 +168,11 @@ function archiveHarness(){
     async remove(id){records.delete(id)}
   };
   const preview=new Blob(['rendered'],{type:'image/png'}),view={ready:false,result:null,recipe:{preset:1,position:0,width:1},snapshot:()=>preview,reset(){this.ready=false;this.result=null},async process(blob,signal,settings){processed.push({blob,signal,settings});this.result={width:2,height:2,depth:Float32Array.of(1,2,3,4)};this.ready=true},async restore(blob,result,recipe,signal){restored.push({blob,result,recipe,signal});this.result=result;this.recipe=recipe;this.ready=true}};
-  const state=vm.createContext({Blob,AbortController,DOMException,document,window:{addEventListener:document.addEventListener},createArchive:()=>store,createEntropiDocument,attachGalleryNavigation,
+  const state=vm.createContext({lockPageZoom(){},Blob,AbortController,DOMException,document,window:{addEventListener:document.addEventListener},createArchive:()=>store,createEntropiDocument,attachGalleryNavigation,
     $:id=>elements.get(id),studio:elements.get('studio'),photoDialog:elements.get('photo-dialog'),onboarding:elements.get('onboarding'),
     setTimeout:()=>1,clearTimeout(){},stopStream(){},stopSecond(){},resumeStream(){},controls(){},notice(){},printFeedback(){},refreshReview(){},needsPhoneModels:()=>false,bindExportGesture(){},pickEntropiDocument(){},
-    connected:true,connecting:false,busy:false,printBusy:false,connectGeneration:0,retryTimer:0,captureTask:null,sceneGeneration:0,artTask:null,artError:'',artNeedsModel:false,phoneTask:null,needsSetup:false,masterSaveTimer:0,captureArchiveSuppressed:false,
-    photoBlob:null,photoOriginal:null,photoPair:null,photoUrl:null,photoName:'',photoReceivedAt:null,captureDocument:null,captureArchiveId:null,cameraStatus:null,secondId:'',
+    connected:true,connecting:false,busy:false,printBusy:false,hasFrame:true,recoveryPending:false,sensorControlBusy:false,secondEnabled:false,landscapeCapture:()=>false,connectGeneration:0,retryTimer:0,captureTask:null,sceneGeneration:0,artTask:null,artError:'',artNeedsModel:false,phoneTask:null,needsSetup:false,masterSaveTimer:0,captureArchiveSuppressed:false,
+    photoBlob:null,photoOriginal:null,photoPair:null,photoPanorama:null,panoramaDepth:null,sweepCapture:null,photoUrl:null,photoName:'',photoReceivedAt:null,captureDocument:null,captureArchiveId:null,cameraStatus:null,secondId:'',
     studioControls:{image:0,setImage(value){this.image=value}},marigoldView:view,snapshotBlob:value=>value,photoView:{setSource(){},snapshot:()=>preview},photoGestures:{state:{},reset(){}},
     finder:{capture(){return {width:2,height:2,toBlob:callback=>callback(preview)}}},Image:class{naturalWidth=2;naturalHeight=2;async decode(){}},URL:{createObjectURL(blob){const url='blob:'+ ++nextUrl;urls.set(url,blob);return url},revokeObjectURL:url=>urls.delete(url)}
   });
@@ -238,7 +238,7 @@ function pairHarness(options={}){
 function artHarness(options={}){
   const inputs=[],snapshots=[],progress={classList:{add(){}},style:{}};
   const context=vm.createContext({
-    photoBlob:new Blob(['framed']),photoOriginal:new Blob(['original']),photoPair:null,captureDocument:null,
+    photoBlob:new Blob(['framed']),photoOriginal:new Blob(['original']),photoPair:null,photoPanorama:null,panoramaDepth:null,captureDocument:null,
     photoDialog:{open:true},studioControls:{image:2,setImage(value){this.image=value}},
     sceneGeneration:1,artTask:null,artError:'',artNeedsModel:false,phoneReady:true,phoneTask:null,secondEnabled:false,needsSetup:false,AbortController,DOMException,
     $:()=>progress,refreshReview(){},controls(){},showOnboarding(){},checkPhone(){},async persistCurrentMaster(){},printFeedback(){},

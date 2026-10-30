@@ -8,7 +8,7 @@ import { memoryIndexedDB } from './helpers/indexeddb.mjs';
 import { phoneHelperOrigin } from '../vendor/model-bridge.mjs';
 
 const source=(await readFile(new URL('../vendor/model-bridge.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
-const bytes={asset:new Uint8Array([1,2,3,4]),runtime:new Uint8Array([5,6,7])};
+const bytes={asset:new Uint8Array([1,2,3,4]),runtime:new Uint8Array([5,6,7]),upscale:new Uint8Array([8,9,10,11,12])};
 const manifest=Object.fromEntries(Object.entries(bytes).map(([key,value])=>[key,{bytes:value.length,sha256:createHash('sha256').update(value).digest('hex')}]));
 const origin='https://esp32iverfinneno-iverfinnes-projects.vercel.app';
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
@@ -23,7 +23,7 @@ function harness(options={}){
     setTimeout:callback=>{const id=++nextTimer;timers.set(id,callback);return id},clearTimeout:id=>timers.delete(id)
   });
   vm.runInContext(source,context);
-  const promise=options.start===false?null:context.requestPhoneModels(controller.signal,update=>progress.push(update),options.existing?helper:null,options.origin??origin);promise?.then(()=>{settled=true},()=>{settled=true});
+  const promise=options.start===false?null:context.requestPhoneModels(controller.signal,update=>progress.push(update),options.existing?helper:null,options.origin??origin,options.kind??'depth');promise?.then(()=>{settled=true},()=>{settled=true});
   async function emit(data,details={}){await Promise.all([...listeners].map(listener=>listener({data,origin:options.origin??origin,source:helper,...details})));await flush()}
   async function ready(){await emit({type:'entropi-models-ready'});return messages.find(message=>message.data.type==='entropi-models-request')?.data.session}
   const asset=(key,session,data=bytes[key])=>({type:'entropi-model-asset',session,key,bytes:data.slice().buffer});
@@ -161,4 +161,16 @@ test('aborting or rejecting a reused HTTPS opener leaves it available for anothe
   const rejected=harness({existing:true}),session=await rejected.ready();await rejected.emit({type:'entropi-models-error',session,code:'PHONE_SETUP_REQUIRED',message:'Prepare first'});
   await assert.rejects(rejected.promise,{code:'PHONE_SETUP_REQUIRED'});assert.equal(rejected.closed,false);
   assert.deepEqual({...rejected.messages.at(-1).data},{type:'entropi-models-cancel',session});
+});
+
+test('AI preparation transfers only the verified upscaler and runtime in the selected session',async()=>{
+  await withDatabase(async()=>{
+    const app=harness({kind:'upscale'}),session=await app.ready();
+    assert.deepEqual(Array.from(app.messages[0].data.keys),['upscale','runtime']);
+    await app.emit(app.asset('asset',session));assert.equal(app.messages.length,1);
+    await app.emit(app.asset('upscale',session));assert.deepEqual(await loadCachedAsset(manifest.upscale),bytes.upscale);
+    await app.emit(app.asset('runtime',session));await app.emit({type:'entropi-models-complete',session});await app.promise;
+    assert.equal(app.closed,true);assert.equal(app.progress.at(-1).percent,100);
+    await assert.rejects(loadCachedAsset(manifest.asset),{code:'PHONE_SETUP_REQUIRED'});
+  });
 });

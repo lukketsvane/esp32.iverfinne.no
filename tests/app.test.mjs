@@ -52,12 +52,12 @@ function harness(options={}){
   }};
   const media={getTracks:()=>[{stop(){stopped++}}]};
   class BrowserURL extends URL{static createObjectURL(blob){const url='blob:test/'+(++nextUrl);urls.set(url,blob);return url}static revokeObjectURL(url){revoked.push(url)}}
-  const context=vm.createContext({
+  const context=vm.createContext({lockPageZoom(){},
     document,window:{opener,addEventListener:document.addEventListener},URL:BrowserURL,Blob,AbortController,DOMException,
     File:class extends Blob{constructor(parts,name,properties){super(parts,properties);this.name=name}},
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
-    COLOR_SCHEMES,attachGalleryNavigation,
+    COLOR_SCHEMES,attachGalleryNavigation,createPanoramaCapture:()=>({active:false,recording:false,cancel(){},dispose(){}}),
     createEntropiDocument,bindExportGesture:(button,getOptions)=>button.addEventListener('click',async()=>{const options=getOptions();if(!options||!options.isCurrent())return;try{const blob=await options.image();if(options.isCurrent())saves.push({blob,name:options.name.replace(/\.[^.]+$/,'')+'.'+(options.imageExtension??'png'),isCurrent:options.isCurrent,options})}catch(error){options.onError?.(error)}}),pickEntropiDocument:async()=>options.importDocument??null,
     createArchive:()=>options.archive??({saveDocument:async document=>({id:document.id}),save:async()=>({}),savePreview:async()=>null,list:async()=>[],get:async()=>null,remove:async()=>{}}),
     location:{search:''},URLSearchParams,

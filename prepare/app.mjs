@@ -55,11 +55,12 @@ async function prepare(download=false,preserveCamera=false){
   finally{clearTimeout(stallTimer)}
 }
 
-async function deliver(requestedSession){
+async function deliver(requestedSession,keys=['asset','runtime']){
   const generation=++delivery;stopLaunch();session=requestedSession;let failed=false;bar.value=0;show('working');
   try{
-    for(const [index,key] of ['asset','runtime'].entries()){
-      const bytes=await loadCachedAsset(manifest[key]);if(closed||generation!==delivery)return;
+    if(![['asset','runtime'],['upscale','runtime']].some(allowed=>JSON.stringify(keys)===JSON.stringify(allowed))||keys.some(key=>!manifest[key]))throw new Error('Ugyldig modellval.');
+    for(const [index,key] of keys.entries()){
+      const bytes=keys[0]==='upscale'?await loadAsset(manifest[key],percent=>{if(generation===delivery)bar.value=(index+percent/100)/keys.length*100}):await loadCachedAsset(manifest[key]);if(closed||generation!==delivery)return;
       await new Promise((resolve,reject)=>{
         const timer=setTimeout(()=>{pending=null;reject(new Error('Kameraet svara ikkje. Prøv igjen i nettlesaren.'))},60000);
         pending={key,resolve:()=>{clearTimeout(timer);pending=null;resolve()},reject:error=>{clearTimeout(timer);pending=null;reject(error)}};
@@ -94,7 +95,7 @@ window.addEventListener('message',event=>{
     if(data?.type==='entropi-models-connect'){peerOrigin=event.origin;bar.removeAttribute('value');show('working');send({type:'entropi-models-ready'});return}
   }
   if(transfer&&!ready||event.origin!==peerOrigin)return;
-  if(data?.type==='entropi-models-request'&&session===null&&typeof data.session==='string'&&data.session.length>0&&data.session.length<=128){if(!transfer&&!prepared){send({type:'entropi-models-error',session:data.session,code:'PHONE_SETUP_REQUIRED',message:'Klargjer 3D på telefonen med internett først.'});if(!downloading){modelError='Klargjer 3D på telefonen med internett først.';modelMissing=true;show('error')}}else void deliver(data.session)}
+  if(data?.type==='entropi-models-request'&&session===null&&typeof data.session==='string'&&data.session.length>0&&data.session.length<=128){if(!transfer&&!prepared&&data.keys?.[0]!=='upscale'){send({type:'entropi-models-error',session:data.session,code:'PHONE_SETUP_REQUIRED',message:'Klargjer 3D på telefonen med internett først.'});if(!downloading){modelError='Klargjer 3D på telefonen med internett først.';modelMissing=true;show('error')}}else void deliver(data.session,data.keys)}
   else if(data?.type==='entropi-model-ack'&&data.session===session&&pending&&data.key===pending.key)pending.resolve();
   else if(data?.type==='entropi-models-cancel'&&session!==null&&data.session===session){stopLaunch();cancelDelivery();show(prepared?'ready':'waiting')}
 });

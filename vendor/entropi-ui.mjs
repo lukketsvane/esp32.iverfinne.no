@@ -2,16 +2,18 @@ import { encodeEntropiDocument, decodeEntropiDocument } from './entropi-document
 import { encodeDepthDng } from './entropi-export.mjs';
 import { encodeRenderedTiff } from './entropi-rendered-export.mjs';
 import { downloadFile, savePhoto } from './photo.mjs';
+import { warmUpscaleAssets, prepareUpscaleAssets, upscaleImage } from './upscale.mjs';
 
 export async function saveEntropiFile(blob,name,isCurrent=()=>true){
   downloadFile(blob,name,isCurrent);
 }
 
-const exportFormats=[['PNG','png'],['.entropi','entropi'],['TIFF','tif'],['DNG','dng']];
+const exportFormats=[['PNG','png'],['.entropi','entropi'],['TIFF','tif'],['DNG','dng']],upscaleFormats=[['AI 2×','ai2'],['AI 4×','ai4'],['AI 8×','ai8']];
 const exportStatusStyle='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap';
 
-async function prepareExport({image,document:master,name='entropi',imageExtension='png'},extension){
+async function prepareExport({image,document:master,name='entropi',imageExtension='png',isCurrent=()=>true},extension,{signal,onProgress=()=>{}}={}){
   let blob;
+  if(/^ai[248]$/.test(extension)){const factor=Number(extension.slice(2));await prepareUpscaleAssets(signal,onProgress);blob=await upscaleImage(await image(),factor,{signal,onProgress,isCurrent});return {blob,name:name.replace(/\.[^.]+$/,'')+'-ai-'+factor+'x.png',image:true}}
   if(extension==='png')blob=await image();
   else{const value=await master();blob=extension==='entropi'?await encodeEntropiDocument(value):extension==='tif'?await encodeRenderedTiff(value):encodeDepthDng(value.result)}
   return {blob,name:name.replace(/\.[^.]+$/,'')+'.'+(extension==='png'?imageExtension:extension),image:extension==='png'};
@@ -26,45 +28,48 @@ async function handOffExport(file,isCurrent){
 export function showExportOptions(settings){
   const {document:master,isCurrent=()=>true,onError=()=>{},anchor=document.activeElement}=settings;
   if(!isCurrent()||document.querySelector('dialog[data-entropi-export]'))return null;
+  void warmUpscaleAssets();
   const dialog=document.createElement('dialog'),options=document.createElement('div'),status=document.createElement('span'),focus=document.activeElement;
   const viewport=globalThis.visualViewport,left=viewport?.offsetLeft??0,top=viewport?.offsetTop??0,width=viewport?.width??globalThis.innerWidth??390,height=viewport?.height??globalThis.innerHeight??844;
-  const bounds=anchor?.getBoundingClientRect?.()??{left:left+width/2-24,top:top+height-72,width:48},formats=master?exportFormats:[exportFormats[0]],size=formats.length*48+8;
+  const bounds=anchor?.getBoundingClientRect?.()??{left:left+width/2-24,top:top+height-72,width:48},formats=[...(master?exportFormats:[exportFormats[0]]),...upscaleFormats],plainCount=formats.length-upscaleFormats.length,size=(plainCount+1)*48+8;
   dialog.setAttribute('data-entropi-export','');dialog.setAttribute('aria-label','Eksporter bilete');dialog.setAttribute('role','menu');
-  dialog.style.cssText='position:fixed;inset:auto;margin:0;padding:4px;width:96px;max-width:calc(100vw - 24px);box-sizing:border-box;border:0;border-radius:25px;background:linear-gradient(180deg,#ffffff1f,#ffffff04 58%),rgba(24,24,27,.62);color:#f5f5f7;box-shadow:inset 0 1px 0 #ffffff38,inset 0 0 0 1px #ffffff1c,0 10px 40px #0007,0 2px 8px #0004;backdrop-filter:blur(24px) saturate(180%) brightness(1.08);-webkit-backdrop-filter:blur(24px) saturate(180%) brightness(1.08);touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;z-index:2147483647';
-  dialog.style.left=Math.max(left+12,Math.min(left+width-108,bounds.left+bounds.width/2-48))+'px';
+  dialog.style.cssText='position:fixed;inset:auto;margin:0;padding:4px;width:164px;max-width:calc(100vw - 24px);box-sizing:border-box;border:0;border-radius:25px;background:linear-gradient(180deg,#ffffff1f,#ffffff04 58%),rgba(24,24,27,.62);color:#f5f5f7;box-shadow:inset 0 1px 0 #ffffff38,inset 0 0 0 1px #ffffff1c,0 10px 40px #0007,0 2px 8px #0004;backdrop-filter:blur(24px) saturate(180%) brightness(1.08);-webkit-backdrop-filter:blur(24px) saturate(180%) brightness(1.08);touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;z-index:2147483647';
+  dialog.style.maxHeight=Math.max(48,height-24)+'px';dialog.style.overflowY='auto';
+  dialog.style.left=Math.max(left+12,Math.min(left+width-176,bounds.left+bounds.width/2-82))+'px';
   dialog.style.top=Math.max(top+12,Math.min(top+height-size-12,bounds.top-size-10))+'px';
-  options.style.cssText='display:flex;flex-direction:column-reverse';
+  options.style.cssText='display:grid;grid-template-columns:repeat(3,minmax(0,1fr))';
   status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.style.cssText=exportStatusStyle;
-  let busy=false,selected=-1,disposed=false;
+  let busy=false,selected=-1,disposed=false,exportTask=null;
   const parent=anchor?.closest?.('dialog[open]')||document.body;
   const select=index=>{selected=index;Array.from(options.children).forEach((button,i)=>{button.setAttribute('aria-current',i===index?'true':'false');button.tabIndex=i===index?0:-1;button.style.transform=i===index?'scale(1.08)':'none';button.style.color=i===index?'#fff':'#d4d4d8'})};
-  const close=()=>{disposed=true;dialog.close()};
+  const close=()=>{disposed=true;exportTask?.abort();dialog.close()};
   const dismiss=event=>{if(!dialog.contains(event.target)&&!anchor?.contains?.(event.target))close()};
-  const hidden=()=>{if(document.hidden)close()};
+  const hidden=()=>{if(document.hidden&&dialog.getAttribute('data-ai-export')!=='true')close()};
   const choose=async index=>{
     if(index<0||busy||disposed||!isCurrent())return;
-    const [label,extension]=formats[index],button=options.children[index];busy=true;let handedOff=false;dialog.setAttribute('aria-busy','true');
+    const [label,extension]=formats[index],button=options.children[index];busy=true;let handedOff=false;dialog.setAttribute('aria-busy','true');dialog.setAttribute('data-ai-export',String(extension.startsWith('ai')));
     for(const item of options.children)item.disabled=true;
     try{
-      const file=await prepareExport(settings,extension);
+      exportTask=new AbortController();const file=await prepareExport(settings,extension,{signal:exportTask.signal,onProgress:update=>{if(Number.isFinite(update.percent)){button.textContent=Math.round(update.percent)+'%';button.setAttribute('aria-label',label+' '+Math.round(update.percent)+'%')}}});
       if(disposed||!isCurrent()||!dialog.open)return;
       handedOff=true;dialog.close();
       await handOffExport(file,isCurrent);
     }catch(error){
       const existing=document.querySelector('dialog[data-entropi-export]');
       if(handedOff&&!disposed&&isCurrent()&&!dialog.open&&(!existing||existing===dialog)){parent.append(dialog);dialog.show();focus?.focus({preventScroll:true});listen()}
-      if(!disposed&&isCurrent()){status.textContent=error.message||'Eksporten feila.';button.setAttribute('aria-label','Prøv '+label+' igjen');onError(error)}
-    }finally{busy=false;dialog.setAttribute('aria-busy','false');for(const item of options.children)item.disabled=false}
+      if(error.name!=='AbortError'&&!disposed&&isCurrent()){status.textContent=error.message||'Eksporten feila.';button.setAttribute('aria-label','Prøv '+label+' igjen');onError(error)}
+    }finally{exportTask=null;button.textContent=label;busy=false;dialog.setAttribute('aria-busy','false');for(const item of options.children)item.disabled=false}
   };
   for(const [index,[label,extension]]of formats.entries()){
-    const button=document.createElement('button');button.type='button';button.textContent=label;button.setAttribute('role','menuitem');button.tabIndex=index===0?0:-1;button.setAttribute('aria-label',extension==='entropi'?'Lagre redigerbar Entropi-fil':extension==='dng'?'Eksporter eksperimentell DNG':'Eksporter '+label);
+    const button=document.createElement('button');button.type='button';button.textContent=label;button.setAttribute('role','menuitem');button.tabIndex=index===0?0:-1;button.setAttribute('aria-label',extension==='entropi'?'Lagre redigerbar Entropi-fil':extension==='dng'?'Eksporter eksperimentell DNG':extension.startsWith('ai')?'AI-oppskaler '+extension.slice(2)+' gonger':'Eksporter '+label);
     button.style.cssText='display:grid;place-items:center;min-width:48px;width:100%;height:48px;padding:0 8px;border:0;outline:0;box-shadow:none;background:transparent;color:#d4d4d8;font:600 12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;letter-spacing:.02em;touch-action:none';
+    button.style.gridColumn=index<plainCount?'1 / -1':String(index-plainCount+1);button.style.gridRow=index<plainCount?String(plainCount-index+1):'1';
     button.addEventListener('click',event=>{event.stopPropagation();return choose(index)});options.append(button);
   }
   const unlisten=()=>{document.removeEventListener('pointerdown',dismiss,true);document.removeEventListener('visibilitychange',hidden);globalThis.removeEventListener?.('pagehide',close)};
   const listen=()=>{document.addEventListener('pointerdown',dismiss,true);document.addEventListener('visibilitychange',hidden);globalThis.addEventListener?.('pagehide',close)};
   dialog.addEventListener('close',()=>{if(!dialog.open){dialog.remove();unlisten();anchor?.setAttribute('aria-expanded','false');focus?.focus({preventScroll:true})}});
-  dialog.addEventListener('cancel',()=>{disposed=true});
+  dialog.addEventListener('cancel',()=>{disposed=true;exportTask?.abort()});
   dialog.addEventListener('keydown',event=>{
     event.stopPropagation();
     if(event.key==='Escape'){event.preventDefault();close()}
@@ -83,14 +88,14 @@ export function bindExportGesture(button,getOptions){
   const cancel=()=>{stopTimer();if(pointer)try{button.releasePointerCapture?.(pointer.id)}catch{}pointer=null;menu?.close();menu=null};
   const reset=()=>{generation++;suppressUntil=Date.now()+800;cancel()};
   const settings=()=>{const value=getOptions();return value&&{...value,anchor:button}};
-  const open=()=>{const value=settings();if(!value?.document||value.isCurrent?.()===false)return null;menu?.close();menu=showExportOptions(value);return menu};
+  const open=()=>{const value=settings();if(!value?.image||value.isCurrent?.()===false)return null;menu?.close();menu=showExportOptions(value);return menu};
   button.style.touchAction='none';button.style.webkitTouchCallout='none';button.setAttribute('aria-haspopup','menu');button.setAttribute('aria-keyshortcuts','ArrowUp Shift+F10');button.setAttribute('aria-expanded','false');
   const down=event=>{
     if(event.isPrimary===false||event.button>0||busy||button.disabled)return;
     if(menu?.dialog.open&&!pointer){event.preventDefault();event.stopPropagation();reset();return}
     event.stopPropagation();cancel();suppressUntil=0;const value=settings();if(!value||value.isCurrent?.()===false)return;
     pointer={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};try{button.setPointerCapture?.(event.pointerId)}catch{}
-    if(value.document)timer=setTimeout(()=>{timer=null;if(pointer){suppressUntil=Date.now()+800;open()}},360);
+    if(value.image)timer=setTimeout(()=>{timer=null;if(pointer){suppressUntil=Date.now()+800;open()}},360);
   };
   const move=event=>{
     if(!pointer||event.pointerId!==pointer.id)return;
@@ -113,7 +118,7 @@ export function bindExportGesture(button,getOptions){
   };
   const keys=event=>{if(event.key==='ArrowUp'||event.key==='F10'&&event.shiftKey){event.preventDefault();event.stopPropagation();cancel();open()?.focus()}else if(event.key==='Escape'){event.preventDefault();reset()}};
   const context=event=>{event.preventDefault();event.stopPropagation();if(!pointer){cancel();open()?.focus()}};
-  const hidden=()=>{if(document.hidden)reset()};
+  const hidden=()=>{if(document.hidden&&document.querySelector('dialog[data-entropi-export]')?.getAttribute('data-ai-export')!=='true')reset()};
   const bindings=[[button,'pointerdown',down],[button,'click',click],[button,'keydown',keys],[button,'contextmenu',context],[document,'pointerdown',other,true],[document,'pointermove',move,true],[document,'pointerup',up,true],[document,'pointercancel',reset,true],[document,'visibilitychange',hidden],[globalThis,'pagehide',reset],[globalThis,'resize',reset]];
   for(const [target,name,handler,capture]of bindings)target.addEventListener?.(name,handler,capture);
   return ()=>{reset();status?.remove();for(const [target,name,handler,capture]of bindings)target.removeEventListener?.(name,handler,capture)};

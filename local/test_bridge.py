@@ -179,7 +179,7 @@ class PairTests(unittest.TestCase):
         self.assertEqual((status['width'], status['height']), (32, 24))
 
     def test_status_captures_once_when_no_pair_exists(self):
-        rig = Rig('COM13')
+        rig = Rig('COM13', timeout=.01)
         link = self.primary_link(self.payload)
         with patch.object(rig, 'connection', return_value=link):
             self.assertEqual(rig.status()['width'], 32)
@@ -231,7 +231,8 @@ class PairTests(unittest.TestCase):
     def test_a_status_check_during_warm_up_reuses_that_pair(self):
         rig = Rig('COM13')
         rig.identities = ('c0b62c0d5020', 'c443180d5020')
-        opened = Mock(side_effect=AssertionError('captured a second pair'))
+        link = SerialLink({b'camera-check\n': b'CAMERA_STATUS {"camera_id":"c0b62c0d5020","camera_ready":true,"brightness":0,"ae_level":0}\n'})
+        opened = Mock(return_value=link)
         rig.lock.acquire()
         result = []
         with patch.object(rig, 'connection', opened):
@@ -243,7 +244,8 @@ class PairTests(unittest.TestCase):
             worker.join(1)
         self.assertFalse(worker.is_alive())
         self.assertEqual(result[0]['width'], 32)
-        opened.assert_not_called()
+        opened.assert_called_once_with()
+        self.assertEqual(link.commands, [b'camera-check\n'])
 
     def test_camera_2_check_never_waits_for_a_new_pair(self):
         rig = self.blocked_rig(600)
@@ -308,6 +310,98 @@ class PairTests(unittest.TestCase):
         self.assertEqual(link.rates, [460800])
         self.assertIsNone(rig.baudrate)
 
+
+
+class SensorTests(unittest.TestCase):
+    def rig(self, reply, side=0):
+        rig = Rig('COM15', timeout=.01)
+        rig.identities = ('c0b62c0d5020', 'c443180d5020')
+        rig.current = {'id': 'saved'}
+        rig.history = {'saved': rig.current}
+        command = b'peer-control ae_level 1\n' if side else b'camera-control ae_level 1\n'
+        link = SerialLink({command: b'CONTROL_STATUS ' + json.dumps(reply).encode() + b'\n'})
+        return rig, link, command
+
+    def test_controls_require_exact_identity_and_acknowledgement(self):
+        for side, identity in enumerate(('c0b62c0d5020', 'c443180d5020')):
+            reply = {'ok': True, 'camera_id': identity, 'var': 'ae_level', 'value': 1}
+            rig, link, command = self.rig(reply, side)
+            with patch.object(rig, 'connection', return_value=link):
+                self.assertEqual(rig.control('ae_level', 1, side), reply)
+            self.assertEqual(link.commands, [command])
+            self.assertEqual(rig.sensor_controls[side], {'ae_level': 1})
+            self.assertIsNone(rig.current)
+            self.assertIn('saved', rig.history)
+
+    def test_rejected_or_mismatched_controls_preserve_state(self):
+        good = {'ok': True, 'camera_id': 'c0b62c0d5020', 'var': 'ae_level', 'value': 1}
+        for change in ({'ok': False, 'error': 'Camera busy'}, {'camera_id': 'c443180d5020'}, {'var': 'brightness'}, {'value': 0}, {'value': True}):
+            rig, link, _ = self.rig({**good, **change})
+            with patch.object(rig, 'connection', return_value=link), self.assertRaises(RuntimeError):
+                rig.control('ae_level', 1)
+            self.assertEqual(rig.sensor_controls, [{}, {}])
+            self.assertEqual(rig.current, {'id': 'saved'})
+
+    def test_invalid_controls_do_not_open_the_port(self):
+        rig = Rig('COM15')
+        with patch.object(rig, 'connection') as connection:
+            for args in (('led_intensity', 1), ('brightness', 3), ('ae_level', True), ('ae_level', 1.0), ('brightness', 0, 2)):
+                with self.assertRaises(ValueError):
+                    rig.control(*args)
+            connection.assert_not_called()
+
+    def test_initial_sensor_status_is_read_from_the_exact_camera_without_a_new_capture(self):
+        for side, identity in enumerate(('c0b62c0d5020', 'c443180d5020')):
+            reply = {'ok': True, 'camera_id': identity, 'var': 'ae_level', 'value': 1}
+            rig, link, _ = self.rig(reply, side)
+            rig.current = {'id': 'saved', 'frames': [b'a', b'b'], 'size': (32, 24)}
+            rig.history = {'saved': rig.current}
+            status = {'camera_id': identity, 'camera_ready': True, 'brightness': -1, 'ae_level': 2}
+            command = b'peer-check\n' if side else b'camera-check\n'
+            prefix = b'PEER_STATUS ' if side else b'CAMERA_STATUS '
+            link.responses[command] = prefix + json.dumps(status).encode() + b'\n'
+            with patch.object(rig, 'connection', return_value=link):
+                result = rig.status(side)
+                rig.current = None
+                self.assertEqual(rig.status(side)['ae_level'], 2)
+            self.assertEqual((result['brightness'], result['ae_level']), (-1, 2))
+            self.assertEqual(link.commands, [command])
+
+    def test_missing_firmware_acknowledgement_times_out(self):
+        rig, link, _ = self.rig({})
+        link.responses.clear()
+        with patch.object(rig, 'connection', return_value=link), self.assertRaises(TimeoutError):
+            rig.control('ae_level', 1)
+        self.assertIsNotNone(rig.current)
+        self.assertEqual(rig.sensor_controls, [{}, {}])
+
+
+    def test_sensor_status_refreshes_after_five_seconds_only_from_the_exact_camera(self):
+        for side, identity in enumerate(('c0b62c0d5020', 'c443180d5020')):
+            rig, link, _ = self.rig({'ok': True, 'camera_id': identity, 'var': 'ae_level', 'value': 1}, side)
+            rig.current = {'id': 'saved', 'frames': [b'a', b'b'], 'size': (32, 24)}
+            rig.history = {'saved': rig.current}
+            command = b'peer-check\n' if side else b'camera-check\n'
+            prefix = b'PEER_STATUS ' if side else b'CAMERA_STATUS '
+            def response(camera_id, brightness, exposure):
+                return prefix + json.dumps({'camera_id': camera_id, 'camera_ready': True, 'brightness': brightness, 'ae_level': exposure}).encode() + b'\n'
+            link.responses[command] = response(identity, -1, 2)
+            with patch.object(rig, 'connection', return_value=link), patch('bridge.time.monotonic', return_value=1000) as clock:
+                initial = rig.status(side)
+                self.assertEqual((initial['brightness'], initial['ae_level']), (-1, 2))
+                link.responses[command] = response(identity, 1, -2)
+                clock.return_value = 1002
+                self.assertEqual(rig.status(side)['brightness'], -1)
+                self.assertEqual(link.commands, [command])
+                link.responses[command] = response(rig.identities[1-side], 1, -2)
+                clock.return_value = 1006
+                wrong_camera = rig.status(side)
+                self.assertEqual((wrong_camera['brightness'], wrong_camera['ae_level']), (-1, 2))
+                link.responses[command] = response(identity, 1, -2)
+                clock.return_value = 1012
+                updated = rig.status(side)
+                self.assertEqual((updated['brightness'], updated['ae_level']), (1, -2))
+            self.assertEqual(link.commands, [command, command, command])
 
 if __name__ == '__main__':
     unittest.main()

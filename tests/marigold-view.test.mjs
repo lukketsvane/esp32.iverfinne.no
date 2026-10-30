@@ -11,7 +11,7 @@ function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{reso
 function harness({endpoint=null,localFails=false,browserFails=false,photoWidth=2,photoHeight=2,stereoRun,localRun,browserRun,reducedMotion=false}={}){
   const calls={cloud:0,local:0,browser:0,stereo:0},urls=[],revoked=[],renders=[],drawSources=[],normalizations=[],statuses=[],frames=new Map(),timers=new Map();let nextFrame=0,nextTimer=0,time=1000,changes=0,gestures=0;
   class Element{
-    constructor(){this.children=[];this.events=new Map();this.attributes=new Map();this.dataset={};this.style={setProperty(){}};const classes=new Set();this.classList={add:(...names)=>names.forEach(name=>classes.add(name)),remove:(...names)=>names.forEach(name=>classes.delete(name)),contains:name=>classes.has(name),toggle:(name,force)=>{const next=force??!classes.has(name);if(next)classes.add(name);else classes.delete(name);return next}};this.naturalWidth=2;this.naturalHeight=2;this.hidden=false;this.width=2;this.height=2;this.complete=true;this.selectors=new Map()}
+    constructor(){this.children=[];this.events=new Map();this.attributes=new Map();this.dataset={};this.properties=new Map();this.style={setProperty:(name,value)=>this.properties.set(name,value),getPropertyValue:name=>this.properties.get(name)||''};this.clientWidth=390;this.clientHeight=844;const classes=new Set();this.classList={add:(...names)=>names.forEach(name=>classes.add(name)),remove:(...names)=>names.forEach(name=>classes.delete(name)),contains:name=>classes.has(name),toggle:(name,force)=>{const next=force??!classes.has(name);if(next)classes.add(name);else classes.delete(name);return next}};this.naturalWidth=2;this.naturalHeight=2;this.hidden=false;this.width=2;this.height=2;this.complete=true;this.selectors=new Map()}
     querySelector(name){if(!this.selectors.has(name))this.selectors.set(name,new Element());return this.selectors.get(name)}
     addEventListener(name,handler){this.events.set(name,handler)}
     removeEventListener(name){this.events.delete(name)}
@@ -24,12 +24,19 @@ function harness({endpoint=null,localFails=false,browserFails=false,photoWidth=2
     getContext(){return {createImageData:(width,height)=>({data:new Uint8ClampedArray(width*height*4)}),putImageData:image=>{this.pixels=image.data.slice();this.paintCount=(this.paintCount??0)+1},drawImage:source=>{this.drawnSource=source;drawSources.push(source)},getImageData:(_,__,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})}}
     async decode(){}
     focus(){}
+    scrollIntoView(){}
     setPointerCapture(id){this.captured=id}
     hasPointerCapture(id){return this.captured===id}
     releasePointerCapture(){this.captured=null}
     remove(){}
     close(){}
-    getBoundingClientRect(){return {left:0,top:0,width:390,height:844}}
+    getBoundingClientRect(){
+      if(this.className==='mg-art'){
+        const scale=Number(host.style.getPropertyValue('--view-scale')||1),x=parseFloat(host.style.getPropertyValue('--view-x'))||0,y=parseFloat(host.style.getPropertyValue('--view-y'))||0,width=390*.76*scale,height=844*.76*scale;
+        return {left:195+x-width/2,top:422+y-height/2,width,height};
+      }
+      return {left:0,top:0,width:390,height:844};
+    }
     showModal(){throw new Error('Unexpected upload dialog')}
   }
   const add=(events,name,handler)=>{if(!events.has(name))events.set(name,new Set());events.get(name).add(handler)},remove=(events,name,handler)=>events.get(name)?.delete(handler),emit=(events,name)=>{for(const handler of events.get(name)||[])handler()};
@@ -193,33 +200,30 @@ test('eight pixels of motion cancels holding while smaller touch jitter still al
   app.emit('pointerup');assert.equal(app.changes,before+1);app.view.dispose();
 });
 
-test('a second touch cancels the hold and pinch width is saved once after both fingers release',async()=>{
+test('three fingers adjust tone width and save once after the last finger releases',async()=>{
   const app=harness();await app.view.process(photo);const before=app.changes;
-  app.emit('pointerdown',{pointerId:1,clientX:100});app.advance(200);app.emit('pointerdown',{pointerId:2,clientX:200});app.advance(500);
+  app.emit('pointerdown',{pointerId:1,clientX:100});app.advance(200);app.emit('pointerdown',{pointerId:2,clientX:200});app.emit('pointerdown',{pointerId:3,clientX:150});app.advance(500);
   assert.equal(app.host.classList.contains('peeking'),false);assert.equal(app.timers.size,0);
-  app.emit('pointermove',{pointerId:2,clientX:250});app.flush();assert.equal(app.view.recipe.width,1.5);
-  app.emit('pointerup',{pointerId:2,clientX:250});assert.equal(app.changes,before);
+  app.emit('pointermove',{pointerId:1,clientX:75});app.emit('pointermove',{pointerId:2,clientX:225});app.flush();assert.ok(Math.abs(app.view.recipe.width-1.5)<1e-9);
+  app.emit('pointerup',{pointerId:3});app.emit('pointerup',{pointerId:2});assert.equal(app.changes,before);
   app.emit('pointerup',{pointerId:1});assert.equal(app.changes,before+1);
-  await app.view.process(photo);assert.equal(app.view.recipe.width,1.5);app.view.dispose();
+  await app.view.process(photo);assert.ok(Math.abs(app.view.recipe.width-1.5)<1e-9);app.view.dispose();
 });
-
-test('cancelling a changed pinch persists its recipe instead of discarding the edit',async()=>{
+test('cancelling a changed three-finger width gesture saves exactly once',async()=>{
   const app=harness();await app.view.process(photo);const before=app.changes;
-  app.emit('pointerdown',{pointerId:1,clientX:100});app.emit('pointerdown',{pointerId:2,clientX:200});app.emit('pointermove',{pointerId:2,clientX:250});
-  app.emit('pointercancel',{pointerId:2});assert.equal(app.changes,before+1);assert.equal(app.view.recipe.width,1.5);
-  app.emit('pointercancel',{pointerId:1});assert.equal(app.changes,before+1);app.view.dispose();
+  app.emit('pointerdown',{pointerId:1,clientX:100});app.emit('pointerdown',{pointerId:2,clientX:200});app.emit('pointerdown',{pointerId:3,clientX:150});app.emit('pointermove',{pointerId:1,clientX:75});app.emit('pointermove',{pointerId:2,clientX:225});
+  app.emit('pointercancel',{pointerId:3});assert.equal(app.changes,before+1);assert.ok(Math.abs(app.view.recipe.width-1.5)<1e-9);
+  app.emit('pointercancel',{pointerId:2});app.emit('pointercancel',{pointerId:1});assert.equal(app.changes,before+1);app.view.dispose();
 });
-
-test('the last pointer restores native rendering after a partially cancelled pinch without saving twice',async()=>{
+test('the last pointer restores native rendering after a partly cancelled width gesture',async()=>{
   for(const [first,last]of [['pointercancel','pointerup'],['lostpointercapture','pointerup'],['pointercancel','pointercancel']]){
     const app=harness({photoWidth:1600,photoHeight:1200});await app.view.process(photo);const before=app.changes;
-    app.emit('pointerdown',{pointerId:1,clientX:100});app.emit('pointerdown',{pointerId:2,clientX:200});app.emit('pointermove',{pointerId:2,clientX:250});app.flush();
-    app.emit(first,{pointerId:2});app.flush();assert.equal(app.renders.at(-1).outputWidth,768);assert.equal(app.changes,before+1);
+    app.emit('pointerdown',{pointerId:1,clientX:100});app.emit('pointerdown',{pointerId:2,clientX:200});app.emit('pointerdown',{pointerId:3,clientX:150});app.emit('pointermove',{pointerId:1,clientX:75});app.emit('pointermove',{pointerId:2,clientX:225});app.flush();
+    app.emit(first,{pointerId:3});app.emit('pointerup',{pointerId:2});app.flush();assert.equal(app.renders.at(-1).outputWidth,768);assert.equal(app.changes,before+1);
     app.emit(last,{pointerId:1});app.flush();assert.equal(app.renders.at(-1).outputWidth,1600);assert.equal(app.renders.at(-1).outputHeight,1200);
-    assert.equal(app.changes,before+1);assert.equal(app.view.recipe.width,1.5);assert.equal(app.pulse.hidden,true);app.view.dispose();
+    assert.equal(app.changes,before+1);assert.ok(Math.abs(app.view.recipe.width-1.5)<1e-9);assert.equal(app.pulse.hidden,true);app.view.dispose();
   }
 });
-
 test('double tap resets tone while keeping the expression and processed view open',async()=>{
   const app=harness();await app.view.process(photo);app.view.select(4);app.emit('keydown',{key:'ArrowRight'});app.emit('keydown',{key:'ArrowUp'});app.flush();
   assert.notEqual(app.view.recipe.position,0);assert.notEqual(app.view.recipe.width,1);const before=app.changes;
@@ -296,7 +300,7 @@ test('photo adjustments preview without changing the saved recipe until accepted
 test('crop acceptance updates native snapshots and keeps original comparison aligned',async()=>{
   const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);
   const editor=findNode(app.host,'mg-editor'),rail=findNode(editor,'mg-edit-rail'),options=findNode(editor,'mg-crop-options');
-  editorEvent(rail.children[4]);editorEvent(options.children.find(node=>node.dataset.ratio==='1:1'));app.flush();
+  editorEvent(rail.children[3]);editorEvent(options.children.find(node=>node.dataset.ratio==='1:1'));app.flush();
   assert.equal(app.view.recipe.edits,undefined);assert.equal(app.view.snapshot(true).width,320);
   editorEvent(findNode(editor,'mg-edit-apply'));app.flush();const snapshot=app.view.snapshot(true),cropped=findNode(app.host,'mg-original-crop');
   assert.equal(snapshot.width,240);assert.equal(snapshot.height,240);assert.equal(cropped.width,240);assert.equal(cropped.height,240);assert.equal(cropped.hidden,false);
@@ -350,4 +354,55 @@ test('right rail scrubbing opens each nearest tool once and leaves depth gesture
   railPointer(rail,'pointermove',{clientX:200,clientY:322});assert.equal(rail.children[3].attributes.get('aria-pressed'),'true');railPointer(rail,'pointercancel');app.flush();
   assert.equal(rail.captured,null);assert.equal(app.changes,before);assert.equal(app.view.recipe.position,0);assert.equal(app.view.recipe.width,1);assert.equal(app.host.classList.contains('peeking'),false);assert.equal(app.timers.size,0);
   railPointer(rail,'pointerdown',{clientY:322});railPointer(rail,'pointerup',{clientY:322});assert.equal(panel.hidden,true);app.view.dispose();
+});
+
+const navigationPose=app=>({scale:Number(app.host.style.getPropertyValue('--view-scale')||1),x:parseFloat(app.host.style.getPropertyValue('--view-x'))||0,y:parseFloat(app.host.style.getPropertyValue('--view-y'))||0});
+const beginPair=(app,left=145,right=245,y=422)=>{app.emit('pointerdown',{pointerId:31,clientX:left,clientY:y});app.emit('pointerdown',{pointerId:32,clientX:right,clientY:y})};
+const movePair=(app,left,right,y)=>{app.emit('pointermove',{pointerId:31,clientX:left,clientY:y});app.emit('pointermove',{pointerId:32,clientX:right,clientY:y})};
+const endPair=app=>{app.emit('pointerup',{pointerId:31});app.emit('pointerup',{pointerId:32});app.flush()};
+
+test('two fingers pan in all four directions at fit without changing tone or image data',async()=>{
+  const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);const recipe=JSON.stringify(app.view.recipe),before=app.changes;
+  for(const [dx,dy]of [[20,0],[-20,0],[0,20],[0,-20]]){
+    app.view.resetView();beginPair(app);movePair(app,145+dx,245+dx,422+dy);endPair(app);
+    const pose=navigationPose(app);assert.ok(Math.abs(pose.scale-1)<1e-9);assert.ok(Math.abs(pose.x-dx)<1e-9);assert.ok(Math.abs(pose.y-dy)<1e-9);assert.equal(JSON.stringify(app.view.recipe),recipe);assert.equal(app.changes,before);
+  }
+  assert.equal(app.calls.browser,1);app.view.dispose();
+});
+test('pinch is anchored and bounded from one to eight while native export stays unchanged',async()=>{
+  const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);const recipe=JSON.stringify(app.view.recipe),before=app.changes;
+  beginPair(app,185,205);movePair(app,-805,1195,422);endPair(app);
+  assert.equal(navigationPose(app).scale,8);assert.ok(Math.abs(navigationPose(app).x)<1e-9);assert.ok(Math.abs(navigationPose(app).y)<1e-9);
+  const saved=app.view.snapshot(true);assert.equal(saved.width,320);assert.equal(saved.height,240);assert.equal(navigationPose(app).scale,8);
+  beginPair(app,-805,1195);movePair(app,194,196,422);endPair(app);assert.equal(navigationPose(app).scale,1);
+  beginPair(app);movePair(app,5145,5245,5422);endPair(app);const limited=navigationPose(app);assert.ok(limited.x>0&&limited.x<=46.8+1e-8);assert.ok(limited.y>0&&limited.y<422);
+  assert.equal(JSON.stringify(app.view.recipe),recipe);assert.equal(app.changes,before);assert.equal(app.calls.browser,1);app.view.dispose();
+});
+test('comparison seam follows the contained image after zoom and pan',async()=>{
+  const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);const before=app.changes,recipe=JSON.stringify(app.view.recipe);
+  app.host.querySelector('.mg-compare').events.get('click')();assert.equal(app.host.classList.contains('comparing'),true);
+  beginPair(app);movePair(app,115,315,392);endPair(app);
+  const pose=navigationPose(app);assert.ok(Math.abs(pose.scale-2)<1e-9);assert.ok(Math.abs(pose.x-20)<1e-9);assert.ok(Math.abs(pose.y+30)<1e-9);
+  const width=390*.76*2,height=width*240/320,left=215-width/2,top=392-height/2;
+  assert.ok(Math.abs(parseFloat(app.host.style.getPropertyValue('--split-left'))-215)<1e-8);
+  assert.ok(Math.abs(parseFloat(app.host.style.getPropertyValue('--split-top'))-top)<1e-8);
+  assert.ok(Math.abs(parseFloat(app.host.style.getPropertyValue('--split-height'))-height)<1e-8);
+  app.emit('pointerdown',{pointerId:5,clientX:left+width*.25,clientY:392});app.emit('pointerup',{pointerId:5});
+  assert.ok(Math.abs(parseFloat(app.host.style.getPropertyValue('--split-left'))-(left+width*.25))<1e-8);
+  app.host.querySelector('.mg-seam').events.get('keydown')({key:'ArrowRight',preventDefault(){}});
+  assert.ok(Math.abs(parseFloat(app.host.style.getPropertyValue('--split-left'))-(left+width*.30))<1e-8);
+  assert.equal(app.host.classList.contains('comparing'),true);assert.equal(JSON.stringify(app.view.recipe),recipe);assert.equal(app.changes,before);app.view.dispose();
+});
+test('a double two-finger tap recentres the view without resetting tone',async()=>{
+  const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);app.emit('keydown',{key:'ArrowRight'});app.emit('keydown',{key:'ArrowUp'});app.flush();const recipe=JSON.stringify(app.view.recipe),before=app.changes;
+  beginPair(app);movePair(app,115,315,392);endPair(app);assert.equal(navigationPose(app).scale,2);
+  beginPair(app);app.advance(30);endPair(app);app.advance(100);beginPair(app);app.advance(30);endPair(app);
+  assert.deepEqual(navigationPose(app),{scale:1,x:0,y:0});assert.equal(JSON.stringify(app.view.recipe),recipe);assert.equal(app.changes,before);assert.equal(app.host.classList.contains('peeking'),false);assert.equal(app.timers.size,0);app.view.dispose();
+});
+test('navigation survives expression changes but reopening starts at fit and controls ignore pinches',async()=>{
+  const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);beginPair(app);movePair(app,115,315,392);endPair(app);const pose=navigationPose(app);
+  app.view.select(4);app.view.snapshot(true);assert.deepEqual(navigationPose(app),pose);
+  const before=app.changes;app.emit('pointerdown',{pointerId:41,target:{closest:()=>true}});app.emit('pointerdown',{pointerId:42,target:{closest:()=>true}});app.emit('pointermove',{pointerId:41,clientX:50});app.emit('pointermove',{pointerId:42,clientX:350});app.emit('pointerup',{pointerId:41});app.emit('pointerup',{pointerId:42});
+  assert.deepEqual(navigationPose(app),pose);assert.equal(app.changes,before);assert.equal(app.timers.size,0);
+  const recipe=JSON.parse(JSON.stringify(app.view.recipe));await app.view.restore(photo,raw('Saved model'),recipe);assert.deepEqual(navigationPose(app),{scale:1,x:0,y:0});assert.deepEqual(JSON.parse(JSON.stringify(app.view.recipe)),recipe);app.view.dispose();
 });

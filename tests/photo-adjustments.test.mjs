@@ -9,12 +9,12 @@ function pixels(values,bitDepth=8){
 const render=(values,edits={},options={})=>applyPhotoEdits(pixels(values,options.bitDepth),values.length,1,edits,options).data;
 const red=data=>Array.from(data).filter((_,index)=>index%4===0);
 
-test('ten unique presets include P5 and normalize to independent neutral edits',()=>{
-  assert.equal(PHOTO_PRESETS.length,10);assert.equal(new Set(PHOTO_PRESETS.map(item=>item.id)).size,10);
-  assert.ok(PHOTO_PRESETS.some(item=>item.id==='P5'));
+test('eleven unique presets include P5 and HB2 and normalize to independent neutral edits',()=>{
+  assert.equal(PHOTO_PRESETS.length,11);assert.equal(new Set(PHOTO_PRESETS.map(item=>item.id)).size,11);
+  assert.ok(PHOTO_PRESETS.some(item=>item.id==='P5'));assert.ok(PHOTO_PRESETS.some(item=>item.id==='HB2'));
   assert.ok(PHOTO_PRESETS.every(item=>item.label&&item.description&&item.defaultStrength>0&&item.defaultStrength<=1));
   const a=normalizePhotoEdits(),b=normalizePhotoEdits();
-  assert.deepEqual(a,{exposure:0,contrast:0,sharpen:0,denoise:0,preset:null,strength:1,crop:{x:0,y:0,width:1,height:1}});
+  assert.deepEqual(a,{exposure:0,contrast:0,sharpen:0,denoise:0,saturation:0,highlights:0,shadows:0,temperature:0,tint:0,grain:{strength:0,size:.5,color:0},hsl:Object.fromEntries(['red','orange','yellow','green','blue','purple'].map(key=>[key,{hue:0,saturation:0,lightness:0}])),preset:null,strength:1,crop:{x:0,y:0,width:1,height:1}});
   assert.notEqual(a.crop,b.crop);a.crop.width=.5;assert.equal(b.crop.width,1);
   assert.equal(photoEditsNeutral(),true);assert.equal(photoEditsNeutral({preset:'P5',strength:0}),true);
   assert.equal(photoEditsNeutral({crop:{width:.5}}),false);
@@ -164,4 +164,68 @@ test('invalid pixel buffers and dimensions are rejected',()=>{
   assert.throws(()=>applyPhotoEdits(new Uint16Array(8),2,1));
   assert.throws(()=>applyPhotoEdits(Array(8).fill(0),2,1));
   for(const options of [{referenceWidth:0},{referenceHeight:NaN},{referenceWidth:1.5}])assert.throws(()=>applyPhotoEdits(input,2,1,{},options));
+});
+
+test('advanced edit defaults are independent and malformed nested recipes are rejected',()=>{
+  const a=normalizePhotoEdits(),b=normalizePhotoEdits();
+  a.grain.size=1;a.hsl.red.hue=1;
+  assert.equal(b.grain.size,.5);assert.equal(b.hsl.red.hue,0);assert.notEqual(a.hsl.red,a.hsl.orange);
+  for(const key of ['saturation','highlights','shadows','temperature','tint'])for(const value of [-1.01,1.01,NaN,Infinity,'1',null])assert.throws(()=>normalizePhotoEdits({[key]:value}));
+  for(const value of [null,[],1,'grain']){assert.throws(()=>normalizePhotoEdits({grain:value}));assert.throws(()=>normalizePhotoEdits({hsl:value}));assert.throws(()=>normalizePhotoEdits({hsl:{red:value}}))}
+  for(const key of ['strength','size','color'])for(const value of [-.01,1.01,NaN,Infinity,'1',null])assert.throws(()=>normalizePhotoEdits({grain:{[key]:value}}));
+  for(const key of ['hue','saturation','lightness'])for(const value of [-1.01,1.01,NaN,Infinity,'1',null])assert.throws(()=>normalizePhotoEdits({hsl:{purple:{[key]:value}}}));
+  assert.equal(photoEditsNeutral({grain:{strength:0,size:1,color:1}}),true);
+  assert.equal(photoEditsNeutral({hsl:{red:{hue:.01}}}),false);
+  assert.equal(photoEditsNeutral({preset:'HB2',strength:0}),true);
+});
+test('saturation, white balance and tonal controls affect their intended regions',()=>{
+  const desaturated=render([[200,80,40,255]],{saturation:-1});
+  assert.equal(desaturated[0],desaturated[1]);assert.equal(desaturated[1],desaturated[2]);
+  const warm=render([128],{temperature:1}),cool=render([128],{temperature:-1}),magenta=render([128],{tint:1}),green=render([128],{tint:-1});
+  assert.ok(warm[0]>warm[2]);assert.ok(cool[0]<cool[2]);assert.ok(magenta[0]>magenta[1]&&magenta[2]>magenta[1]);assert.ok(green[1]>green[0]&&green[1]>green[2]);
+  const shadows=red(render([32,224],{shadows:1})),highlights=red(render([32,224],{highlights:-1}));
+  assert.ok(shadows[0]-32>shadows[1]-224);assert.ok(shadows[0]>32);
+  assert.ok(224-highlights[1]>32-highlights[0]);assert.ok(highlights[1]<224);
+});
+test('six-channel HSL isolates hue families and leaves unselected colors and gray unchanged',()=>{
+  const input=pixels([[200,50,50,255],[200,125,50,255],[200,200,50,255],[50,200,50,255],[50,50,200,255],[200,50,200,255],[128,128,128,255]]);
+  for(const [index,key]of ['red','orange','yellow','green','blue','purple'].entries()){
+    const result=applyPhotoEdits(input,7,1,{hsl:{[key]:{saturation:-1}}}).data;
+    assert.equal(result[index*4],result[index*4+1],key);assert.equal(result[index*4+1],result[index*4+2],key);
+    for(let i=0;i<7;i++)if(i!==index)assert.deepEqual(result.slice(i*4,i*4+4),input.slice(i*4,i*4+4),key+' / '+i);
+  }
+  const shifted=applyPhotoEdits(input,7,1,{hsl:{red:{hue:1}}}).data;
+  assert.ok(shifted[1]>input[1]);assert.equal(shifted[2],input[2]);
+  const darker=applyPhotoEdits(input,7,1,{hsl:{green:{lightness:-1}}}).data;
+  assert.ok(darker[13]<input[13]);assert.deepEqual(darker.slice(24),input.slice(24));
+});
+test('advanced edits preserve 16-bit precision, alpha and the master buffer',()=>{
+  const edits={saturation:.2,highlights:-.3,shadows:.15,temperature:.2,tint:-.1,hsl:{red:{hue:.2,saturation:.1,lightness:.1}}};
+  const source=pixels([30000,30008,30016],16),copy=source.slice(),result=applyPhotoEdits(source,3,1,edits,{bitDepth:16}).data;
+  assert.ok(result instanceof Uint16Array);assert.ok(result[0]<result[4]&&result[4]<result[8]);assert.ok([result[0],result[4],result[8]].some(value=>value%257!==0));assert.deepEqual(source,copy);
+  const a=render([32,96,160,224],edits),b=render([32,96,160,224].map(value=>value*257),edits,{bitDepth:16});
+  for(let i=0;i<a.length;i++)assert.ok(Math.abs(a[i]-b[i]/257)<=.51,'channel '+i);
+  for(const bitDepth of [8,16]){
+    const input=pixels([[1,2,3,0],[72,102,130,64],[120,100,80,255]],bitDepth),original=input.slice(),output=applyPhotoEdits(input,3,1,{...edits,grain:{strength:1,size:.8,color:1}},{bitDepth}).data;
+    assert.deepEqual(output.slice(0,4),input.slice(0,4));for(let i=3;i<output.length;i+=4)assert.equal(output[i],input[i]);assert.deepEqual(input,original);
+  }
+});
+test('grain is deterministic, has independent size and color, and retains source coordinates through crops',()=>{
+  const input=pixels(Array(96).fill(128)),mono={grain:{strength:1,size:.5,color:0}},color={grain:{strength:1,size:.5,color:1}};
+  const a=applyPhotoEdits(input,12,8,mono),b=applyPhotoEdits(input,12,8,color);
+  assert.deepEqual(a.data,applyPhotoEdits(input,12,8,mono).data);assert.notDeepEqual(a.data,input);
+  for(let i=0;i<a.data.length;i+=4){assert.equal(a.data[i],a.data[i+1]);assert.equal(a.data[i+1],a.data[i+2])}
+  assert.ok(Array.from({length:96},(_,i)=>i*4).some(i=>b.data[i]!==b.data[i+1]||b.data[i+1]!==b.data[i+2]));
+  assert.notDeepEqual(a.data,applyPhotoEdits(input,12,8,{grain:{strength:1,size:1,color:0}}).data);
+  const cropped=applyPhotoEdits(input,12,8,{...color,crop:{x:.25,y:.25,width:.5,height:.5}}),expected=[];
+  for(let y=2;y<6;y++)expected.push(...b.data.slice((y*12+3)*4,(y*12+9)*4));assert.deepEqual(Array.from(cropped.data),expected);
+  const input16=pixels(Array(96).fill(30001),16),grain16=applyPhotoEdits(input16,12,8,color,{bitDepth:16}).data;
+  assert.ok(grain16 instanceof Uint16Array);assert.notDeepEqual(grain16,input16);assert.ok(Array.from(grain16).some((v,i)=>i%4!==3&&v%257!==0));
+});
+test('advanced grayscale lookup tables agree exactly with the per-pixel 16-bit transform',()=>{
+  const values=Array.from({length:257},(_,i)=>Math.min(65535,i*256)),small=pixels(values,16),large=new Uint16Array(257*256*4);
+  for(let row=0;row<256;row++)large.set(small,row*small.length);
+  const edits={preset:'HB2',strength:.7,saturation:.2,highlights:-.2,shadows:.15,temperature:.3,tint:-.2,hsl:{orange:{hue:.2}}};
+  const expected=applyPhotoEdits(small,257,1,edits,{bitDepth:16}).data,actual=applyPhotoEdits(large,257,256,edits,{bitDepth:16}).data;
+  for(let row=0;row<256;row++)assert.deepEqual(actual.subarray(row*small.length,(row+1)*small.length),expected);
 });

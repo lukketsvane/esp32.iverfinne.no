@@ -83,3 +83,9 @@
 
 .phone-vault-detail img{touch-action:none;-webkit-user-drag:none}
 .phone-vault button:active,.studio .access-control:active{opacity:.55}
+
+.studio .photo{left:50%;top:50%;width:76%;height:76%;max-width:76%;transform:translate(-50%,-50%)}
+
+#studio #open-gallery{position:absolute;left:auto;right:calc(12px + env(safe-area-inset-right));top:calc(12px + env(safe-area-inset-top));bottom:auto;z-index:20;display:grid;place-items:center;padding:10px;width:44px;height:44px;transform:none}#studio .access-control.device-link{right:calc(62px + env(safe-area-inset-right))}
+
+@media(orientation:landscape) and (max-height:550px){#studio #reset,.review #close-photo{left:auto;right:calc(12px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:auto}}

@@ -17,6 +17,7 @@ class MonoTests(unittest.TestCase):
 
     def link(self, error='PEER_OFFLINE', photo=None):
         return SerialLink({b'stereo-snap\n': b'PAIR_ERROR ' + error.encode() + b'\n',
+                           b'camera-check\n': b'CAMERA_STATUS {"camera_id":"c0b62c0d5020","camera_ready":true,"brightness":0,"ae_level":0}\n',
                            b'camera-photo\n': self.photo if photo is None else photo})
 
     def test_unavailable_peer_uses_a_fresh_primary_photo_with_honest_status(self):
@@ -32,7 +33,8 @@ class MonoTests(unittest.TestCase):
                 self.assertIsNone(self.rig.status()['peer'])
                 self.assertFalse(self.rig.status(1)['camera_ready'])
                 self.assertFalse(self.rig.status(1)['stream_ready'])
-                self.assertEqual(link.commands, [b'stereo-snap\n', b'camera-photo\n'])
+                self.assertEqual([command for command in link.commands if command != b'camera-check\n'], [b'stereo-snap\n', b'camera-photo\n'])
+                self.assertLessEqual(link.commands.count(b'camera-check\n'), 1)
 
     def test_strict_stereo_call_does_not_reuse_cached_mono(self):
         link = self.link()

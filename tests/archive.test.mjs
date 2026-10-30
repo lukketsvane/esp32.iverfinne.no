@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
-import {createEntropiDocument} from '../vendor/entropi-document.mjs';
+import {createEntropiDocument,normalizePanorama} from '../vendor/entropi-document.mjs';
 
-const source=(await readFile(new URL('../vendor/archive.mjs',import.meta.url),'utf8')).replace(/^export /gm,'');
+const source=(await readFile(new URL('../vendor/archive.mjs',import.meta.url),'utf8')).replace(/^export /gm,'').replace(/^import .*?;\s*/gm,'');
 const photo=text=>new Blob([text],{type:'image/jpeg'});
 const master=(id='master')=>createEntropiDocument({id,created:'2026-10-28T10:00:00.000Z',left:photo('left'),right:photo('right'),preview:photo('rendered master'),result:{width:2,height:2,depth:Float32Array.of(.1,1.2345,NaN,3.5),validity:Uint8Array.of(1,0,0,1)},recipe:{preset:3,position:.2,width:1.5}});
+const sweep=()=>({frames:[{left:photo('first original'),right:photo('first right'),id:'first',timing:{left:10,right:12},accepted:true},{left:photo('rejected original'),right:null,id:'second',accepted:false}],transforms:[[1,0,0,0,1,0,0,0,1],null],metadata:{coverage:.7}});
 function harness({width=1600,height=1200}={}){
   const stores=new Map(),urls=new Map(),commits=[],drawn=[],sizes=[];let clock=10000,failure=null,nextUrl=0,decodeFailure=false,decodeWait=null,thumbnailFailure=false;
   const db={objectStoreNames:{contains:name=>stores.has(name)},createObjectStore(name){stores.set(name,new Map())},transaction(names,mode){
@@ -31,7 +32,7 @@ function harness({width=1600,height=1200}={}){
     });return transaction;
   }};
   class Image{naturalWidth=width;naturalHeight=height;async decode(){if(decodeWait)await decodeWait;if(decodeFailure||!urls.has(this.src))throw new Error('Image unavailable')}}
-  const context=vm.createContext({Blob,Image,Date:class extends Date{static now(){return clock}},Math,Promise,globalThis:undefined,
+  const context=vm.createContext({Blob,Image,normalizePanorama,Date:class extends Date{static now(){return clock}},Math,Promise,globalThis:undefined,
     indexedDB:{open(){const request={result:db};queueMicrotask(()=>{request.onupgradeneeded?.();request.onsuccess?.()});return request}},
     URL:{createObjectURL(blob){const url='blob:'+ ++nextUrl;urls.set(url,blob);return url},revokeObjectURL(url){urls.delete(url)}},
     document:{createElement(){let image;const canvas={width:0,height:0,getContext:()=>({drawImage(value){image=urls.get(value.src);drawn.push(image);sizes.push([canvas.width,canvas.height])}}),toBlob(callback){if(thumbnailFailure){callback(null);return}image.text().then(value=>callback(photo('thumbnail:'+value)))}};return canvas}},
@@ -93,6 +94,47 @@ test('pending captures expose a recovery thumbnail while retaining undeveloped o
   assert.equal(saved.pending,false);assert.equal(saved.created,pending.created);assert.equal(saved.stereo,true);assert.equal(await saved.preview.text(),'thumbnail:processed frame');
   assert.equal(await record.preview.text(),'processed frame');assert.equal(await record.left.text(),'raw left');assert.equal(await record.right.text(),'raw right');
   assert.deepEqual([...list].map(item=>item.id),[newer.id,pending.id]);assert.deepEqual(app.commits.at(-1),['photos','index']);
+});
+
+test('pending panorama saves all source pairs before depth processing and copies capture metadata',async()=>{
+  const app=harness(),panorama=sweep(),info=await app.archive.save(photo('stitched image'),null,null,panorama);
+  panorama.frames[0].left=photo('replacement');panorama.frames[0].timing.left=999;panorama.transforms[0][2]=100;
+  const record=await app.archive.get(info.id),listed=(await app.archive.list())[0];
+  assert.equal(info.pending,true);assert.equal(info.stereo,true);assert.equal(listed.pending,true);assert.equal(record.document,undefined);
+  assert.equal(await record.left.text(),'stitched image');assert.equal(record.right,null);assert.equal(record.preview,null);
+  assert.equal(await record.panorama.frames[0].left.text(),'first original');assert.equal(await record.panorama.frames[0].right.text(),'first right');
+  assert.equal(await record.panorama.frames[1].left.text(),'rejected original');assert.equal(record.panorama.frames[1].right,null);assert.equal(record.panorama.frames[1].accepted,false);
+  assert.equal(record.panorama.frames[0].timing.left,10);assert.equal(record.panorama.transforms[0][2],0);
+  await app.archive.savePreview(info.id,photo('preview after depth failure'));
+  assert.equal(await (await app.archive.get(info.id)).panorama.frames[1].left.text(),'rejected original');
+});
+
+test('developed panorama retains every original and pair status in both record and master',async()=>{
+  const app=harness(),panorama=sweep(),info=await app.archive.save(photo('stitched image'),null,null,panorama),input=master();
+  input.right=null;input.panorama=panorama;const document=createEntropiDocument(input);
+  await app.archive.saveDocument(document,info.id);document.panorama.frames[0].timing.left=999;
+  const record=await app.archive.get(info.id),listed=(await app.archive.list())[0];
+  assert.equal(listed.pending,false);assert.equal(listed.stereo,true);assert.equal(record.previewMatchesDocument,true);
+  assert.equal(record.panorama.frames[0].timing.left,10);assert.equal(record.document.panorama.frames[0].timing.left,10);
+  assert.equal(await record.panorama.frames[0].right.text(),'first right');assert.equal(await record.document.panorama.frames[1].left.text(),'rejected original');
+  const mono=sweep();for(const frame of mono.frames)frame.right=null;
+  assert.equal((await app.archive.save(photo('mono stitched'),null,null,mono)).stereo,false);
+});
+
+for(const kind of ['sync','async'])test(`${kind} failed panorama development keeps the pending source sweep intact`,async()=>{
+  const app=harness(),panorama=sweep(),info=await app.archive.save(photo('stitched image'),null,null,panorama),input=master();input.right=null;input.panorama=panorama;
+  const document=createEntropiDocument(input),commits=app.commits.length;app.fail('index',kind);
+  await assert.rejects(app.archive.saveDocument(document,info.id),error=>error.name==='QuotaExceededError');await app.flush();
+  const record=await app.archive.get(info.id),listed=(await app.archive.list())[0];
+  assert.equal(listed.pending,true);assert.equal(record.document,undefined);assert.equal(record.preview,null);assert.equal(app.commits.length,commits);
+  assert.equal(await record.left.text(),'stitched image');assert.equal(await record.panorama.frames[0].right.text(),'first right');assert.equal(await record.panorama.frames[1].left.text(),'rejected original');
+});
+
+test('malformed pending panoramas reject without adding partial captures',async()=>{
+  const app=harness();
+  for(const panorama of [{frames:[],transforms:[]},{frames:[{left:photo('first')}],transforms:[]},{frames:[{left:new Blob()}],transforms:[null]}])await assert.rejects(app.archive.save(photo('stitched'),null,null,panorama));
+  await assert.rejects(app.archive.save(photo('stitched'),photo('unrelated right'),null,sweep()));
+  assert.equal((await app.archive.list()).length,0);assert.equal(app.commits.length,0);
 });
 
 test('a supplied initial rendering becomes the thumbnail and full preview while retaining the original',async()=>{
