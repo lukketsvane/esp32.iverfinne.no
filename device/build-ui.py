@@ -8,7 +8,7 @@ root = Path(__file__).resolve().parent
 sketch = root / "EntropiCamera"
 shared = root.parent
 source = (sketch / "camera_ui.html").read_text(encoding="utf-8")
-source = source.replace("</style>", "</style><style>\n" + (sketch / "camera-ui-v2.css").read_text(encoding="utf-8") + "\n" + (sketch / "camera-ui-restore.css").read_text(encoding="utf-8") + "\n" + (shared / "vendor/marigold.css").read_text(encoding="utf-8") + "\n</style>", 1)
+source = source.replace("</style>", "</style><style>\n" + (sketch / "camera-ui-v2.css").read_text(encoding="utf-8") + "\n" + (sketch / "camera-ui-restore.css").read_text(encoding="utf-8") + "\n" + (shared / "vendor/marigold.css").read_text(encoding="utf-8") + "\n" + (shared / "vendor/original-photo-editor.css").read_text(encoding="utf-8") + "\n</style>", 1)
 palettes = (shared / "vendor/color-schemes.mjs").read_text(encoding="utf-8").replace("export ", "")
 retro = (shared / "vendor/retro-modes.mjs").read_text(encoding="utf-8").replace("export ", "")
 palettes += "\n" + re.sub(r"^import .*?;\s*", "", retro, flags=re.MULTILINE)
@@ -44,17 +44,23 @@ bridge = (shared / "vendor/model-bridge.mjs").read_text(encoding="utf-8").replac
 bridge = re.sub(r"^import .*?;\s*", "", bridge, flags=re.MULTILINE)
 bridge = "const { requestPhoneModels, phoneModelsReady, phoneHelperOrigin } = (() => {\n" + assets + "\n" + bridge + "\nreturn { requestPhoneModels, phoneModelsReady, phoneHelperOrigin };\n})();"
 source = source.replace("__ENTROPI_VIEWFINDER__", palettes + "\n" + renderer).replace("__ENTROPI_SCENE__", scene).replace("__ENTROPI_STUDIO__", studio).replace("__ENTROPI_PRINT_CLIENT__", printing).replace("__ENTROPI_MODEL_BRIDGE__", bridge)
+geometry_names = "normalizeGeometry, geometryNeutral, transformPhotoGeometry"
+geometry_code = (shared / "vendor/photo-geometry.mjs").read_text(encoding="utf-8").replace("export ", "")
+geometry = f"const {{ {geometry_names} }} = (() => {{\n{geometry_code}\nreturn {{ {geometry_names} }};\n}})();\n"
 photo_adjustments = (shared / "vendor/photo-adjustments.mjs").read_text(encoding="utf-8").replace("export ", "")
 photo_adjustments = re.sub(r"^import .*?;\s*", "", photo_adjustments, flags=re.MULTILINE)
-photo_adjustments = "const { PHOTO_PRESETS, normalizePhotoEdits, photoEditsNeutral, applyPhotoEdits } = (() => {\n" + photo_adjustments + "\nreturn { PHOTO_PRESETS, normalizePhotoEdits, photoEditsNeutral, applyPhotoEdits };\n})();"
+photo_adjustments = "const { PHOTO_PRESETS, normalizePhotoEdits, photoEditsNeutral, applyPhotoEdits, suggestPhotoEdits } = (() => {\n" + photo_adjustments + "\nreturn { PHOTO_PRESETS, normalizePhotoEdits, photoEditsNeutral, applyPhotoEdits, suggestPhotoEdits };\n})();"
 notch_rail = (shared / "vendor/notch-rail.mjs").read_text(encoding="utf-8").replace("export ", "")
 notch_rail = "const { attachNotchRail } = (() => {\n" + notch_rail + "\nreturn { attachNotchRail };\n})();"
 photo_editor = (shared / "vendor/photo-editor.mjs").read_text(encoding="utf-8").replace("export ", "")
 photo_editor = re.sub(r"^import .*?;\s*", "", photo_editor, flags=re.MULTILINE)
 photo_editor = "const { createPhotoEditor } = (() => {\n" + photo_editor + "\nreturn { createPhotoEditor };\n})();"
+original_editor = (shared / "vendor/original-photo-editor.mjs").read_text(encoding="utf-8").replace("export ", "")
+original_editor = re.sub(r"^import .*?;\s*", "", original_editor, flags=re.MULTILINE)
+original_editor = "const { openOriginalPhotoEditor } = (() => {\n" + original_editor + "\nreturn { openOriginalPhotoEditor };\n})();"
 marigold = "\n".join((shared / name).read_text(encoding="utf-8").replace("export ", "") for name in ["pointcloud/math.mjs", "pointcloud/stereo-rig.mjs", "vendor/stereo-depth.mjs", "vendor/vathography.mjs", "vendor/depth-source.mjs", "vendor/marigold-view.mjs"])
 marigold = re.sub(r"^import .*?;\s*", "", marigold, flags=re.MULTILINE)
-marigold = photo_adjustments + "\n" + notch_rail + "\n" + photo_editor + "\nconst { createMarigoldView, runStereoDepth } = (() => {\n" + marigold + "\nreturn { createMarigoldView, runStereoDepth };\n})();"
+marigold = geometry + photo_adjustments + "\n" + notch_rail + "\n" + photo_editor + "\n" + original_editor + "\nconst { createMarigoldView, runStereoDepth } = (() => {\n" + marigold + "\nreturn { createMarigoldView, runStereoDepth };\n})();"
 source = source.replace("__ENTROPI_MARIGOLD__", marigold)
 documents = []
 for module, names in [("stereo-pair", "readStereoPairResponse"), ("vathography-loop", "VATHO_LOOP_MODES, loopToneParameters, loopPhase, loopFramePhase, VATHO_LOOP_FRAMES, VATHO_LOOP_SECONDS, VATHO_LOOP_FPS, VATHO_GIF_MAX_EDGE"), ("gif-encoder", "GrayGifEncoder, rgbaToGrayIndices"), ("vathography-png", "encodeVathographyPNG, readVathographyPNG"), ("entropi-document", "createEntropiDocument, encodeEntropiDocument, decodeEntropiDocument, normalizePanorama"), ("vathography", "normalizeDepth, toneDepth"), ("entropi-export", "encodeDepthTiff, encodeDepthDng, encodeGrayscale16Tiff, encodeRgba16Tiff"), ("entropi-rendered-export", "encodeRenderedTiff"), ("entropi-ui", "bindExportGesture, pickEntropiDocument, importEntropiDocuments, renderImportFeedback"), ("live-capture-gesture", "bindLiveCaptureGesture"), ("sweep-capture", "createSweepCapture"), ("panorama", "buildPanorama, applyPanoramaMask"), ("panorama-capture", "createPanoramaCapture")]:

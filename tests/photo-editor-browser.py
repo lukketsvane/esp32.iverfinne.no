@@ -128,7 +128,8 @@ try:
                             page.locator('.mg-view').evaluate('''async(host,args)=>{
                                 const [cx,cy,dx,dy,factor,steps]=args,capture=host.setPointerCapture;
                                 host.setPointerCapture=()=>{};
-                                const send=(type,id,x,y)=>host.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerId:id,pointerType:'touch',isPrimary:id===1,button:0,buttons:type==='pointerup'?0:1,clientX:x,clientY:y}));
+                                // Keep synthetic fingers distinct from the real mouse pointer used for controls.
+                                const send=(type,id,x,y)=>host.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerId:100+id,pointerType:'touch',isPrimary:id===1,button:0,buttons:type==='pointerup'?0:1,clientX:x,clientY:y}));
                                 try{
                                     send('pointerdown',1,cx-20,cy);send('pointerdown',2,cx+20,cy);
                                     for(let step=1;step<=steps;step++){const t=step/steps,half=20*(1+(factor-1)*t);send('pointermove',1,cx+dx*t-half,cy+dy*t);send('pointermove',2,cx+dx*t+half,cy+dy*t);await new Promise(requestAnimationFrame)}
@@ -243,7 +244,7 @@ try:
                     page.locator('.mg-edit-apply').click()
                     saved('recipe.edits?.hsl.red.hue===.2&&recipe.edits.hsl.blue.saturation===-.2')
                     page.locator('.mg-preset-toggle').click()
-                    assert page.locator('.mg-preset').count()==12
+                    assert page.locator('.mg-preset').count()==page.evaluate("async()=>1+(await import('/vendor/photo-adjustments.mjs')).PHOTO_PRESETS.length")
                     page.locator('.mg-preset[data-preset="P5"]').click()
                     page.screenshot(path=str(RESULTS / f'{engine.name}-{app}-{width}-presets.png'))
                     page.locator('.mg-edit-apply').click()
@@ -296,10 +297,13 @@ try:
                     fitted=navigation_geometry()
                     two_touch(dx=12,dy=9)
                     moved=navigation_geometry()
-                    assert abs(moved['scale']-1)<.001 and moved['x']>8 and moved['y']>5,moved
+                    assert abs(moved['scale']-1)<.001 and abs(moved['x'])<.01 and abs(moved['y'])<.01,moved
                     two_touch(factor=2)
                     zoomed=navigation_geometry()
-                    assert abs(zoomed['scale']-2)<.02,zoomed
+                    assert abs(zoomed['scale']-2)<.02 and abs(zoomed['x'])<.01 and abs(zoomed['y'])<.01,zoomed
+                    two_touch(dx=-12,dy=9)
+                    shifted=navigation_geometry()
+                    assert abs(shifted['scale']-zoomed['scale'])<.02 and abs(shifted['x'])<.01 and abs(shifted['y'])<.01,shifted
                     assert abs(zoomed['box'][0]/fitted['box'][0]-2)<.02,zoomed
                     assert zoomed['source']==fitted['source'] and abs(zoomed['viewport']-1)<.001,zoomed
                     page.screenshot(path=str(RESULTS/f'{engine.name}-{app}-{width}-navigation.png'))
@@ -322,7 +326,7 @@ try:
                     assert abs(reset['viewport']-1)<.001,reset
                     assert page.evaluate('JSON.stringify(window.galleryRecords[0].document.recipe)')==untouched
                     assert not errors, errors
-                    result = dict(engine=engine.name, app=app, viewport=[width,height], edgeScrubbing=True, edgeInput='touch' if engine.name=='chromium' else 'mouse', draftCancel=True, controls=True,adjustmentGesture=True,compactPanel=True,hsl=True,grain=True,preset='HB2', crop='1:1', reopen=True, keyboardIsolation=True, galleryTopRight=True,galleryReturn=app=='device',panZoom=True,splitAligned=True,pageZoomLocked=True,navigationInput='cdp-touch' if engine.name=='chromium' else 'pointer-events', recipe=recipe)
+                    result = dict(engine=engine.name, app=app, viewport=[width,height], edgeScrubbing=True, edgeInput='touch' if engine.name=='chromium' else 'mouse', draftCancel=True, controls=True,adjustmentGesture=True,compactPanel=True,hsl=True,grain=True,preset='HB2', crop='1:1', reopen=True, keyboardIsolation=True, galleryTopRight=True,galleryReturn=app=='device',centeredPinchZoom=True,splitAligned=True,pageZoomLocked=True,navigationInput='cdp-touch' if engine.name=='chromium' else 'pointer-events', recipe=recipe)
                     results.append(result)
                     print(json.dumps(result), flush=True)
                     context.close()

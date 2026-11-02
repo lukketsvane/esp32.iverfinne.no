@@ -255,3 +255,18 @@ test('advanced defaults remain legacy compatible and malformed channel values re
     assert.throws(()=>createEntropiDocument({...example(),recipe:{edits}}));
   }
 });
+
+test('version 5 preserves new grading and geometry without changing originals or depth',async()=>{
+  const input=example(),bits=rawBytes(input.result.depth);
+  for(const edits of [{preset:'E1',strength:.6},{skinTone:-.4},{fade:.3},{vignette:.8},{geometry:{turns:1,flipX:true,skewY:.2}}]){
+    input.recipe.edits=edits;
+    const document=createEntropiDocument(input),file=await encodeEntropiDocument(document);
+    const entries=members(await file.arrayBuffer()),manifest=JSON.parse(entries.find(entry=>entry.name==='manifest.json').data);
+    assert.equal(manifest.version,5);
+    const reopened=await decodeEntropiDocument(file);
+    assert.deepEqual(reopened.recipe,document.recipe);
+    assert.deepEqual(rawBytes(reopened.result.depth),bits);
+    assert.deepEqual(await reopened.left.arrayBuffer(),await input.left.arrayBuffer());
+    await assert.rejects(decodeEntropiDocument(updateManifest(entries,value=>value.version=4)),/versjon/);
+  }
+});

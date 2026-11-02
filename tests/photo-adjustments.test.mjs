@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {PHOTO_PRESETS,normalizePhotoEdits,photoEditsNeutral,applyPhotoEdits} from '../vendor/photo-adjustments.mjs';
+import {suggestPhotoEdits,PHOTO_PRESETS,normalizePhotoEdits,photoEditsNeutral,applyPhotoEdits} from '../vendor/photo-adjustments.mjs';
 
 function pixels(values,bitDepth=8){
   const Type=bitDepth===16?Uint16Array:Uint8ClampedArray,maximum=bitDepth===16?65535:255;
@@ -9,12 +9,12 @@ function pixels(values,bitDepth=8){
 const render=(values,edits={},options={})=>applyPhotoEdits(pixels(values,options.bitDepth),values.length,1,edits,options).data;
 const red=data=>Array.from(data).filter((_,index)=>index%4===0);
 
-test('eleven unique presets include P5 and HB2 and normalize to independent neutral edits',()=>{
-  assert.equal(PHOTO_PRESETS.length,11);assert.equal(new Set(PHOTO_PRESETS.map(item=>item.id)).size,11);
+test('fifteen unique presets include P5 and HB2 and normalize to independent neutral edits',()=>{
+  assert.equal(PHOTO_PRESETS.length,15);assert.equal(new Set(PHOTO_PRESETS.map(item=>item.id)).size,15);
   assert.ok(PHOTO_PRESETS.some(item=>item.id==='P5'));assert.ok(PHOTO_PRESETS.some(item=>item.id==='HB2'));
   assert.ok(PHOTO_PRESETS.every(item=>item.label&&item.description&&item.defaultStrength>0&&item.defaultStrength<=1));
   const a=normalizePhotoEdits(),b=normalizePhotoEdits();
-  assert.deepEqual(a,{exposure:0,contrast:0,sharpen:0,denoise:0,saturation:0,highlights:0,shadows:0,temperature:0,tint:0,grain:{strength:0,size:.5,color:0},hsl:Object.fromEntries(['red','orange','yellow','green','blue','purple'].map(key=>[key,{hue:0,saturation:0,lightness:0}])),preset:null,strength:1,crop:{x:0,y:0,width:1,height:1}});
+  assert.deepEqual(a,{geometry:{turns:0,flipX:false,flipY:false,straighten:0,skewX:0,skewY:0},exposure:0,contrast:0,sharpen:0,denoise:0,saturation:0,highlights:0,shadows:0,temperature:0,tint:0,skinTone:0,fade:0,vignette:0,grain:{strength:0,size:.5,color:0},hsl:Object.fromEntries(['red','orange','yellow','green','blue','purple'].map(key=>[key,{hue:0,saturation:0,lightness:0}])),preset:null,strength:1,crop:{x:0,y:0,width:1,height:1}});
   assert.notEqual(a.crop,b.crop);a.crop.width=.5;assert.equal(b.crop.width,1);
   assert.equal(photoEditsNeutral(),true);assert.equal(photoEditsNeutral({preset:'P5',strength:0}),true);
   assert.equal(photoEditsNeutral({crop:{width:.5}}),false);
@@ -228,4 +228,46 @@ test('advanced grayscale lookup tables agree exactly with the per-pixel 16-bit t
   const edits={preset:'HB2',strength:.7,saturation:.2,highlights:-.2,shadows:.15,temperature:.3,tint:-.2,hsl:{orange:{hue:.2}}};
   const expected=applyPhotoEdits(small,257,1,edits,{bitDepth:16}).data,actual=applyPhotoEdits(large,257,256,edits,{bitDepth:16}).data;
   for(let row=0;row<256;row++)assert.deepEqual(actual.subarray(row*small.length,(row+1)*small.length),expected);
+});
+
+test('skin warmth only shifts warm hues; fade raises the toe and lowers peak white',()=>{
+  const input=[[187,121,87,255],[0,42,209,255],[128,128,128,143]];
+  const cool=render(input,{skinTone:-1}),warm=render(input,{skinTone:1});
+  assert.ok(warm[1]>cool[1]);assert.deepEqual(warm.slice(4),pixels(input).slice(4));
+  const faded=render([0,128,255],{fade:1});
+  assert.ok(faded[0]>0&&faded[8]<255&&faded[0]<faded[4]&&faded[4]<faded[8]);
+  for(const [key,invalid] of [['skinTone',2],['fade',-.1],['vignette',1.1]])assert.throws(()=>normalizePhotoEdits({[key]:invalid}));
+});
+
+test('vignette follows the crop, preserves centre, alpha and bit-depth precision',()=>{
+  for(const bitDepth of [8,16]){
+    const max=bitDepth===8?255:65535,level=bitDepth===8?170:43691;
+    const raw=pixels(Array.from({length:49},(_,i)=>[level,level,level,i===0?0:max]),bitDepth);
+    const out=applyPhotoEdits(raw,7,7,{vignette:1},{bitDepth}).data;
+    assert.deepEqual(out.slice(0,4),raw.slice(0,4));
+    assert.equal(out[(3*7+3)*4],level);assert.ok(out[6*4]<level*.7);
+    assert.equal(out[6*4],out[42*4]);assert.equal(out[6*4+3],max);
+    const crop=applyPhotoEdits(raw,7,7,{vignette:1,crop:{x:0,y:0,width:5/7,height:5/7}},{bitDepth});
+    assert.equal(crop.data[(2*5+2)*4],level);assert.ok(crop.data[4*4]<level*.8);
+  }
+});
+
+test('suggestions respond to the actual source and ignore hidden pixels',()=>{
+  const dark=suggestPhotoEdits(pixels([22,40]),2,1),bright=suggestPhotoEdits(pixels([222,240]),2,1);
+  assert.ok(dark.exposure>0&&bright.exposure<0);
+  const warm=pixels([[232,124,50,255],[0,0,255,0]]);
+  assert.deepEqual(suggestPhotoEdits(warm,2,1),suggestPhotoEdits(warm.slice(0,4),1,1));
+  assert.notEqual(suggestPhotoEdits(warm,2,1).preset,dark.preset);
+  assert.ok(suggestPhotoEdits(warm,2,1).temperature<0);
+  assert.equal(photoEditsNeutral(suggestPhotoEdits(pixels([[88,55,22,0]]),1,1)),true);
+});
+
+test('an explicit native export can edit a crop of an 8K original',()=>{
+  const width=7680,height=4320,source=new Uint8ClampedArray(width*height*4);
+  source.set([40,80,120,255]);
+  assert.throws(()=>applyPhotoEdits(source,width,height));
+  assert.equal(applyPhotoEdits(source,width,height,{},{fullResolution:true}).data,source);
+  const cropped=applyPhotoEdits(source,width,height,{crop:{x:0,y:0,width:1/width,height:1/height},fade:1},{fullResolution:true});
+  assert.deepEqual([cropped.width,cropped.height],[1,1]);
+  assert.deepEqual(cropped.data,render([[40,80,120,255]],{fade:1}));
 });

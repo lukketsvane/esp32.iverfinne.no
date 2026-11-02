@@ -64,6 +64,14 @@ export function createEntropiDocument({left,right=null,result,recipe={},preview=
   return {id:identity,created:date,left:blob(left),right:blob(right,true),preview:blob(preview,true),recipe:tone,geometry:spatial,capture:timing,...(sweep?{panorama:sweep}:{}),result:{depth,width,height,validity,confidence,polarity,quantity,units,normalized:result.normalized===true,model:text(result.model),source:text(result.source),provenance:jsonCopy(result.provenance??null),confidenceDefinition:confidence?text(result.confidenceDefinition,'Source confidence in [0,1]; not a calibrated probability'):null}};
 }
 
+// Use the oldest format that can reproduce the edit when the file is reopened.
+function photoEditVersion(edits){
+  if(!edits)return 0;
+  if(['E1','E2','E3','E4'].includes(edits.preset)||edits.skinTone||edits.fade||edits.vignette||
+     Object.values(edits.geometry??{}).some(Boolean))return 5;
+  return advancedPhotoEdits(edits)?4:0;
+}
+
 function advancedPhotoEdits(edits){
   return !!edits&&(edits.preset==='HB2'||['saturation','highlights','shadows','temperature','tint'].some(key=>edits[key])||edits.grain?.strength>0||Object.values(edits.hsl??{}).some(channel=>Object.values(channel).some(value=>value!==0)));
 }
@@ -147,14 +155,15 @@ export async function encodeEntropiDocument(document){
     panorama={...value.panorama,frames:[]};
     for(const [index,frame]of value.panorama.frames.entries())panorama.frames.push({...frame,left:await add('panorama/'+index+'/left',new Uint8Array(await frame.left.arrayBuffer()),frame.left.type),right:frame.right?await add('panorama/'+index+'/right',new Uint8Array(await frame.right.arrayBuffer()),frame.right.type):null});
   }
-  const manifest={format:'entropi',version:advancedPhotoEdits(value.recipe.edits)?4:panorama?3:value.recipe.edits?2:1,profile:'numerical-float32',id:value.id,created:value.created,originals,result,recipe:value.recipe,geometry:value.geometry,capture:value.capture,preview,files,...(panorama?{panorama}:{})},metadata=encoder.encode(JSON.stringify(manifest));
+  const manifest={format:'entropi',version:photoEditVersion(value.recipe.edits)||(panorama?3:value.recipe.edits?2:1),profile:'numerical-float32',id:value.id,created:value.created,originals,result,recipe:value.recipe,geometry:value.geometry,capture:value.capture,preview,files,...(panorama?{panorama}:{})},metadata=encoder.encode(JSON.stringify(manifest));
   if(metadata.length>metadataLimit)invalid();entries.set('manifest.json',metadata);return zip(entries);
 }
 
 export async function decodeEntropiDocument(file){
   const entries=await unzip(file);let manifest;
   try{manifest=JSON.parse(decoder.decode(entries.get('manifest.json')))}catch{invalid()}
-  if(manifest?.format!=='entropi'||![1,2,3,4].includes(manifest.version)||manifest.profile!=='numerical-float32'||manifest.version===2&&!manifest.recipe?.edits||manifest.version===3&&!manifest.panorama||manifest.version<3&&manifest.panorama!=null||manifest.version<4&&advancedPhotoEdits(manifest.recipe?.edits)||manifest.version===4&&!advancedPhotoEdits(manifest.recipe?.edits))invalid('Ukjend Entropi-versjon.');
+  const requiredEditsVersion=photoEditVersion(manifest?.recipe?.edits);
+  if(manifest?.format!=='entropi'||![1,2,3,4,5].includes(manifest.version)||manifest.profile!=='numerical-float32'||manifest.version===2&&!manifest.recipe?.edits||manifest.version===3&&!manifest.panorama||manifest.version<3&&manifest.panorama!=null||manifest.version<requiredEditsVersion||manifest.version>=4&&manifest.version!==requiredEditsVersion)invalid('Ukjend Entropi-versjon.');
   const {files,originals,result}=manifest;
   if(!files||typeof files!=='object'||Array.isArray(files)||!originals||!result||Object.keys(files).length!==entries.size-1)invalid();
   if(!manifest.id||!manifest.created||!manifest.recipe||!manifest.geometry||!manifest.capture||originals.left!=='sources/left'||originals.right!==null&&originals.right!=='sources/right'||result.depth!=='data/depth.f32'||result.validity!=='data/validity.u8'||result.confidence!==null&&result.confidence!=='data/confidence.f32'||manifest.preview!==null&&manifest.preview!=='preview/image')invalid();

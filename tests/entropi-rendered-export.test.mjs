@@ -164,3 +164,16 @@ test('HSL, light, white balance and source-scaled colored grain survive reopenin
   assert.ok(decoded.pixels.some(value=>value%257!==0));assert.deepEqual(new Uint8Array(input.result.depth.buffer),bits);
   const repeat=await inspect(await encodeRenderedTiff(reopened,size(16,8)));assert.deepEqual(repeat.pixels,decoded.pixels);
 });
+
+test('reopened depth master rotates and crops rendered TIFF without rotating the source disparity field',async()=>{
+  const input=document([.12,.28,NaN,.5,.71,.89],{preset:1,position:0,width:1,edits:{geometry:{turns:1},crop:{x:0,y:0,width:.5,height:1}}},{width:3,height:2});
+  const raw=input.result.depth.slice(),mask=input.result.validity.slice();
+  const reopened=await decodeEntropiDocument(await encodeEntropiDocument(input));
+  assert.deepEqual(reopened.result.depth,raw);
+  assert.deepEqual(reopened.result.validity,mask);
+  assert.deepEqual(reopened.recipe.edits.geometry,input.recipe.edits.geometry);
+  const tiff=await inspect(await encodeRenderedTiff(reopened,size(3,2)));
+  assert.deepEqual(tiff.tags.get(256),[1]);assert.deepEqual(tiff.tags.get(257),[3]);
+  const ref=toneDepth(raw,3,2,{preset:1,validity:mask,bitDepth:16});
+  assert.deepEqual(tiff.pixels,[ref[12],65535,ref[16],65535,ref[20],65535]);
+});

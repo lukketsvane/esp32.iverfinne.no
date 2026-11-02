@@ -101,13 +101,14 @@ $('timer-cycle').addEventListener('click',()=>{
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelCountdown()});
 
 function scheduleMasterSave(){
+  originalReviewBlob=null;
   clearTimeout(masterSaveTimer);const blob=photoBlob,result=marigoldView.result;
   masterSaveTimer=setTimeout(()=>{masterSaveTimer=0;if(blob===photoBlob&&result===marigoldView.result)void persistCurrentMaster().catch(error=>printFeedback(error.message))},300);
 }
-function schedulePreviewSave(){clearTimeout(masterSaveTimer);masterSaveTimer=setTimeout(()=>{masterSaveTimer=0;void persistCurrentPreview().catch(error=>printFeedback(error.message))},300)}
+function schedulePreviewSave(edited=true){if(edited)originalReviewBlob=null;else if(originalReviewBlob===photoBlob)return;clearTimeout(masterSaveTimer);masterSaveTimer=setTimeout(()=>{masterSaveTimer=0;void persistCurrentPreview().catch(error=>printFeedback(error.message))},300)}
 async function persistCurrentPreview(){
   clearTimeout(masterSaveTimer);masterSaveTimer=0;
-  if(!photoBlob||captureArchiveSuppressed)return;
+  if(!photoBlob||captureArchiveSuppressed||originalReviewBlob===photoBlob)return;
   if(studioControls.image===2){if(marigoldView.ready)return persistCurrentMaster();return}
   if(studioControls.image===1&&(!sceneViewer||sceneError))return;
   const blob=photoBlob,id=captureArchiveId;if(!id)return;
@@ -120,7 +121,7 @@ async function persistCurrentMaster(){
   if(!marigoldView.ready||!photoOriginal)throw new Error('Djupnebiletet er ikkje klart.');
   const blob=photoBlob,result=marigoldView.result,preview=snapshotBlob(marigoldView.snapshot(true));
   const master=createEntropiDocument(captureDocument?{...captureDocument,recipe:marigoldView.recipe,preview}:{left:photoPair?.left??photoOriginal,right:photoPair?.right??null,panorama:photoPanorama,result,recipe:marigoldView.recipe,preview,geometry:{referenceCamera:'left',calibration:null,rectification:result.rigId??null},capture:{pairId:photoPair?.id??null,timing:photoPair?.timing??null,capturedAt:photoPair?.captured_at??null,receivedAt:photoReceivedAt,hardwareSynchronized:photoPair?.hardware_synchronized??false,transport:photoPair?.transport??'wifi',leftCameraId:cameraStatus?.camera_id??null,rightCameraId:secondId||null}});
-  captureDocument=master;if(captureArchiveSuppressed)return master;const id=captureArchiveId??master.id;
+  captureDocument=master;if(captureArchiveSuppressed||originalReviewBlob===blob)return master;const id=captureArchiveId??master.id;
   const write=(masterWrites.get(blob)??Promise.resolve()).then(async()=>{const record=await archiveStore.saveDocument(master,id);if(blob===photoBlob&&result===marigoldView.result)captureArchiveId=record.id}).catch(error=>{if(blob===photoBlob&&result===marigoldView.result)printFeedback('Biletet er ikkje arkivert. Lagre Entropi-fila manuelt. '+(error?.name==='QuotaExceededError'?'Lagringa er full.':''))});
   masterWrites.set(blob,write);await write;return master;
 }
@@ -148,6 +149,31 @@ $('archive-import').addEventListener('click',()=>{
     refresh:showArchive,feedback:archiveImportNotice
   });
 });
+async function editArchiveOriginal(){
+  const record=archiveRecord,opening=archiveGeneration;
+  if(!record)return;
+  const current=()=>!$('archive').hidden&&archiveSelected===record.id&&opening===archiveGeneration;
+  try{
+    const saved=await openOriginalPhotoEditor(record,async(edits,rendered)=>{
+      const blob=photoBlob;
+      if(captureArchiveId===record.id)await masterWrites.get(blob);
+      const info=await archiveStore.savePreview(record.id,rendered,edits);
+      if(info&&captureArchiveId===record.id&&photoBlob===blob)originalReviewBlob=blob;
+      return info;
+    });
+    if(!saved||!current())return;
+    const index=archiveRecords.findIndex(item=>item.id===record.id);
+    if(index>=0){
+      archiveRecords[index]=saved;
+      const tile=$('archive-grid').children[index];
+      tile.querySelector('img').src=archiveUrl(saved.preview);tile.classList.remove('pending');
+      tile.querySelector('.archive-pending-mark')?.remove();
+      tile.setAttribute('aria-label',(saved.stereo?'Stereoopptak ':'Foto ')+archiveDate(saved.created));
+    }
+    await openArchivedPhoto(record.id);
+  }catch(error){if(current())archiveImportNotice(error.message)}
+}
+$('archive-original').addEventListener('click',editArchiveOriginal);
 $('archive-edit').addEventListener('click',async()=>{const id=archiveSelected,opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;if(!id||!isCurrent())return;try{const record=await archiveStore.get(id);if(isCurrent()&&record)await openArchivedCapture(record,id)}catch(error){if(isCurrent())archiveImportNotice(error.message)}});
 
 async function archiveCapture(original,pair,panorama=null){
@@ -219,7 +245,7 @@ async function openArchivedPhoto(id){
   $('archive-photo').alt=(pending?'Originalopptak, ikkje framkalla':'Arkivert kamerabilete')+'. '+(archiveRecords.findIndex(record=>record.id===id)+1)+' av '+archiveRecords.length;
   $('archive-detail').classList.toggle('pending',pending);
   $('archive-detail-info').textContent=archiveDate(archiveRecords.find(entry=>entry.id===id)?.created??Date.now())+'  ·  '+(record.right?'STEREO':'FOTO');
-  $('archive-left').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':pending?(record.right?'Lagre venstre original':'Lagre original'):'Lagre biletet');
+  $('archive-left').setAttribute('aria-label',record.document&&record.previewMatchesDocument?'Eksporter VATHOgraphy':pending?(record.right?'Lagre venstre original':'Lagre original'):'Lagre biletet');
   $('archive-right').hidden=!record.right;
   $('archive-edit').hidden=!record.document&&!pending&&!record.sourceName;
   $('archive-edit').setAttribute('aria-label',pending?'Framkall originalopptaket':'Opne VATHOgraphy');
@@ -247,7 +273,18 @@ function closeArchive(restore=true){
   clearArchiveUrls();studio.inert=false;const returnToPhoto=restore!==false&&archiveReturnToPhoto&&!!photoUrl;archiveReturnToPhoto=false;if(returnToPhoto){photoDialog.showModal();refreshReview();if(studioControls.image===2)void makeArt();else if(studioControls.image===1)void makeScene()}(archiveFocus&&archiveFocus.isConnected!==false&&!archiveFocus.hidden&&archiveFocus.tagName!=='BODY'?archiveFocus:$('open-archive')).focus({preventScroll:true});archiveFocus=null;if(!returnToPhoto)resumeStream();
 }
 $('open-archive').addEventListener('click',()=>void showArchive());
-$('review-gallery').addEventListener('click',()=>{if(busy||printBusy||sweepCapture?.active)return;archiveReturnToPhoto=true;archiveFocus=$('review-gallery');photoDialog.dataset.galleryClose='true';photoDialog.close();void showArchive()});
+async function openReviewArchive(edit){
+  if(busy||printBusy||sweepCapture?.active)return;
+  const id=captureArchiveId,opening=archiveGeneration+1;
+  archiveReturnToPhoto=true;archiveFocus=$(edit?'review-original':'review-gallery');
+  photoDialog.dataset.galleryClose='true';photoDialog.close();await showArchive();
+  if(edit&&id&&!$('archive').hidden&&archiveGeneration===opening){
+    await openArchivedPhoto(id);
+    if(archiveSelected===id)await editArchiveOriginal();
+  }
+}
+$('review-gallery').addEventListener('click',()=>openReviewArchive(false));
+$('review-original').addEventListener('click',()=>openReviewArchive(true));
 $('close-archive').addEventListener('click',closeArchive);
 $('archive-back').addEventListener('click',backArchive);
 
@@ -275,7 +312,7 @@ window.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&!$('archive').hidden){event.preventDefault();if(!$('archive-detail').hidden)backArchive();else closeArchive()}
   else if(!$('archive-detail').hidden&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();stepArchive(event.key==='ArrowRight'?1:-1)}
   else if(event.key==='Tab'){
-    const controls=[$('archive-import'),$('close-archive'),...($('archive-errors').hidden?[]:[$('archive-errors-summary')]),...($('archive-detail').hidden?Array.from($('archive-grid').children):[$('archive-edit'),$('archive-left'),$('archive-right'),$('archive-delete'),$('archive-back')])].filter(control=>(control.tagName==='BUTTON'||control.tagName==='SUMMARY')&&!control.hidden&&!control.disabled);
+    const controls=[$('archive-import'),$('close-archive'),...($('archive-errors').hidden?[]:[$('archive-errors-summary')]),...($('archive-detail').hidden?Array.from($('archive-grid').children):[$('archive-original'),$('archive-edit'),$('archive-left'),$('archive-right'),$('archive-delete'),$('archive-back')])].filter(control=>(control.tagName==='BUTTON'||control.tagName==='SUMMARY')&&!control.hidden&&!control.disabled);
     event.preventDefault();const index=controls.indexOf(document.activeElement),next=index<0?(event.shiftKey?controls.length-1:0):(index+(event.shiftKey?-1:1)+controls.length)%controls.length;
     controls[next]?.focus({preventScroll:true});
   }

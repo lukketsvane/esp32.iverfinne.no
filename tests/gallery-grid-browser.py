@@ -130,7 +130,15 @@ def exercise(engine, surface, profile):
         hit = page.evaluate("([x,y])=>document.elementFromPoint(x,y)?.closest('button')===document.querySelector('#"+grid_id+" button:last-child')", list(xy))
         assert hit, (xy, "last thumbnail not reachable by hit testing", geometry(grid))
         if touch:
+            grid.evaluate("""g=>g.addEventListener('click',()=>{g.dataset.testTileClick='yes'},{capture:true,once:true})""")
             page.touchscreen.tap(*xy)
+            page.wait_for_timeout(450)
+            if grid.get_attribute("data-test-tile-click") != "yes":
+                # Chromium may consume a tap to stop momentum, even at the scroll boundary.
+                # Retry only when the browser delivered no click and the same tile is still under it.
+                assert abs(grid.evaluate("g=>g.scrollTop")-after["scroll"])<2
+                assert page.evaluate("([x,y])=>document.elementFromPoint(x,y)?.closest('button')===document.querySelector('#"+grid_id+" button:last-child')",list(xy))
+                page.touchscreen.tap(*xy)
         else:
             page.mouse.click(*xy)
         image = page.locator("#"+photo)

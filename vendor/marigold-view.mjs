@@ -1,3 +1,4 @@
+import {geometryNeutral} from './photo-geometry.mjs';
 import { localDepthEndpoint, runLocalDepth, runBrowserDepth } from './depth-source.mjs';
 import { runStereoDepth } from './stereo-depth.mjs';
 import { normalizeDepth, prepareToneDepth, VATHOGRAPHY_PRESETS } from './vathography.mjs';
@@ -47,7 +48,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
     };
     loopFrame=requestAnimationFrame(tick);
   }
-  const peek=value=>{peeking=value;host.classList.toggle('peeking',value)};
+  const peek=value=>{peeking=value;host.classList.toggle('peeking',value);if(value&&current)syncOriginal(editor.edits)};
   const cancelHold=()=>{clearTimeout(hold);hold=0};
   const cancelGesture=()=>{stopPulse();stopLoopPreview();cancelHold();peek(false);points.clear();previous=null;gesture=null;lastTap=null;multiTap=lastMultiTap=null;navigationStart=null;gestureMode=null;if(current){if(gestureChanged)onChange();schedule()}gestureChanged=false};
   const listen=(element,name,handler,opts)=>{element.addEventListener(name,handler,opts);listeners.push(()=>element.removeEventListener(name,handler,opts))};
@@ -78,12 +79,36 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
     const width=Math.max(1,Math.round(sourceWidth*scale)),height=Math.max(1,Math.round(sourceHeight*scale));
     const edits=committed?editor.committed:editor.edits;if(editor.cropping&&!committed)edits.crop={x:0,y:0,width:1,height:1};
     paintArt(renderPixels(width,height,committed&&depthRail.active?railStartSelection:selection,position,bandWidth,edits));
-    const crop=edits.crop,cropped=crop.width!==1||crop.height!==1;original.hidden=cropped;croppedOriginal.hidden=!cropped;
-    if(cropped){const key=JSON.stringify(crop);if(key!==originalCropKey){const left=Math.min(sourceWidth-1,Math.round(crop.x*sourceWidth)),top=Math.min(sourceHeight-1,Math.round(crop.y*sourceHeight));croppedOriginal.width=Math.max(1,Math.round((crop.x+crop.width)*sourceWidth)-left);croppedOriginal.height=Math.max(1,Math.round((crop.y+crop.height)*sourceHeight)-top);croppedOriginal.getContext('2d').drawImage(original,left,top,croppedOriginal.width,croppedOriginal.height,0,0,croppedOriginal.width,croppedOriginal.height);originalCropKey=key}}
+    syncOriginal(edits);
     updateSplit();if(looping)startLoopPreview();
   }
+  function syncOriginal({crop,geometry}){
+    const warped=!geometryNeutral(geometry),cropped=crop.width!==1||crop.height!==1;
+    original.hidden=warped||cropped;croppedOriginal.hidden=!original.hidden;
+    if(!original.hidden||warped&&!comparing&&!peeking)return;
+    const key=JSON.stringify([crop,geometry]);
+    if(key===originalCropKey)return;
+    if(warped){
+      // The comparison uses the same framing as the artwork, with the source colours.
+      const scale=Math.min(1,2048/Math.max(sourceWidth,sourceHeight));
+      const width=Math.max(1,Math.round(sourceWidth*scale)),height=Math.max(1,Math.round(sourceHeight*scale));
+      croppedOriginal.width=width;croppedOriginal.height=height;
+      const context=croppedOriginal.getContext('2d',{willReadFrequently:true});
+      context.drawImage(original,0,0,width,height);
+      const pixels=applyPhotoEdits(context.getImageData(0,0,width,height).data,width,height,{crop,geometry});
+      croppedOriginal.width=pixels.width;croppedOriginal.height=pixels.height;
+      const image=context.createImageData(pixels.width,pixels.height);
+      image.data.set(pixels.data);context.putImageData(image,0,0);
+    }else{
+      const left=Math.min(sourceWidth-1,Math.round(crop.x*sourceWidth)),top=Math.min(sourceHeight-1,Math.round(crop.y*sourceHeight));
+      croppedOriginal.width=Math.max(1,Math.round((crop.x+crop.width)*sourceWidth)-left);
+      croppedOriginal.height=Math.max(1,Math.round((crop.y+crop.height)*sourceHeight)-top);
+      croppedOriginal.getContext('2d').drawImage(original,left,top,croppedOriginal.width,croppedOriginal.height,0,0,croppedOriginal.width,croppedOriginal.height);
+    }
+    originalCropKey=key;
+  }
   function startPulse(){
-    stopPulse();if(motion?.matches||document.hidden||editor.edits.crop.width!==1||editor.edits.crop.height!==1)return;
+    stopPulse();if(motion?.matches||document.hidden||!geometryNeutral(editor.edits.geometry)||editor.edits.crop.width!==1||editor.edits.crop.height!==1)return;
     const scale=Math.min(1,512/Math.max(sourceWidth,sourceHeight));
     pulse.width=Math.max(1,Math.round(sourceWidth*scale));pulse.height=Math.max(1,Math.round(sourceHeight*scale));
     const context=pulse.getContext('2d');if(!context)return;
@@ -187,7 +212,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
   if(globalThis.addEventListener){listen(globalThis,'blur',cancelGesture);listen(globalThis,'resize',()=>{if(current){setNavigation(viewPose);editor.resize()}})}
   if(document.addEventListener)listen(document,'visibilitychange',()=>{if(document.hidden)cancelGesture();else if(looping)startLoopPreview()});
   listen(host,'contextmenu',event=>{if(!event.target.closest('button'))event.preventDefault()});
-  listen(compare,'click',()=>{stopPulse();stopLoopPreview();if(!current)return;editor.commit();comparing=!comparing;host.classList.toggle('comparing',comparing);compare.setAttribute('aria-pressed',String(comparing));if(looping)render();else updateSplit()});
+  listen(compare,'click',()=>{stopPulse();stopLoopPreview();if(!current)return;editor.commit();comparing=!comparing;host.classList.toggle('comparing',comparing);compare.setAttribute('aria-pressed',String(comparing));if(looping)render();else{if(comparing)syncOriginal(editor.edits);updateSplit()}});
   function setLoopMode(mode){
     if(!VATHO_LOOP_MODES.some(item=>item.id===mode))throw new RangeError('Ukjend løkkemodus.');
     loopMode=mode;if(loopSelect)loopSelect.value=mode;
@@ -273,7 +298,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
     if(edits.grain?.color&&edits.grain.strength)return 'rgb';
     const ramp=new Uint8ClampedArray(256*4);
     for(let i=0;i<256;i++){ramp.fill(i,i*4,i*4+3);ramp[i*4+3]=255}
-    return applyPhotoEdits(ramp,256,1,{...edits,crop:{x:0,y:0,width:1,height:1},grain:{strength:0},denoise:0,sharpen:0}).data;
+    return applyPhotoEdits(ramp,256,1,{...edits,crop:{x:0,y:0,width:1,height:1},geometry:undefined,vignette:0,grain:{strength:0},denoise:0,sharpen:0}).data;
   }
   async function restore(blob,result,recipe,signal){
     if(!recipe||!Number.isInteger(recipe.preset)||recipe.preset<0||recipe.preset>=options.length||!Number.isFinite(recipe.position)||Math.abs(recipe.position)>1||!Number.isFinite(recipe.width)||recipe.width<.25||recipe.width>3)throw new Error('Ugyldig uttrykk i Entropi-fila.');

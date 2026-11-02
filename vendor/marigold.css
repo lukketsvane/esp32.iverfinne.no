@@ -66,3 +66,16 @@
 .studio .access-control.device-link,#studio #connection{right:calc(62px + env(safe-area-inset-right))}
 
 @media(orientation:landscape) and (max-height:550px){#studio #reset,.review #close-photo{left:auto;right:calc(12px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:auto}}
+
+/* The main photograph stays available for adjustment gestures beside the tool tray. */
+.mg-editor [hidden]{display:none!important}
+.mg-edit-choices{pointer-events:auto}
+.mg-preset-tools,.mg-geometry-tools{display:flex;flex-direction:column;align-items:stretch;gap:0}
+.mg-preset-tools button,.mg-geometry-tools button,.mg-editor .mg-preset-filter{width:100%;min-height:44px;white-space:normal;line-height:1.25;text-align:right;padding:3px 6px;border:0;touch-action:pan-y}
+.mg-editor .mg-preset-filter{color:inherit;background:#101010;color-scheme:dark;font:inherit;pointer-events:auto}
+.mg-preset-notice{font-size:11px;line-height:1.35;text-align:right}.mg-preset-notice:not(:empty){padding:6px}
+.mg-editor .mg-edit-history{position:absolute;left:calc(8px + env(safe-area-inset-left));top:calc(10px + env(safe-area-inset-top));display:flex;align-items:center;pointer-events:auto}
+.mg-edit-history button{font-size:16px}.mg-edit-history .mg-edit-compare{font-size:12px}
+.mg-editor button:disabled{opacity:.32;cursor:default}.mg-editor button:focus-visible,.mg-editor select:focus-visible{outline:1px solid currentColor;outline-offset:-2px}
+.mg-view.mg-before .mg-original:not([hidden]){opacity:1;clip-path:none;z-index:2}.mg-view.mg-before .mg-pulse,.mg-view.mg-before .mg-seam{visibility:hidden}
+@media(max-width:360px){.mg-edit-history button{min-width:44px}.mg-edit-panel{right:46px}}

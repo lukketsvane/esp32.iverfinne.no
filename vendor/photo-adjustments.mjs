@@ -1,3 +1,5 @@
+import {normalizeGeometry,geometryNeutral,transformPhotoGeometry} from './photo-geometry.mjs';
+
 export const PHOTO_PRESETS=Object.freeze([
   {id:'A4',label:'A4',description:'Varm analog',defaultStrength:1},
   {id:'A5',label:'A5',description:'Kjøleg analog',defaultStrength:1},
@@ -10,6 +12,10 @@ export const PHOTO_PRESETS=Object.freeze([
   {id:'M3',label:'M3',description:'Falma varme',defaultStrength:1},
   {id:'P5',label:'P5',description:'Blågrøn instantfilm',defaultStrength:1},
   {id:'X1',label:'X1',description:'Mørkt svartkvitt',defaultStrength:1},
+  {id:'E1',label:'Fjord',description:'Djupe blå skuggar og klåre høglys',defaultStrength:1},
+  {id:'E2',label:'Myr',description:'Duse grøntonar og mjuk kontrast',defaultStrength:1},
+  {id:'E3',label:'Kopar',description:'Ravvarmt lys over kjølege skuggar',defaultStrength:1},
+  {id:'E4',label:'Skifer',description:'Sølvgrå mellomtonar med eit kjøleg skjer',defaultStrength:1},
 ].map(Object.freeze));
 
 const recipes={
@@ -24,6 +30,10 @@ const recipes={
   M3:[.9,.97,.07,.96,.72,[.038,.021,-.022],[-.018,.003,.026]],
   P5:[1.17,.96,.02,.96,1.08,[-.026,.032,.06],[-.025,.018,.018]],
   X1:[1.35,1.2,.035,.94,0,[0,0,0],[0,0,0]],
+  E1:[1.18,1.04,.012,.98,.94,[-.048,.011,.070],[.016,.008,-.006]],
+  E2:[.89,1.03,.057,.95,.69,[.006,.041,-.004],[.036,.023,-.016]],
+  E3:[1.12,.94,.022,.97,.90,[-.028,.002,.029],[.074,.025,-.065]],
+  E4:[1.09,.98,.021,.97,.08,[-.026,.003,.046],[.006,.01,.019]],
 };
 const clamp=value=>Math.max(0,Math.min(1,value));
 const fullCrop=crop=>crop.x===0&&crop.y===0&&crop.width===1&&crop.height===1;
@@ -31,8 +41,8 @@ export const PHOTO_HSL_CHANNELS=Object.freeze(['red','orange','yellow','green','
 const colorControls=['saturation','highlights','shadows','temperature','tint'];
 const hueCenters=[0,1/12,1/6,1/3,2/3,5/6,1];
 const hslNeutral=hsl=>PHOTO_HSL_CHANNELS.every(key=>hsl[key].hue===0&&hsl[key].saturation===0&&hsl[key].lightness===0);
-const colorNeutral=edits=>colorControls.every(key=>edits[key]===0)&&hslNeutral(edits.hsl);
-const toneNeutral=edits=>edits.exposure===0&&edits.contrast===0&&edits.sharpen===0&&edits.denoise===0&&edits.grain.strength===0&&colorNeutral(edits)&&(!edits.preset||edits.strength===0);
+const colorNeutral=edits=>edits.skinTone===0&&edits.fade===0&&colorControls.every(key=>edits[key]===0)&&hslNeutral(edits.hsl);
+const toneNeutral=edits=>edits.vignette===0&&edits.exposure===0&&edits.contrast===0&&edits.sharpen===0&&edits.denoise===0&&edits.grain.strength===0&&colorNeutral(edits)&&(!edits.preset||edits.strength===0);
 
 export function normalizePhotoEdits(value={}){
   if(!value||typeof value!=='object'||Array.isArray(value))throw new TypeError('Ugyldig fotoredigering.');
@@ -51,12 +61,12 @@ export function normalizePhotoEdits(value={}){
   const grainSource=object(value.grain===undefined?{}:value.grain,'grain'),hslSource=object(value.hsl===undefined?{}:value.hsl,'hsl');
   const grain={strength:number(grainSource,'strength',0,0,1),size:number(grainSource,'size',.5,0,1),color:number(grainSource,'color',0,0,1)};
   const hsl=Object.fromEntries(PHOTO_HSL_CHANNELS.map(key=>{const channel=object(hslSource[key]===undefined?{}:hslSource[key],key);return [key,{hue:number(channel,'hue',0,-1,1),saturation:number(channel,'saturation',0,-1,1),lightness:number(channel,'lightness',0,-1,1)}]}));
-  return {exposure:number(value,'exposure',0,-3,3),contrast:number(value,'contrast',0,-1,1),sharpen:number(value,'sharpen',0,0,1),denoise:number(value,'denoise',0,0,1),...Object.fromEntries(colorControls.map(key=>[key,number(value,key,0,-1,1)])),grain,hsl,preset,strength:number(value,'strength',1,0,1),crop};
+  return {geometry:normalizeGeometry(value.geometry),exposure:number(value,'exposure',0,-3,3),contrast:number(value,'contrast',0,-1,1),sharpen:number(value,'sharpen',0,0,1),denoise:number(value,'denoise',0,0,1),...Object.fromEntries(colorControls.map(key=>[key,number(value,key,0,-1,1)])),skinTone:number(value,'skinTone',0,-1,1),fade:number(value,'fade',0,0,1),vignette:number(value,'vignette',0,0,1),grain,hsl,preset,strength:number(value,'strength',1,0,1),crop};
 }
 
 export function photoEditsNeutral(edits={}){
   const value=normalizePhotoEdits(edits);
-  return toneNeutral(value)&&fullCrop(value.crop);
+  return geometryNeutral(value.geometry)&&toneNeutral(value)&&fullCrop(value.crop);
 }
 
 const sample=(lut,value)=>{
@@ -94,21 +104,28 @@ function makeColorTransform(edits){
     }
     const luma=r*.2126+g*.7152+b*.0722,saturation=1+edits.saturation;
     r=clamp(luma+(r-luma)*saturation);g=clamp(luma+(g-luma)*saturation);b=clamp(luma+(b-luma)*saturation);
-    if(selective){
+    if(selective||edits.skinTone){
       const high=Math.max(r,g,b),low=Math.min(r,g,b),chroma=high-low;
       if(chroma>1e-8){
         let light=(high+low)/2,sat=chroma/(1-Math.abs(2*light-1)),hue=(high===r?(g-b)/chroma:high===g?(b-r)/chroma+2:(r-g)/chroma+4)/6;
         hue=(hue+1)%1;let band=0;while(band<5&&hue>=hueCenters[band+1])band++;
         let t=(hue-hueCenters[band])/(hueCenters[band+1]-hueCenters[band]);t=t*t*(3-2*t);
         const a=bands[band],z=bands[(band+1)%6],shift=a.lightness+(z.lightness-a.lightness)*t;
-        hue=(hue+(a.hue+(z.hue-a.hue)*t)/12+1)%1;sat=clamp(sat*(1+a.saturation+(z.saturation-a.saturation)*t));
+        // Feather the skin-tone shift around orange, fading to zero on neutral or unrelated hues.
+        let skinShift=0;
+        if(edits.skinTone){
+          const distance=Math.abs(hue-.075),weight=clamp(1-Math.min(distance,1-distance)/.10);
+          skinShift=.045*edits.skinTone*weight*weight*(3-2*weight)*clamp(chroma/.12);
+        }
+        hue=(hue+skinShift+(a.hue+(z.hue-a.hue)*t)/12+1)%1;sat=clamp(sat*(1+a.saturation+(z.saturation-a.saturation)*t));
         light=clamp(light+.5*shift*(shift>=0?1-light:light));
         const c=(1-Math.abs(2*light-1))*sat,sector=hue*6,x=c*(1-Math.abs(sector%2-1)),m=light-c/2;
         if(sector<1){r=c;g=x;b=0}else if(sector<2){r=x;g=c;b=0}else if(sector<3){r=0;g=c;b=x}else if(sector<4){r=0;g=x;b=c}else if(sector<5){r=x;g=0;b=c}else{r=c;g=0;b=x}
         r+=m;g+=m;b+=m;
       }
     }
-    rgb[0]=r;rgb[1]=g;rgb[2]=b;
+    const toe=.18*edits.fade,range=1-.22*edits.fade;
+    rgb[0]=toe+range*r;rgb[1]=toe+range*g;rgb[2]=toe+range*b;
   };
 }
 function grainHash(x,y,seed){
@@ -119,11 +136,18 @@ function grainNoise(x,y,fx,fy,seed){
   return (a+(b-a)*fx)*(1-fy)+(c+(d-c)*fx)*fy;
 }
 
-export function applyPhotoEdits(rgba,width,height,edits={}, {bitDepth=8,referenceWidth=width,referenceHeight=height}={}){
-  if(!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||width*height>16777216||rgba?.length!==width*height*4)throw new RangeError('Ugyldig biletstorleik.');
+export function applyPhotoEdits(rgba,width,height,edits={}, {bitDepth=8,referenceWidth=width,referenceHeight=height,fullResolution=false}={}){
+  // Native originals may exceed the preview/depth-map limit (for example an 8K import).
+  const pixelLimit=fullResolution===true?64*1024*1024:16*1024*1024;
+  if(!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||width*height>pixelLimit||rgba?.length!==width*height*4)throw new RangeError('Ugyldig biletstorleik.');
   if(bitDepth!==8&&bitDepth!==16||bitDepth===16&&!(rgba instanceof Uint16Array)||bitDepth===8&&!(rgba instanceof Uint8Array||rgba instanceof Uint8ClampedArray))throw new TypeError('Ugyldig pikselformat.');
   if(!Number.isInteger(referenceWidth)||!Number.isInteger(referenceHeight)||referenceWidth<1||referenceHeight<1)throw new RangeError('Ugyldig kjeldestorleik.');
   const value=normalizePhotoEdits(edits),{crop}=value;
+  if(!geometryNeutral(value.geometry)){
+    const oriented=transformPhotoGeometry(rgba,width,height,value.geometry);
+    rgba=oriented.data;width=oriented.width;height=oriented.height;
+    if(value.geometry.turns%2)[referenceWidth,referenceHeight]=[referenceHeight,referenceWidth];
+  }
   if(toneNeutral(value)&&fullCrop(crop))return {data:rgba,width,height};
   const left=Math.min(width-1,Math.round(crop.x*width)),top=Math.min(height-1,Math.round(crop.y*height));
   const right=Math.min(width,Math.max(left+1,Math.round((crop.x+crop.width)*width))),bottom=Math.min(height,Math.max(top+1,Math.round((crop.y+crop.height)*height)));
@@ -213,5 +237,55 @@ export function applyPhotoEdits(rgba,width,height,edits={}, {bitDepth=8,referenc
     }
     if(value.sharpen>0&&y+1<bottom){const row=previous;previous=current;current=next;next=row;readRow(y+2,next)}
   }
+  if(value.vignette>0){
+    // Normalised coordinates keep the vignette centred on the final crop at every output size.
+    for(let y=0;y<outputHeight;y++){
+      const dy=(2*y+1)/outputHeight-1;
+      for(let x=0;x<outputWidth;x++){
+        const index=(y*outputWidth+x)*4;
+        if(data[index+3]===0)continue;
+        const dx=(2*x+1)/outputWidth-1,radius=clamp((dx*dx+dy*dy-.10)/1.65);
+        const gain=1-.78*value.vignette*radius*radius*(3-2*radius);
+        for(let c=0;c<3;c++)data[index+c]=Math.round(data[index+c]*gain);
+      }
+    }
+  }
   return {data,width:outputWidth,height:outputHeight};
+}
+
+// Derive a restrained starting grade from at most 64 × 64 samples of the unedited image.
+export function suggestPhotoEdits(rgba,width,height){
+  if(!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1||
+     !Number.isSafeInteger(width*height*4)||rgba?.length!==width*height*4||
+     !(rgba instanceof Uint8Array||rgba instanceof Uint8ClampedArray||rgba instanceof Uint16Array))throw new RangeError('Ugyldig kjeldebilete.');
+  const unit=1/(rgba instanceof Uint16Array?65535:255),histogram=new Float64Array(64);
+  const cols=Math.min(width,64),rows=Math.min(height,64);
+  let weight=0,luminance=0,chroma=0,warmth=0;
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+    const at=4*(Math.floor((y+.5)*height/rows)*width+Math.floor((x+.5)*width/cols));
+    const a=rgba[at+3]*unit;if(!a)continue;
+    const r=rgba[at]*unit,g=rgba[at+1]*unit,b=rgba[at+2]*unit,l=r*.2126+g*.7152+b*.0722;
+    weight+=a;luminance+=a*l;chroma+=a*(Math.max(r,g,b)-Math.min(r,g,b));warmth+=a*(r-b);
+    histogram[Math.min(63,Math.floor(l*64))]+=a;
+  }
+  if(!weight)return normalizePhotoEdits();
+  const percentile=p=>{
+    let sum=0;
+    for(let i=0;i<histogram.length;i++){sum+=histogram[i];if(sum>=p*weight)return (i+.5)/64}
+    return 1;
+  };
+  const mean=luminance/weight,color=chroma/weight,cast=warmth/weight;
+  const dark=percentile(.1),bright=percentile(.9),span=bright-dark;
+  let preset='G3';
+  if(color<.035)preset='E4';
+  else if(cast>.13)preset='E2';
+  else if(cast<-.10)preset='E3';
+  else if(span>.68)preset='E1';
+  else if(mean<.3)preset='A4';
+  return normalizePhotoEdits({
+    preset,strength:.32,exposure:Math.max(-1,Math.min(1,1.75*Math.log2(.48/Math.max(.04,mean)))),
+    contrast:Math.max(-.12,Math.min(.22,(.62-span)*.4)),
+    shadows:clamp((.16-dark)*1.4),highlights:-clamp((bright-.84)*1.4),
+    temperature:Math.max(-.22,Math.min(.22,-cast*.45))
+  });
 }

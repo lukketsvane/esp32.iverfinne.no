@@ -1,11 +1,11 @@
 export function attachPhotoGestures(image,{enabled=()=>true,onChange=()=>{}}={}){
   const points=new Map(),state={scale:1,x:0,y:0,width:0,height:0,grain:1,contrast:1};let previous=null,start=null,axis=null;
   const measure=()=>{const values=[...points.values()];return {x:values.reduce((n,p)=>n+p.x,0)/values.length,y:values.reduce((n,p)=>n+p.y,0)/values.length}};
-  function draw(){
+  function draw(edited=false){
     const rect=image.parentElement.getBoundingClientRect();
     if(rect.width<=0||rect.height<=0)return;
     state.width=rect.width;state.height=rect.height;
-    state.scale=1;state.x=state.y=0;image.style.transform='';onChange(state);
+    state.scale=1;state.x=state.y=0;image.style.transform='';onChange(state,edited===true);
   }
   function down(event){if(event.pointerType!=='touch'||!enabled())return;points.set(event.pointerId,{x:event.clientX,y:event.clientY});image.setPointerCapture(event.pointerId);start=previous=measure();axis=null;if(points.size>1)event.preventDefault();if(points.size===3)draw()}
   function move(event){
@@ -16,7 +16,7 @@ export function attachPhotoGestures(image,{enabled=()=>true,onChange=()=>{}}={})
       if(axis==='contrast')state.contrast=Math.max(.5,Math.min(3,state.contrast+(current.x-previous.x)*3.5/Math.max(1,state.width)));
       else if(axis==='grain')state.grain=Math.max(1,Math.min(8,state.grain+(current.y-previous.y)*10/Math.max(1,state.height)));
     }
-    previous=current;if(points.size<2||points.size>3)return;event.preventDefault();event.stopImmediatePropagation();if(points.size===3)draw();
+    previous=current;if(points.size<2||points.size>3)return;event.preventDefault();event.stopImmediatePropagation();if(points.size===3)draw(!!axis);
   }
   function up(event){if(points.delete(event.pointerId)){start=previous=points.size?measure():null;axis=null}}
   function reset(){for(const id of points.keys())if(image.hasPointerCapture?.(id))image.releasePointerCapture(id);points.clear();start=previous=null;axis=null;state.scale=1;state.x=state.y=0;draw()}

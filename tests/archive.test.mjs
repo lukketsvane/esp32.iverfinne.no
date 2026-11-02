@@ -9,18 +9,19 @@ const photo=text=>new Blob([text],{type:'image/jpeg'});
 const master=(id='master')=>createEntropiDocument({id,created:'2026-10-28T10:00:00.000Z',left:photo('left'),right:photo('right'),preview:photo('rendered master'),result:{width:2,height:2,depth:Float32Array.of(.1,1.2345,NaN,3.5),validity:Uint8Array.of(1,0,0,1)},recipe:{preset:3,position:.2,width:1.5}});
 const sweep=()=>({frames:[{left:photo('first original'),right:photo('first right'),id:'first',timing:{left:10,right:12},accepted:true},{left:photo('rejected original'),right:null,id:'second',accepted:false}],transforms:[[1,0,0,0,1,0,0,0,1],null],metadata:{coverage:.7}});
 function harness({width=1600,height=1200}={}){
+  const storageKey=id=>Array.isArray(id)?JSON.stringify(id):id;
   const stores=new Map(),urls=new Map(),commits=[],drawn=[],sizes=[];let clock=10000,failure=null,nextUrl=0,decodeFailure=false,decodeWait=null,thumbnailFailure=false;
   const db={objectStoreNames:{contains:name=>stores.has(name)},createObjectStore(name){stores.set(name,new Map())},transaction(names,mode){
     const pending=[],transaction={error:null,aborted:false,objectStore(name){
       if(!names.includes(name))throw new Error('Store outside transaction');
-      return {get(id){const request={};pending.push(next=>{request.result=structuredClone(next.get(name).get(id));request.onsuccess?.()});return request},getAll(){const request={};pending.push(next=>{request.result=structuredClone([...next.get(name).values()]);request.onsuccess?.()});return request},put(record){
+      return {get(id){const request={};pending.push(next=>{request.result=structuredClone(next.get(name).get(storageKey(id)));request.onsuccess?.()});return request},getAll(){const request={};pending.push(next=>{request.result=structuredClone([...next.get(name).values()]);request.onsuccess?.()});return request},put(record){
         if(mode!=='readwrite')throw new Error('Readonly transaction');
         if(failure?.store===name&&failure.kind==='sync'){const error=failure.error;failure=null;throw error}
         const copy=structuredClone(record);pending.push(next=>{
           if(failure?.store===name){const error=failure.error;failure=null;throw error}
-          next.get(name).set(copy.id,copy);
+          next.get(name).set(storageKey(copy.id),copy);
         });return {};
-      },delete(id){pending.push(next=>next.get(name).delete(id));return {}}};
+      },delete(id){pending.push(next=>next.get(name).delete(storageKey(id)));return {}}};
     },abort(){transaction.aborted=true;queueMicrotask(()=>transaction.onabort?.())}};
     queueMicrotask(()=>{
       if(transaction.aborted)return;
@@ -268,4 +269,40 @@ test('photo imports keep the original name and bytes and require a working image
   assert.equal(record.document,undefined);assert.equal(info.pending,false);
   app.failDecode();await assert.rejects(app.archive.save(image,null,image,null,'broken.jpg'),/ikkje lese/);
   assert.equal((await app.archive.list()).length,1);
+});
+
+test('original photo edits survive reopening and later depth work, without replacing sources',async()=>{
+  const app=harness(),document=master(),saved=await app.archive.save(document.left,document.right,null,null,'photo.jpg');
+  const edits={exposure:.4,crop:{x:.1,y:0,width:.8,height:1},preset:'mist'},rendered=new Blob(['native PNG'],{type:'image/png'});
+  await app.archive.savePreview(saved.id,rendered,edits);edits.exposure=2;
+  let record=await app.archive.get(saved.id);
+  assert.equal(await record.left.text(),'left');assert.equal(await record.right.text(),'right');
+  assert.equal(record.originalEdits.exposure,.4);assert.equal(await record.preview.text(),'native PNG');assert.equal(record.preview.type,'image/png');
+  await app.archive.saveDocument(document,saved.id);record=await app.archive.get(saved.id);
+  assert.equal(record.originalEdits.exposure,.4);assert.equal(record.originalEdits.crop.width,.8);
+  assert.equal(record.sourceName,'photo.jpg');assert.equal(await record.preview.text(),'rendered master');
+  await app.archive.remove(saved.id);assert.equal(await app.archive.savePreview(saved.id,rendered,edits),null);
+});
+
+
+test('a native phone frame stays separate from the framed depth input after development',async()=>{
+  const app=harness(),document=master(),native=new Blob(['full sensor frame'],{type:'image/png'});
+  const saved=await app.archive.save(document.left,null,null,null,null,native);
+  await app.archive.saveDocument(document,saved.id);
+  const record=await app.archive.get(saved.id),[tile]=await app.archive.list();
+  assert.equal(await record.nativePhoto.text(),'full sensor frame');assert.equal(await record.left.text(),'left');
+  assert.equal(tile.nativePhoto,undefined);
+});
+
+
+test('preview writes leave the source IDB record intact and remove related entries on delete',async()=>{
+  const app=harness(),native=photo('sensor'),saved=await app.archive.save(photo('finder'),null,null,null,null,native);
+  const photos=app.stores.get('photos'),source=photos.get(saved.id);
+  await app.archive.savePreview(saved.id,photo('first'),{exposure:1});
+  await app.archive.savePreview(saved.id,photo('second'));
+  assert.equal(app.stores.get('photos').get(saved.id),source);
+  const record=await app.archive.get(saved.id);
+  assert.equal(await record.left.text(),'finder');assert.equal(await record.nativePhoto.text(),'sensor');
+  assert.equal(await record.preview.text(),'second');assert.equal(record.originalEdits.exposure,1);
+  await app.archive.remove(saved.id);assert.equal(app.stores.get('photos').size,0);
 });

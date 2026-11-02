@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import * as loopMath from '../vendor/vathography-loop.mjs';
 import {GrayGifEncoder,rgbaToGrayIndices} from '../vendor/gif-encoder.mjs';
 
-const source=(await Promise.all(['photo-adjustments','notch-rail','photo-editor','marigold-view'].map(name=>readFile(new URL('../vendor/'+name+'.mjs',import.meta.url),'utf8')))).map(text=>text.replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'')).join('\n');
+const source=(await Promise.all(['photo-geometry','photo-adjustments','notch-rail','photo-editor','marigold-view'].map(name=>readFile(new URL('../vendor/'+name+'.mjs',import.meta.url),'utf8')))).map(text=>text.replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'')).join('\n');
 const photo=new Blob(['jpeg'],{type:'image/jpeg'});
 const raw=model=>({depth:Float32Array.of(0,.3,.6,1),width:2,height:2,polarity:'far',model,source:model==='Local model'?'local':'browser',images:new Map()});
 const stereoResult=()=>({...raw('Stereo census'),source:'stereo',polarity:'near',depth:Float32Array.of(4,NaN,8,12),validity:Uint8Array.of(1,0,1,1),quantity:'disparity',units:'px',provenance:{rigId:'fixed-rig',matchedFraction:.75,metric:false,hardwareSynchronized:false}});

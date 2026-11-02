@@ -4,6 +4,7 @@ import { createDepthScene } from './vendor/scene.mjs';
 import { attachStudioControls } from './vendor/studio.mjs';
 import { snapshotBlob, savePhoto } from './vendor/photo.mjs';
 import { attachPhotoGestures } from './vendor/photo-gestures.mjs';
+import { openOriginalPhotoEditor } from './vendor/original-photo-editor.mjs';
 import { createPhotoView } from './vendor/photo-view.mjs';
 import { createMarigoldView } from './vendor/marigold-view.mjs';
 import { COLOR_SCHEMES, readColorScheme, saveColorScheme } from './vendor/color-schemes.mjs';
@@ -30,7 +31,7 @@ let sweepCapture=null,photoPanorama=null,panoramaDepth=null;
 let facingMode='environment',shutterDelay=0,shutterTimer=null,shutterCountdown=0,galleryOpen=false;
 let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,artTask=null,nextShot=null,generation=0,captureGeneration=0,cameraGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
 const photoView=createPhotoView(photo);
-const depthArt=createMarigoldView($('marigold-view'),{loopButton:$('mg-loop-play'),loopSelect:$('mg-loop-mode'),onStatus:progress,onGesture:()=>{pointer=null;lastTap=0;captureAfter=performance.now()+400},onChange:()=>{clearTimeout(documentTimer);documentTimer=setTimeout(()=>void persistDocument().catch(error=>printFeedback(failureText(error,saveFailure))),400)}});
+const depthArt=createMarigoldView($('marigold-view'),{loopButton:$('mg-loop-play'),loopSelect:$('mg-loop-mode'),onStatus:progress,onGesture:()=>{pointer=null;lastTap=0;captureAfter=performance.now()+400},onChange:()=>{archiveState.originalReview=false;clearTimeout(documentTimer);documentTimer=setTimeout(()=>void persistDocument().catch(error=>printFeedback(failureText(error,saveFailure))),400)}});
 const paletteSelection={photo:readColorScheme('photo'),depth:readColorScheme('depth')};
 const profileIndex=kind=>Math.max(0,COLOR_SCHEMES.findIndex(scheme=>scheme.id===paletteSelection[kind]));
 const studioControls=attachStudioControls([$('studio')],(kind,level)=>{
@@ -48,7 +49,7 @@ const studioControls=attachStudioControls([$('studio')],(kind,level)=>{
 finder.monochrome=studioControls.image===2;
 photoView.setStyle(COLOR_SCHEMES[studioControls.photo].style);finder.setStyle(COLOR_SCHEMES[studioControls.photo].style);
 photoView.setPalette(paletteSelection.photo);finder.setPalette(paletteSelection.photo);
-const photoGestures=attachPhotoGestures(photo,{enabled:()=>mode==='done'&&studioControls.image===0,onChange:pose=>{photoView.setTone(pose);finder.setTone(pose);Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter();schedulePreview()}});
+const photoGestures=attachPhotoGestures(photo,{enabled:()=>mode==='done'&&studioControls.image===0,onChange:(pose,edited)=>{photoView.setTone(pose);finder.setTone(pose);Object.assign(liveGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.refresh();updateRecenter();schedulePreview(edited)}});
 const liveGestures=attachPhotoGestures($('capture-plane'),{toneOnly:true,enabled:()=>mode==='camera'&&!sweepCapture?.active&&studioControls.image===0,onChange:pose=>{if(pose.grain!==photoGestures.state.grain||pose.contrast!==photoGestures.state.contrast)captureAfter=performance.now()+400;Object.assign(photoGestures.state,{grain:pose.grain,contrast:pose.contrast});photoView.setTone(pose);finder.setTone(pose)}});
 function updateRecenter(){$('recenter').hidden=mode!=='done'||(studioControls.image===0?photoGestures.state.scale<=1:studioControls.image===2?!depthArt.ready:!scene)}
 function printFeedback(message){clearTimeout(printTimer);$('print-status').textContent=message;printTimer=setTimeout(()=>{$('print-status').textContent=''},6000)}
@@ -59,6 +60,7 @@ function state(next,message='',sceneFailure=false){
   const reviewing=next!=='camera'&&!capturing&&!!photoBlob,splats=reviewing&&next==='done'&&studioControls.image===1&&scene,showPhoto=reviewing&&next==='done'&&studioControls.image===0&&photoReady,showArt=reviewing&&next==='done'&&studioControls.image===2&&depthArt.ready;
   $('finder').classList.toggle('hidden',reviewing&&next==='done');photo.hidden=!showPhoto;$('scene').classList.toggle('hidden',!splats);$('marigold-view').hidden=!showArt;$('progress').hidden=next!=='working';
   $('capture-plane').hidden=next!=='camera';$('retry').hidden=next!=='error';$('reset').hidden=next==='camera';$('save').hidden=!showPhoto&&!splats&&!showArt;$('last-photo').hidden=next!=='camera'||!photoReady;$('print').hidden=!showPhoto&&!splats&&!showArt;
+  $('review-original').hidden=!reviewing||!photoReady;
   photoView.show(showPhoto);
   $('studio').setAttribute('aria-busy',String(next==='working'));$('print').disabled=printing;
   updateRecenter();
@@ -134,32 +136,51 @@ async function persistDocument(){
   clearTimeout(documentTimer);documentTimer=0;
   if(!photoReady||!depthArt.ready)return;
   const document=makeDocument(),session=archiveState,pending=session.pending;
-  if(session.suppressed)return document;
+  if(session.suppressed||session.originalReview)return document;
   const write=(async()=>{await pending;if(session.suppressed)return;const record=await gallery.saveDocument(document,session.id??document.id);session.id=record.id;return record})();
   session.pending=write.catch(()=>null);await write;return document;
 }
-function schedulePreview(){clearTimeout(documentTimer);documentTimer=setTimeout(()=>void persistPreview().catch(error=>printFeedback(failureText(error,saveFailure))),300)}
+function schedulePreview(edited=true){if(edited)archiveState.originalReview=false;else if(archiveState.originalReview)return;clearTimeout(documentTimer);documentTimer=setTimeout(()=>void persistPreview().catch(error=>printFeedback(failureText(error,saveFailure))),300)}
 async function persistPreview(){
   clearTimeout(documentTimer);documentTimer=0;
   if(!photoReady||mode!=='done')return;
   if(studioControls.image===2)return persistDocument();
-  const session=archiveState;if(session.suppressed)return;
+  const session=archiveState;if(session.suppressed||session.originalReview)return;
   const image=snapshotBlob(studioControls.image===1?scene.snapshot(true):photoView.snapshot(photoGestures.state,true)),pending=session.pending;
   const write=(async()=>{await pending;if(session.suppressed||!session.id)return;await gallery.savePreview(session.id,image)})();
   session.pending=write.catch(()=>null);await write;
 }
-async function acceptPhoto(blob,name='entropi.jpg',stored=null,recordId=null,right=null,prepared=null,sweep=null){
+async function acceptPhoto(blob,name='entropi.jpg',stored=null,recordId=null,right=null,prepared=null,captureInfo=null){
   if(!(blob instanceof Blob)||!blob.type.startsWith('image/')||!blob.size||blob.size>40*1024*1024&&!recordId){state('error','Kamerafotoet kunne ikkje lesast.');return}
   if(photoReady&&mode==='done')void persistPreview().catch(error=>printFeedback(failureText(error,saveFailure)));
   const current=++generation;++captureGeneration;capturing=false;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=prepared?.src??URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
   state('working');
   currentDocument=stored;photoRight=stored?.right??right;photoReceivedAt=new Date().toISOString();
-  photoPanorama=stored?.panorama??sweep?.panorama??null;panoramaDepth=sweep?.result??null;
+  photoPanorama=stored?.panorama??captureInfo?.panorama??null;panoramaDepth=captureInfo?.result??null;
   if(stored||recordId||photoPanorama)studioControls.setImage(2);
   const session=archiveState;session.id=recordId??stored?.id??null;
-  session.pending=(recordId?Promise.resolve({id:recordId}):stored?gallery.saveDocument(stored):gallery.save(blob,photoRight,null,photoPanorama)).then(record=>{session.id=record?.id??session.id;return record}).catch(()=>{printFeedback('Fotoet er ikkje arkivert automatisk. Bruk lagreknappen før du går vidare.');return null});
+  session.pending=(recordId?Promise.resolve({id:recordId}):stored?gallery.saveDocument(stored):gallery.save(blob,photoRight,null,photoPanorama,null,captureInfo?.nativePhoto)).then(record=>{session.id=record?.id??session.id;return record}).catch(()=>{printFeedback('Fotoet er ikkje arkivert automatisk. Bruk lagreknappen før du går vidare.');return null});
   try{if(!prepared)await photo.decode();if(current!==generation)return;photoView.setSource(prepared??photo);photoReady=true;photoGestures.reset();if(studioControls.image===1)await makeScene();else if(studioControls.image===2)await makeDepthArt();else state('done')}
   catch(error){if(current===generation)state('error',failureText(error,'Fotoet kunne ikkje lesast.'))}
+}
+
+async function capturePhoneFrame(){
+  const source=document.createElement('canvas');let framed;
+  try{
+    source.width=video.videoWidth;source.height=video.videoHeight;
+    const ctx=source.getContext('2d');
+    if(!ctx)throw new Error('Fotoet kunne ikkje takast.');
+    ctx.drawImage(video,0,0,source.width,source.height);
+    framed=finder.capture(source);
+    const encode=canvas=>new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+    const [blob,nativePhoto]=await Promise.all([encode(framed),encode(source)]);
+    if(!blob?.size||!nativePhoto?.size)throw new Error('Fotoet kunne ikkje takast.');
+    return {blob,nativePhoto};
+  }finally{source.width=source.height=1;if(framed)framed.width=framed.height=1}
+}
+function acceptPhoneFrame({blob,nativePhoto},prepared=null){
+  const name='entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';
+  return acceptPhoto(blob,name,null,null,null,prepared,{nativePhoto});
 }
 
 async function capture(){
@@ -167,33 +188,32 @@ async function capture(){
   if(studioControls.vathography)studioControls.setImage(2);
   if(!stream){await startCamera();return}
   if(!video.videoWidth||video.readyState<2)return;
-  const current=generation,captureId=++captureGeneration;let frame;
+  const current=generation,captureId=++captureGeneration;
   capturing=true;state('working');
   try{
-    frame=finder.capture(video);
-    const blob=await new Promise(resolve=>frame.toBlob(resolve,'image/png'));
+    const frame=await capturePhoneFrame();
     if(current!==generation||captureId!==captureGeneration)return;capturing=false;if(document.hidden){state('camera');return}
-    if(blob)await acceptPhoto(blob,'entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png');else state('error','Fotoet kunne ikkje takast.')
+    await acceptPhoneFrame(frame);
   }catch(error){if(current===generation&&captureId===captureGeneration&&!document.hidden)state('error',failureText(error,'Fotoet kunne ikkje takast.'))}
-  finally{if(captureId===captureGeneration)capturing=false;if(frame)frame.width=frame.height=1}
+  finally{if(captureId===captureGeneration)capturing=false}
 }
 
 function cancelNextCapture(){nextShot=null;$('reset').disabled=false;$('print').disabled=printing;$('reset').setAttribute('aria-busy','false');for(const id of ['marigold-view','scene','photo'])$(id).inert=false}
 async function captureNext(){
   if(nextShot||capturing||printing||mode!=='done'||galleryOpen||document.hidden)return;
   const run=nextShot={},original=photoBlob,version=generation,current=()=>nextShot===run&&photoBlob===original&&generation===version&&mode==='done'&&!galleryOpen&&!document.hidden;
-  let frame,url;
+  let url;
   $('reset').disabled=true;$('print').disabled=true;$('reset').setAttribute('aria-busy','true');for(const id of ['marigold-view','scene','photo'])$(id).inert=true;
   try{
     await persistPreview();if(!current()||!await startCamera(true)||!current())return;
     if(!video.videoWidth||video.readyState<2)throw new Error('Kameraet er ikkje klart. Prøv igjen.');
-    frame=finder.capture(video);const blob=await new Promise(resolve=>frame.toBlob(resolve,'image/png'));
-    if(!current())return;if(!blob?.size)throw new Error('Fotoet kunne ikkje takast.');
-    const prepared=new Image();url=URL.createObjectURL(blob);prepared.src=url;await prepared.decode();
+    const frame=await capturePhoneFrame();
+    if(!current())return;
+    const prepared=new Image();url=URL.createObjectURL(frame.blob);prepared.src=url;await prepared.decode();
     if(!current())return;if(!prepared.naturalWidth||!prepared.naturalHeight)throw new Error('Fotoet kunne ikkje lesast.');
-    await acceptPhoto(blob,'entropi-'+new Date().toISOString().replace(/[:.]/g,'-')+'.png',null,null,null,prepared);
+    await acceptPhoneFrame(frame,prepared);
   }catch(error){if(current())printFeedback(failureText(error,'Fotoet kunne ikkje takast.'))}
-  finally{if(url&&url!==photoUrl)URL.revokeObjectURL(url);if(frame)frame.width=frame.height=1;if(nextShot===run){cancelNextCapture();if(mode==='done')stopCamera()}}
+  finally{if(url&&url!==photoUrl)URL.revokeObjectURL(url);if(nextShot===run){cancelNextCapture();if(mode==='done')stopCamera()}}
 }
 function reset(){cancelNextCapture();if(photoReady&&mode==='done')void persistPreview().catch(error=>printFeedback(failureText(error,saveFailure)));++captureGeneration;capturing=false;if(!photoReady){++generation;clearScene();clearPhoto()}stopCamera();finder.clear();pointer=null;lastTap=0;state('camera');if(hadCamera)void startCamera()}
 async function printCurrent(){const source=scene,blob=photoBlob,image=studioControls.image,result=depthArt.result;if(printing||nextShot||mode!=='done'||!photoReady||image===1&&!source||image===2&&!depthArt.ready)return;printing=true;$('print').disabled=true;try{await printClient.print(image===0?photoView.snapshot(photoGestures.state):image===2?depthArt.snapshot(false):source.snapshot(),()=>mode==='done'&&blob===photoBlob&&image===studioControls.image&&(image===0||image===1&&source===scene||image===2&&result===depthArt.result))}catch(error){printFeedback(failureText(error,'Kunne ikkje skrive ut.'))}finally{printing=false;$('print').disabled=false}}
@@ -323,7 +343,7 @@ async function showPhoneRecord(id){
   const pending=!record.preview&&!record.document;
   $('phone-vault-edit').hidden=!record.document&&!pending&&!record.sourceName;
   $('phone-vault-edit').setAttribute('aria-label',pending?'Framkall originalopptaket':'Framkall Entropi-biletet');
-  $('phone-vault-save').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':pending?'Lagre original':'Lagre biletet');
+  $('phone-vault-save').setAttribute('aria-label',record.document&&record.previewMatchesDocument?'Eksporter VATHOgraphy':pending?'Lagre original':'Lagre biletet');
   $('phone-vault-image').alt=(pending?'Originalopptak, ikkje framkalla':'Arkivert foto')+'. '+(galleryItems.findIndex(item=>item.id===id)+1)+' av '+galleryItems.length;
   $('phone-vault-detail').classList.toggle('pending',pending);
   if(galleryImageUrl)URL.revokeObjectURL(galleryImageUrl);
@@ -364,6 +384,42 @@ $('phone-vault-import').addEventListener('click',()=>{
     refresh:openPhoneGallery,feedback:phoneImportNotice
   });
 });
+async function editPhoneOriginal(){
+  const record=galleryRecord,opening=galleryGeneration;
+  if(!record)return;
+  const current=()=>galleryOpen&&galleryCurrent===record.id&&opening===galleryGeneration;
+  try{
+    const saved=await openOriginalPhotoEditor(record,async(edits,rendered)=>{
+      const session=archiveState;
+      if(session.id===record.id)await session.pending;
+      const info=await gallery.savePreview(record.id,rendered,edits);
+      if(info&&session.id===record.id)session.originalReview=true;
+      return info;
+    });
+    if(!saved||!current())return;
+    const index=galleryItems.findIndex(item=>item.id===record.id);
+    if(index>=0){
+      galleryItems[index]=saved;
+      const tile=$('phone-vault-grid').children[index];
+      tile.querySelector('img').src=galleryUrl(saved.preview);tile.classList.remove('pending');
+      tile.querySelector('.archive-pending-mark')?.remove();
+      tile.setAttribute('aria-label','Opptak frå '+new Date(saved.created).toLocaleString('nn-NO'));
+    }
+    await showPhoneRecord(record.id);
+  }catch(error){if(current())phoneImportNotice(failureText(error,'Kunne ikkje redigere originalfotoet.'))}
+}
+$('phone-vault-original').addEventListener('click',editPhoneOriginal);
+$('review-original').addEventListener('click',async()=>{
+  const session=archiveState;
+  await session.pending;
+  if(session!==archiveState||!photoReady)return;
+  if(!session.id){printFeedback('Fotoet må vere lagra i arkivet før redigering.');return}
+  const opening=galleryGeneration+1;
+  await openPhoneGallery();
+  if(!galleryOpen||galleryGeneration!==opening)return;
+  await showPhoneRecord(session.id);
+  if(galleryCurrent===session.id)await editPhoneOriginal();
+});
 $('phone-vault-edit').addEventListener('click',async()=>{
   const id=galleryCurrent,opening=galleryGeneration,isCurrent=()=>galleryOpen&&opening===galleryGeneration&&id===galleryCurrent;if(!id||!isCurrent())return;
   let record;
@@ -395,7 +451,7 @@ window.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&galleryOpen){event.preventDefault();if(!$('phone-vault-detail').hidden)backPhoneGallery();else closePhoneGallery()}
   else if(!$('phone-vault-detail').hidden&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();stepPhoneGallery(event.key==='ArrowRight'?1:-1)}
   else if(event.key==='Tab'){
-    const controls=[$('phone-vault-import'),$('phone-vault-close'),...($('phone-vault-errors').hidden?[]:[$('phone-vault-errors-summary')]),...($('phone-vault-detail').hidden?Array.from($('phone-vault-grid').children):[$('phone-vault-edit'),$('phone-vault-save'),$('phone-vault-remove'),$('phone-vault-back')])].filter(control=>(control.tagName==='BUTTON'||control.tagName==='SUMMARY')&&!control.hidden&&!control.disabled);
+    const controls=[$('phone-vault-import'),$('phone-vault-close'),...($('phone-vault-errors').hidden?[]:[$('phone-vault-errors-summary')]),...($('phone-vault-detail').hidden?Array.from($('phone-vault-grid').children):[$('phone-vault-original'),$('phone-vault-edit'),$('phone-vault-save'),$('phone-vault-remove'),$('phone-vault-back')])].filter(control=>(control.tagName==='BUTTON'||control.tagName==='SUMMARY')&&!control.hidden&&!control.disabled);
     event.preventDefault();const index=controls.indexOf(document.activeElement),next=index<0?(event.shiftKey?controls.length-1:0):(index+(event.shiftKey?-1:1)+controls.length)%controls.length;
     controls[next]?.focus({preventScroll:true});
   }

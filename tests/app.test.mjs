@@ -29,6 +29,7 @@ function harness(options={}){
     setAttribute(name,value){this.attributes.set(name,String(value))}
     getAttribute(name){return this.attributes.get(name)??null}
     removeAttribute(name){this.attributes.delete(name);if(name==='src')this.src=''}
+    querySelector(selector){return this.children.find(node=>selector==='img'?node.tagName==='IMG':node.className===selector.slice(1))??null}
     closest(selector){return selector.split(',').some(tag=>tag.trim().toUpperCase()===this.tagName)?this:null}
     replaceChildren(...children){this.children=children}
     appendChild(child){this.children.push(child);return child}
@@ -60,7 +61,7 @@ function harness(options={}){
         return element.emit(element.files.length?'change':'cancel');
       };
     }
-    if(tag==='canvas'){element.getContext=()=>({drawImage(){},getImageData:(x,y,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})});element.toBlob=(callback,type)=>options.toBlob?options.toBlob(callback,type):callback(new Blob(['camera-jpeg'],{type}))}
+    if(tag==='canvas'){element.getContext=()=>({drawImage(source){element.drawnSource=source},getImageData:(x,y,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})});element.toBlob=(callback,type)=>options.toBlob&&element.framed?options.toBlob(callback,type):callback(new Blob(['camera-jpeg'],{type}))}
     return element;
   }};
   const media={getTracks:()=>[{stop(){stopped++}}]};
@@ -74,12 +75,12 @@ function harness(options={}){
     createEntropiDocument,bindExportGesture:(button,getOptions)=>button.addEventListener('click',async()=>{const options=getOptions();if(!options||!options.isCurrent())return;try{const blob=await options.image();if(options.isCurrent())saves.push({blob,name:options.name.replace(/\.[^.]+$/,'')+'.'+(options.imageExtension??'png'),isCurrent:options.isCurrent,options})}catch(error){options.onError?.(error)}}),
     readVathographyPNG:async file=>file.master?file:null,
     decodeEntropiDocument:async file=>{if(!file.master)throw Error('Invalid Entropi file');return file.master},
-    createArchive:()=>options.archive??({saveDocument:async document=>({id:document.id}),save:async()=>({}),savePreview:async()=>null,list:async()=>[],get:async()=>null,remove:async()=>{}}),
+    openOriginalPhotoEditor:options.editOriginal,createArchive:()=>options.archive??({saveDocument:async document=>({id:document.id}),save:async()=>({}),savePreview:async()=>null,list:async()=>[],get:async()=>null,remove:async()=>{}}),
     location:{search:''},URLSearchParams,
-    Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
+    Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;canvas.framed=true;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
     attachStudioControls:(hosts,onChange,enabled,onGesture)=>{studioBindings.push({hosts,onChange,enabled,onGesture});return studioControls},
     readColorScheme:()=> 'macintosh',saveColorScheme:(kind,id)=>savedSchemes.push([kind,id]),attachColorSchemeControls:()=>({refresh(){},dispose(){}}),
-    attachPhotoGestures:(image,binding)=>{const state=binding.toneOnly?liveGestureState:photoGestureState;if(binding.toneOnly)liveGestureBinding=binding;else photoGestureBinding=binding;return {state,reset(){Object.assign(state,{scale:1,x:0,y:0});binding.onChange(state)},refresh(){binding.onChange(state)},dispose(){}}},
+    attachPhotoGestures:(image,binding)=>{const state=binding.toneOnly?liveGestureState:photoGestureState;if(binding.toneOnly)liveGestureBinding=binding;else photoGestureBinding=binding;return {state,reset(){Object.assign(state,{scale:1,x:0,y:0});binding.onChange(state,false)},refresh(){binding.onChange(state,false)},dispose(){}}},
     createPhotoView:image=>{const viewer={image,source:null,sources:[],style:0,tone:{grain:1,contrast:1},shown:false,shows:[],refreshes:0,snapshots:[],disposed:false,setSource(source=image){this.source=source;this.sources.push(source)},setStyle(level){this.style=level},setPalette(id){this.palette=id},setTone(pose){for(const key of ['grain','contrast'])if(pose[key]!==undefined)this.tone[key]=pose[key]},show(visible){this.shown=Boolean(visible);this.shows.push(this.shown)},refresh(){this.refreshes++},snapshot(pose,native=false){const result={...context.photoSnapshot(image,pose,native),style:this.style,tone:{...this.tone}};this.snapshots.push({pose:{...pose},native,result});return result},dispose(){this.disposed=true}};photoViews.push(viewer);return viewer},
     snapshotBlob:image=>{encodedSnapshots.push(image);return new Blob(['rendered-png'],{type:'image/png'})},savePhoto:(blob,name,isCurrent)=>{saves.push({blob,name,isCurrent});return Promise.resolve()},
     PX10Printer:class{},cloudPrintJob:()=>new Uint8Array(),
@@ -158,7 +159,7 @@ test('the first capture gesture opens the camera and the second processes the de
   assert.equal(app.artCalls.length,1);
   assert.equal(app.get('marigold-view').hidden,false);
   assert.equal(app.get('photo').hidden,true);
-  assert.equal(app.finders[0].captures[0].source,app.get('video'));
+  assert.equal(app.finders[0].captures[0].source.drawnSource,app.get('video'));
   assert.equal(app.artCalls[0].blob,app.urls.get(app.get('photo').src));
   assert.match(app.get('photo').src,/^blob:/);
   assert.equal(app.get('studio').className,'studio done');
@@ -243,7 +244,7 @@ test('switching photo to pending splats immediately hides both image layers and 
 
 test('native camera capture encodes the finder framing once and keeps the frozen finder visible',async()=>{
   const callbacks=[],types=[],app=harness({image:1,toBlob:(callback,type)=>{callbacks.push(callback);types.push(type)}});await app.get('capture-plane').emit('click');await app.get('capture-plane').emit('click');assert.equal(app.finders[0].captures.length,1);assert.equal(app.finders[0].active,false);assert.equal(app.get('finder').classList.contains('hidden'),false);assert.equal(app.get('photo').hidden,true);assert.equal(app.get('scene').classList.contains('hidden'),true);assert.equal(app.get('progress').hidden,false);assert.deepEqual(types,['image/png']);
-  const blob=new Blob(['framed-color'],{type:'image/png'});callbacks[0](blob);await app.tick(0);assert.equal(app.sceneCalls[0].blob,blob);assert.equal(app.finders[0].captures[0].source,app.get('video'));assert.equal(app.finders[0].captures[0].canvas.width,1);assert.equal(app.finders[0].captures[0].canvas.height,1);app.changeStudio('image',0);app.changeStudio('image',1);assert.equal(app.finders[0].captures.length,1);
+  const blob=new Blob(['framed-color'],{type:'image/png'});callbacks[0](blob);await app.tick(0);assert.equal(app.sceneCalls[0].blob,blob);assert.equal(app.finders[0].captures[0].source.drawnSource,app.get('video'));assert.equal(app.finders[0].captures[0].canvas.width,1);assert.equal(app.finders[0].captures[0].canvas.height,1);app.changeStudio('image',0);app.changeStudio('image',1);assert.equal(app.finders[0].captures.length,1);
 });
 
 test('returning to the camera keeps pending splats without letting a late result reopen review',async()=>{
@@ -564,7 +565,7 @@ function archiveFixture(){
     async save(left,right=null,preview=left,panorama=null,sourceName){const id='capture-'+ ++nextId;records.set(id,{id,left,right,sourceName,created:nextId,preview,pending:!preview});return {id}},
     async importDocument(document){return this.saveDocument(document,'import-'+ ++nextId)},
     async saveDocument(document,id=document.id){writes.push({document,id});if(state.failSave)throw new DOMException('Storage full','QuotaExceededError');if(state.blockedSave)await state.blockedSave.promise;const previous=records.get(id);records.set(id,{id,left:document.left,right:document.right,document,created:previous?.created??nextId++,preview:document.preview});return {id}},
-    async savePreview(id,preview){const record=records.get(id);if(!record)return null;previewWrites.push({id,preview});record.preview=preview;record.pending=false;return {id}},
+    async savePreview(id,preview,originalEdits){const record=records.get(id);if(!record)return null;previewWrites.push({id,preview});record.preview=preview;record.pending=false;if(originalEdits)record.originalEdits=originalEdits;return {id,preview,created:record.created}},
     async list(){return [...records.values()].map(({id,created,preview,pending,left})=>({id,created,preview:preview??left,pending}))},
     async get(id){return records.get(id)},
     async remove(id){if(state.failRemove)throw new Error('Delete failed');if(state.blockedRemove)await state.blockedRemove.promise;removed.push(id);records.delete(id);state.failSave=false}
@@ -838,4 +839,18 @@ for(const outcome of ['resolve','reject'])test(`a delayed edit ${outcome} cannot
   await app.get('phone-vault-close').emit('click');store.archive.get=read;await app.get('open-gallery').emit('click');await app.get('phone-vault-grid').children[0].emit('click');
   if(outcome==='resolve')pending.resolve(record);else pending.reject(new Error('Stale edit error'));await flush();
   assert.equal(app.get('phone-vault').hidden,false);assert.equal(app.artCalls.length,0);assert.equal(app.get('print-status').textContent,'');
+});
+
+
+test('current RGB edit survives leaving the archive and a passive photo refresh',async()=>{
+  const store=archiveFixture(),edited=new Blob(['native RGB edit'],{type:'image/png'}),recipe={exposure:.4};
+  const app=harness({image:0,archive:store.archive,editOriginal:async(record,save)=>save(recipe,edited)});
+  const original=await photoFromDevice(app);await app.get('review-original').emit('click',{},true);
+  assert.equal(store.records.get('capture-1').left,original);
+  assert.equal(app.urls.get(app.get('phone-vault-image').src),edited);
+  assert.equal(store.records.get('capture-1').originalEdits,recipe);
+  await app.get('phone-vault-close').emit('click');await app.visibility(true);await app.visibility(false);await app.tick(400);
+  await app.get('open-gallery').emit('click');assert.equal(store.records.get('capture-1').preview,edited);
+  await app.get('phone-vault-close').emit('click');app.gesturePhoto({grain:3});await app.tick(400);
+  assert.notEqual(store.records.get('capture-1').preview,edited);
 });

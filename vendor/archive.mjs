@@ -1,6 +1,9 @@
 import {normalizePanorama} from './entropi-document.mjs';
 
 const archiveName='entropi-gallery-v1';
+// Composite keys cannot collide with the string IDs of photos and imported documents.
+const previewKey=id=>['preview',id];
+const nativePhotoKey=id=>['camera',id];
 const newRecordId=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
 
 function openArchive(){
@@ -58,20 +61,27 @@ export function createArchive(){
     const rendered=document.preview??(imported?document.left:null);
     if(!id||!(document.left instanceof Blob)||!document.result?.depth||!(rendered instanceof Blob))throw new Error('Ugyldig Entropi-dokument.');
     const panorama=normalizePanorama(document.panorama);if(panorama){if(document.right!=null)throw new Error('Ugyldig panorama.');document={...document,panorama}}
-    const db=await connect(),existing=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').get(id));
-    const preview=await thumbnail(rendered).catch(()=>null)??rendered;
-    const source=existing?.sourceName?{sourceName:existing.sourceName}:{};
-    const info={id,...source,created:existing?.created??Date.parse(document.created),stereo:!!document.right||!!panorama?.frames.some(frame=>frame.right),preview,pending:false,previewMatchesDocument:!!document.preview};
-    await transact(db,['photos','index'],'readwrite',tx=>{
-      tx.objectStore('photos').put({id,...source,left:document.left,right:document.right,document,preview:document.preview,previewMatchesDocument:!!document.preview,...(panorama?{panorama}:{})});
-      tx.objectStore('index').put(info);
+    const db=await connect(),preview=await thumbnail(rendered).catch(()=>null)??rendered;
+    return transact(db,['photos','index'],'readwrite',tx=>{
+      const index=tx.objectStore('index'),previous=index.get(id),saved={};
+      previous.onsuccess=()=>{
+        const existing=previous.result;
+        const source=existing?.sourceName?{sourceName:existing.sourceName}:{};
+        const original=existing?.originalEdits?{originalEdits:existing.originalEdits}:{};
+        saved.result={id,...source,...original,created:existing?.created??Date.parse(document.created),stereo:!!document.right||!!panorama?.frames.some(frame=>frame.right),preview,pending:false,previewMatchesDocument:!!document.preview};
+        const photos=tx.objectStore('photos');
+        photos.put({id,...source,...original,left:document.left,right:document.right,document,preview:document.preview,previewMatchesDocument:!!document.preview,...(panorama?{panorama}:{})});
+        photos.delete(previewKey(id));
+        index.put(saved.result);
+      };
+      return saved;
     });
-    return info;
   }
   return {
-    async save(left,right=null,rendered=left,panorama=null,sourceName=null){
+    async save(left,right=null,rendered=left,panorama=null,sourceName=null,nativePhoto=null){
       requestPersistence();
       if(!(left instanceof Blob)||!left.size||right&&(!(right instanceof Blob)||!right.size))throw new Error('Manglar gyldige originalbilete.');
+      if(nativePhoto!==null&&(!(nativePhoto instanceof Blob)||!nativePhoto.size))throw new Error('Ugyldig kameraoriginal.');
       if(rendered!==null&&(!(rendered instanceof Blob)||!rendered.size))throw new Error('Manglar gyldig framkalla bilete.');
       const sweep=normalizePanorama(panorama);
       if(sweep&&(right!==null||left.size+(rendered?.size??0)+sweep.frames.reduce((sum,frame)=>sum+frame.left.size+(frame.right?.size??0),0)>128*1024*1024))throw new Error('Ugyldig panorama.');
@@ -86,12 +96,14 @@ export function createArchive(){
       const source=sourceName!==null?{sourceName}:{};
       const info={id,...source,created:Date.now(),stereo:!!right||!!sweep?.frames.some(frame=>frame.right),preview,pending:rendered===null,previewMatchesDocument:false};
       await transact(db,['photos','index'],'readwrite',tx=>{
-        tx.objectStore('photos').put({id,...source,left,right,preview:rendered,previewMatchesDocument:false,...(sweep?{panorama:sweep}:{})});
+        const photos=tx.objectStore('photos');
+        if(nativePhoto)photos.put({id:nativePhotoKey(id),blob:nativePhoto});
+        photos.put({id,...source,left,right,preview:rendered,previewMatchesDocument:false,...(sweep?{panorama:sweep}:{})});
         tx.objectStore('index').put(info);
       });
       return info;
     },
-    async savePreview(id,blob){
+    async savePreview(id,blob,originalEdits){
       requestPersistence();
       if(!id||!(blob instanceof Blob)||!blob.size)throw new Error('Manglar gyldig framkalla bilete.');
       const preview=await thumbnail(blob).catch(()=>null)??blob,db=await connect();
@@ -104,7 +116,14 @@ export function createArchive(){
           const index=tx.objectStore('index').get(id);
           index.onsuccess=()=>{
             if(!index.result)return;
-            try{result={...index.result,preview,pending:false,previewMatchesDocument:false};tx.objectStore('photos').put({...photo.result,preview:blob,previewMatchesDocument:false});tx.objectStore('index').put(result)}
+            try{
+              const original=originalEdits?{originalEdits}:{};
+              result={...index.result,...original,preview,pending:false,previewMatchesDocument:false};
+              // Replacing the source record with its own IndexedDB-backed Blobs can
+              // invalidate their backing files in WebKit. Only replace the rendering.
+              tx.objectStore('photos').put({id:previewKey(id),preview:blob,originalEdits:result.originalEdits});
+              tx.objectStore('index').put(result);
+            }
             catch(error){reject(error);tx.abort()}
           };
         };
@@ -123,7 +142,20 @@ export function createArchive(){
     // An imported selection can contain differently edited copies of the same master.
     importDocument(document){return storeDocument(document,newRecordId(),true)},
     async get(id){
-      const db=await connect(),record=await transact(db,['photos'],'readonly',tx=>tx.objectStore('photos').get(id));
+      const db=await connect(),record=await transact(db,['photos'],'readonly',tx=>{
+        const photos=tx.objectStore('photos'),source=photos.get(id),render=photos.get(previewKey(id)),native=photos.get(nativePhotoKey(id)),joined={};
+        native.onsuccess=()=>{
+          if(!source.result)return;
+          joined.result={...source.result};
+          if(native.result)joined.result.nativePhoto=native.result.blob;
+          if(render.result){
+            joined.result.preview=render.result.preview;
+            joined.result.previewMatchesDocument=false;
+            if(render.result.originalEdits)joined.result.originalEdits=render.result.originalEdits;
+          }
+        };
+        return joined;
+      });
       if(!record)return record;
       // Legacy records are safe only when no independent preview can replace the master.
       const hasMaster=!!record.document?.result?.depth&&record.document.preview instanceof Blob;
@@ -134,7 +166,8 @@ export function createArchive(){
     async remove(id){
       const db=await connect();
       await transact(db,['photos','index'],'readwrite',tx=>{
-        tx.objectStore('photos').delete(id);
+        const photos=tx.objectStore('photos');
+        photos.delete(id);photos.delete(previewKey(id));photos.delete(nativePhotoKey(id));
         tx.objectStore('index').delete(id);
       });
     }
