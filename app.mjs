@@ -30,7 +30,7 @@ let sweepCapture=null,photoPanorama=null,panoramaDepth=null;
 let facingMode='environment',shutterDelay=0,shutterTimer=null,shutterCountdown=0,galleryOpen=false;
 let mode='camera',stream=null,photoBlob=null,photoUrl=null,photoReady=false,photoName='entropi.jpg',scene=null,task=null,artTask=null,nextShot=null,generation=0,captureGeneration=0,cameraGeneration=0,openingCamera=false,hadCamera=false,capturing=false,printing=false,retryScene=false,printTimer=0,pointer=null,lastTap=0,captureAfter=0;
 const photoView=createPhotoView(photo);
-const depthArt=createMarigoldView($('marigold-view'),{onStatus:progress,onGesture:()=>{pointer=null;lastTap=0;captureAfter=performance.now()+400},onChange:()=>{clearTimeout(documentTimer);documentTimer=setTimeout(()=>void persistDocument().catch(error=>printFeedback(failureText(error,saveFailure))),400)}});
+const depthArt=createMarigoldView($('marigold-view'),{loopButton:$('mg-loop-play'),loopSelect:$('mg-loop-mode'),onStatus:progress,onGesture:()=>{pointer=null;lastTap=0;captureAfter=performance.now()+400},onChange:()=>{clearTimeout(documentTimer);documentTimer=setTimeout(()=>void persistDocument().catch(error=>printFeedback(failureText(error,saveFailure))),400)}});
 const paletteSelection={photo:readColorScheme('photo'),depth:readColorScheme('depth')};
 const profileIndex=kind=>Math.max(0,COLOR_SCHEMES.findIndex(scheme=>scheme.id===paletteSelection[kind]));
 const studioControls=attachStudioControls([$('studio')],(kind,level)=>{

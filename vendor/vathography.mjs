@@ -60,10 +60,20 @@ function pchip(knots){
 
 const toneLuts=curves.map(knots=>{const evaluate=pchip(knots);return Float32Array.from({length:4097},(_,i)=>evaluate(i/4096)*255)});
 
-export function toneDepth(depth,width,height,{preset=0,position=0,width:bandWidth=1,outputWidth=width,outputHeight=height,validity,bitDepth=8}={}){
+// Validate a fixed depth field once when many tones will be rendered from it.
+export function prepareToneDepth(depth,width,height,validity){
   dimensions(depth,width,height);
+  if(validity){
+    if(validity.length!==depth.length)throw new Error('Ugyldig stereomaske.');
+    for(let i=0;i<validity.length;i++)if(validity[i]!==0&&validity[i]!==1)throw new Error('Ugyldig stereomaske.');
+  }
+  return options=>renderToneDepth(depth,width,height,validity,options);
+}
+export function toneDepth(depth,width,height,options={}){
+  return prepareToneDepth(depth,width,height,options.validity)(options);
+}
+function renderToneDepth(depth,width,height,validity,{preset=0,position=0,width:bandWidth=1,outputWidth=width,outputHeight=height,bitDepth=8}={}){
   if(bitDepth!==8&&bitDepth!==16)throw new Error('Ugyldig bitdjupn.');
-  if(validity&&(validity.length!==depth.length||Array.from(validity).some(value=>value!==0&&value!==1)))throw new Error('Ugyldig stereomaske.');
   if(!Number.isInteger(outputWidth)||!Number.isInteger(outputHeight)||outputWidth<1||outputHeight<1||outputWidth*outputHeight>16777216)throw new Error('Ugyldig biletstorleik.');
   const selected=typeof preset==='string'?VATHOGRAPHY_PRESETS.findIndex(item=>item.id===preset):preset;
   const lut=toneLuts[Number.isInteger(selected)&&selected>=0&&selected<toneLuts.length?selected:0];

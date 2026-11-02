@@ -54,7 +54,7 @@ function harness({endpoint=null,localFails=false,browserFails=false,photoWidth=2
     runStereoDepth:async(...args)=>{calls.stereo++;return stereoRun?stereoRun(...args):stereoResult()},
     runLocalDepth:async(...args)=>{calls.local++;if(localRun)return localRun(...args);if(localFails)throw new Error('Local service unavailable');return raw('Local model')},
     runBrowserDepth:async(...args)=>{calls.browser++;if(browserRun)return browserRun(...args);if(browserFails)throw Object.assign(new Error('Klargjer telefonen.'),{code:'PHONE_SETUP_REQUIRED'});return raw('Browser model')},
-    normalizeDepth:(depth,options)=>{normalizations.push({depth,...options});return depth},toneDepth:(_,width,height,options)=>{renders.push(options);return new Uint8ClampedArray((options.outputWidth||width)*(options.outputHeight||height)*4)},decodeSpectral(){throw new Error('Unexpected color map')},print(){throw new Error('Unexpected print')},
+    normalizeDepth:(depth,options)=>{normalizations.push({depth,...options});return depth},prepareToneDepth:(_,width,height,validity)=>options=>{renders.push({...options,validity});return new Uint8ClampedArray((options.outputWidth||width)*(options.outputHeight||height)*4)},decodeSpectral(){throw new Error('Unexpected color map')},print(){throw new Error('Unexpected print')},
     VATHOGRAPHY_PRESETS:[{label:'Band'},{label:'Mist'},{label:'Abyss'},{label:'Near'},{label:'Planes'}]
   });
   const original=host.querySelector('.mg-original');original.naturalWidth=photoWidth;original.naturalHeight=photoHeight;
@@ -435,17 +435,35 @@ test('explicit loop toggle starts and stops a persistent depth animation without
   assert.equal(app.view.loopActive,true);
   assert.equal(button.attributes.get('aria-pressed'),'true');
   app.flush();
-  const canvas=findNode(app.host,'mg-loop-art');
-  assert.ok(canvas&&!canvas.hidden);
+  const canvas=findNode(app.host,'mg-art');
+  assert.ok(canvas&&!canvas.hidden);assert.ok(!findNode(app.host,'mg-loop-art'));
+  app.advance(750);app.flush();assert.notEqual(app.renders.at(-1).position,app.view.recipe.position);
   app.advance(10000);app.flush();
   assert.equal(canvas.hidden,false,'loop does not stop after the original one-shot pulse');
   assert.deepEqual([...result.depth],values);
   assert.equal(JSON.stringify(app.view.recipe),recipe);
   button.events.get('click')();
   assert.equal(app.view.loopActive,false);
-  assert.equal(canvas.hidden,true);
+  assert.equal(canvas.hidden,false);assert.equal(app.renders.at(-1).position,app.view.recipe.position);
   assert.equal(button.attributes.get('aria-pressed'),'false');
   app.view.dispose();assert.equal(app.frames.size,0);
+});
+
+test('adjusting a running loop rebases on the actual drag and stopping restores the full-size still',async()=>{
+  const app=harness({photoWidth:1600,photoHeight:1200,reducedMotion:true});
+  await app.view.process(photo);
+  app.view.setLoopMode('weave');
+  app.host.querySelector('.mg-loop').events.get('click')();
+  app.flush();app.advance(750);app.flush();
+  assert.equal(app.renders.at(-1).outputWidth,512);
+  const before=app.changes;app.emit('pointerdown');app.emit('pointermove',{clientX:139});app.flush();app.emit('pointerup');app.flush();
+  assert.ok(Math.abs(app.view.recipe.position-.1)<1e-9);assert.equal(app.changes,before+1);
+  app.advance(50);app.flush();app.advance(750);app.flush();
+  const tone=loopMath.loopToneParameters(app.view.recipe,'weave',.25);
+  assert.equal(app.renders.at(-1).position,tone.position);assert.equal(app.renders.at(-1).width,tone.width);
+  app.host.querySelector('.mg-loop').events.get('click')();
+  assert.equal(app.renders.at(-1).outputWidth,1600);assert.equal(app.renders.at(-1).position,app.view.recipe.position);
+  app.view.dispose();
 });
 
 test('actual VATHOgraphy image can be exported as a looping GIF without changing depth values',async()=>{

@@ -65,8 +65,11 @@
 <div id="marigold-view" class="mg-view" role="group" aria-label="VATHOgraphy" hidden>
 <img class="mg-output" alt="" aria-hidden="true"><img class="mg-original" alt="" aria-hidden="true"><div class="mg-seam" role="slider" aria-label="Samanlikningsgrense" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"></div>
 <div class="mg-variants" role="group" aria-label="VATHOgraphy-uttrykk"></div>
-<button class="mg-loop" type="button" aria-label="Slå på animasjonsløkke" title="Djupneanimasjon av/på. Eksporter via Lagre → Loop GIF." aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.2 8.2A7 7 0 0 1 18.5 6L20 7M4 17l1.5 1A7 7 0 0 0 17.8 15.8"/></svg></button>
 <button class="mg-compare" aria-label="Samanlikn med originalfoto" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 3h18v18H3zM3 3h9v18H3z"/></svg></button></div>
+<div id="mg-loop-controls" class="mg-loop-controls" role="group" aria-label="GIF-løkke">
+<button id="mg-loop-play" class="mg-loop" type="button" aria-label="Spel av GIF-løkka" title="Spel av eller stans GIF-løkka" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.2 8.2A7 7 0 0 1 18.5 6L20 7M4 17l1.5 1A7 7 0 0 0 17.8 15.8"/></svg></button>
+<label for="mg-loop-mode">GIF</label><select id="mg-loop-mode" aria-label="Rørsle i GIF-løkka"></select>
+</div>
 <button id="review-gallery" class="access-control gallery-open" type="button" aria-label="Opne fotoarkivet"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="m3 10 6-3 6 3 6-3M8 14h8"/></svg></button>
 <button id="close-photo" class="access-control camera-return" aria-label="Tilbake til kameraet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4l2-3h4l2 3h4v14H4z"/><circle cx="12" cy="12" r="4"/></svg></button>
 <button id="recenter-photo" class="access-control top" aria-label="Sentrer biletet" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6"/><path d="M12 3v4m0 10v4M3 12h4m10 0h4"/></svg></button>
@@ -112,7 +115,7 @@ let photoOriginal=null,artTask=null,artError='',artVisible=false,captureDocument
 let sweepCapture=null,photoPanorama=null,panoramaDepth=null,sweepPaired=false,sensorControlBusy=false;
 let reviewDown=null,reviewTap=null,photoGestures=null,photoPose={scale:1,x:0,y:0,grain:1,contrast:1};
 const photoView=createPhotoView($('photo'));
-const marigoldView=createMarigoldView($('marigold-view'),{onStatus:update=>{if(artTask&&studioControls.image===2){$('scene-progress').classList.toggle('indeterminate',!Number.isFinite(update.percent));$('scene-progress-bar').style.strokeDasharray=Number.isFinite(update.percent)?Math.max(0,Math.min(100,update.percent))+' 100':'';refreshReview()}},onGesture:()=>{reviewDown=reviewTap=null},onChange:()=>{if(captureDocument)scheduleMasterSave()}});
+const marigoldView=createMarigoldView($('marigold-view'),{loopButton:$('mg-loop-play'),loopSelect:$('mg-loop-mode'),onStatus:update=>{if(artTask&&studioControls.image===2){$('scene-progress').classList.toggle('indeterminate',!Number.isFinite(update.percent));$('scene-progress-bar').style.strokeDasharray=Number.isFinite(update.percent)?Math.max(0,Math.min(100,update.percent))+' 100':'';refreshReview()}},onGesture:()=>{reviewDown=reviewTap=null},onChange:()=>{if(captureDocument)scheduleMasterSave()}});
 const paletteSelection={photo:readColorScheme('photo'),depth:readColorScheme('depth')};
 const profileIndex=kind=>Math.max(0,COLOR_SCHEMES.findIndex(scheme=>scheme.id===paletteSelection[kind]));
 const studioControls=attachStudioControls([studio,photoDialog],(kind,level)=>{

@@ -43,7 +43,7 @@ def exercise(browser_type, directory):
         loop = page.locator(".mg-loop")
         loop.click()
         assert loop.get_attribute("aria-pressed") == "true"
-        page.wait_for_function("!document.querySelector('.mg-loop-art').hidden")
+        page.wait_for_function("!document.querySelector('.mg-art').hidden")
         outputs = {}
         for label in ("VATHO PNG", "Loop GIF"):
             page.locator("#save-photo").press("ArrowUp")

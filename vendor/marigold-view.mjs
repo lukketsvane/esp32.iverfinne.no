@@ -1,50 +1,47 @@
 import { localDepthEndpoint, runLocalDepth, runBrowserDepth } from './depth-source.mjs';
 import { runStereoDepth } from './stereo-depth.mjs';
-import { normalizeDepth, toneDepth, VATHOGRAPHY_PRESETS } from './vathography.mjs';
+import { normalizeDepth, prepareToneDepth, VATHOGRAPHY_PRESETS } from './vathography.mjs';
 import { normalizePhotoEdits, photoEditsNeutral, applyPhotoEdits } from './photo-adjustments.mjs';
 import { createPhotoEditor } from './photo-editor.mjs';
 import { attachNotchRail } from './notch-rail.mjs';
 import { applyPanoramaMask } from './panorama.mjs';
-import {loopPhase,loopFramePhase,sampleLoopDepth,renderLoopFrame,VATHO_LOOP_FRAMES,VATHO_LOOP_SECONDS,VATHO_LOOP_FPS,VATHO_GIF_MAX_EDGE} from './vathography-loop.mjs';
-import {GrayGifEncoder,rgbaToGrayIndices} from './gif-encoder.mjs';
+import {VATHO_LOOP_MODES,loopToneParameters,loopPhase,loopFramePhase,VATHO_LOOP_FRAMES,VATHO_LOOP_FPS,VATHO_GIF_MAX_EDGE} from './vathography-loop.mjs';
+import {GrayGifEncoder} from './gif-encoder.mjs';
 
-export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserDepth,stereo=runStereoDepth,onStatus=()=>{},onGesture=()=>{},onChange=()=>{}}={}){
-  const output=host.querySelector('.mg-output'),original=host.querySelector('.mg-original'),seam=host.querySelector('.mg-seam'),compare=host.querySelector('.mg-compare'),loopButton=host.querySelector('.mg-loop'),rail=host.querySelector('.mg-variants');
+export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserDepth,stereo=runStereoDepth,onStatus=()=>{},onGesture=()=>{},onChange=()=>{},loopButton=host.querySelector('.mg-loop'),loopSelect=null}={}){
+  const output=host.querySelector('.mg-output'),original=host.querySelector('.mg-original'),seam=host.querySelector('.mg-seam'),compare=host.querySelector('.mg-compare'),rail=host.querySelector('.mg-variants');
   const art=document.createElement('canvas');art.className='mg-art';art.hidden=true;host.prepend(art);
   const croppedOriginal=document.createElement('canvas');croppedOriginal.className='mg-original mg-original-crop';croppedOriginal.hidden=true;host.appendChild(croppedOriginal);
   const pulse=document.createElement('canvas');pulse.className='mg-pulse';pulse.hidden=true;pulse.setAttribute('aria-hidden','true');host.prepend(pulse);
-  const loopCanvas=document.createElement('canvas');loopCanvas.className='mg-loop-art';loopCanvas.hidden=true;loopCanvas.setAttribute('aria-hidden','true');host.prepend(loopCanvas);
   const motion=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
   const options=VATHOGRAPHY_PRESETS;
   rail.replaceChildren();
   const variants=options.map((option,index)=>{const button=document.createElement('button');button.type='button';button.className='mg-variant';button.setAttribute('aria-label',option.label);button.setAttribute('aria-pressed',String(index===0));button.appendChild(document.createElement('i'));rail.appendChild(button);return button});
-  let current=null,controller=null,selection=1,comparing=false,split=.5,version=0,depth=null,position=0,bandWidth=1,frame=0,sourceWidth=0,sourceHeight=0,disposed=false,pulseFrame=0,editing=false,originalCropKey='',railStartSelection=1;
+  let current=null,controller=null,selection=1,comparing=false,split=.5,version=0,depth=null,renderTone=null,position=0,bandWidth=1,frame=0,sourceWidth=0,sourceHeight=0,disposed=false,pulseFrame=0,editing=false,originalCropKey='',railStartSelection=1;
   const urls=[],points=new Map(),listeners=[];let previous=null,hold=0,gesture=null,lastTap=null,peeking=false,gestureChanged=false;
-  let looping=false,loopFrame=0,loopStarted=null,loopLast=-Infinity,loopBase=null,loopDepth=null,loopImage=null;
+  let looping=false,loopMode=VATHO_LOOP_MODES[0].id,loopFrame=0,loopStarted=null,loopIndex=-1;
   const stopPulse=()=>{cancelAnimationFrame(pulseFrame);pulseFrame=0;pulse.hidden=true;pulse.width=pulse.height=1};
-  const stopLoopPreview=()=>{
-    cancelAnimationFrame(loopFrame);loopFrame=0;loopCanvas.hidden=true;loopCanvas.width=loopCanvas.height=1;
-    loopBase=loopDepth=loopImage=null;loopStarted=null;loopLast=-Infinity;
-  };
+  function stopLoopPreview(){
+    cancelAnimationFrame(loopFrame);loopFrame=0;loopStarted=null;loopIndex=-1;
+  }
+  function loopRecipe(){
+    return {mode:loopMode,position,width:bandWidth,preset:selection,edits:editor.committed};
+  }
+  function loopPixels(recipe,index){
+    const scale=Math.min(1,VATHO_GIF_MAX_EDGE/Math.max(sourceWidth,sourceHeight));
+    const width=Math.max(1,Math.round(sourceWidth*scale)),height=Math.max(1,Math.round(sourceHeight*scale));
+    const tone=loopToneParameters(recipe,recipe.mode,loopFramePhase(index));
+    return renderPixels(width,height,recipe.preset,tone.position,tone.width,recipe.edits);
+  }
   function startLoopPreview(){
-    stopLoopPreview();
-    if(!looping||disposed||!current||host.hidden||document.hidden||comparing||peeking||editor.active||!art.width||!art.height)return;
-    const scale=Math.min(1,VATHO_GIF_MAX_EDGE/Math.max(art.width,art.height));
-    const width=Math.max(1,Math.round(art.width*scale)),height=Math.max(1,Math.round(art.height*scale));
-    loopCanvas.width=width;loopCanvas.height=height;
-    const context=loopCanvas.getContext('2d',{willReadFrequently:true});if(!context)return;
-    context.drawImage(art,0,0,width,height);
-    loopBase=new Uint8ClampedArray(context.getImageData(0,0,width,height).data);
-    loopDepth=sampleLoopDepth(depth,current.width,current.height,width,height,{validity:current.validity,crop:editor.committed.crop});
-    loopImage=context.createImageData(width,height);
-    loopCanvas.hidden=false;
+    if(loopFrame||!looping||disposed||!current||host.hidden||document.hidden||comparing||peeking||points.size||depthRail.active||editor.active)return;
     const tick=now=>{
       loopFrame=0;
-      if(!looping||disposed||!current||host.hidden||document.hidden||comparing||peeking||editor.active){stopLoopPreview();return}
+      if(!looping||disposed||!current||host.hidden||document.hidden||comparing||peeking||points.size||depthRail.active||editor.active){stopLoopPreview();return}
       loopStarted??=now;
-      if(now-loopLast>=1000/VATHO_LOOP_FPS){
-        renderLoopFrame(loopBase,loopDepth,loopPhase(now-loopStarted),loopImage.data);
-        context.putImageData(loopImage,0,0);loopLast=now;
+      const index=Math.min(VATHO_LOOP_FRAMES-1,Math.floor(loopPhase(now-loopStarted)*VATHO_LOOP_FRAMES));
+      if(index!==loopIndex){
+        paintArt(loopPixels(loopRecipe(),index));loopIndex=index;
       }
       loopFrame=requestAnimationFrame(tick);
     };
@@ -55,24 +52,32 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
   const cancelGesture=()=>{stopPulse();stopLoopPreview();cancelHold();peek(false);points.clear();previous=null;gesture=null;lastTap=null;multiTap=lastMultiTap=null;navigationStart=null;gestureMode=null;if(current){if(gestureChanged)onChange();schedule()}gestureChanged=false};
   const listen=(element,name,handler,opts)=>{element.addEventListener(name,handler,opts);listeners.push(()=>element.removeEventListener(name,handler,opts))};
   const reset=()=>{
-    version++;controller?.abort();controller=null;looping=false;loopButton?.setAttribute('aria-pressed','false');loopButton?.setAttribute('aria-label','Slå på animasjonsløkke');current=null;depth=null;comparing=false;depthRail.cancel();cancelGesture();resetNavigation();editor.set();
+    version++;controller?.abort();controller=null;looping=false;loopButton?.setAttribute('aria-pressed','false');loopButton?.setAttribute('aria-label','Slå på animasjonsløkke');current=null;depth=null;renderTone=null;comparing=false;depthRail.cancel();cancelGesture();resetNavigation();editor.set();
     cancelAnimationFrame(frame);frame=0;host.hidden=true;art.hidden=true;host.classList.remove('comparing');output.removeAttribute('src');original.removeAttribute('src');
     for(const url of urls.splice(0))URL.revokeObjectURL(url);art.width=art.height=1;croppedOriginal.width=croppedOriginal.height=1;croppedOriginal.hidden=true;original.hidden=false;originalCropKey='';editing=false;
   };
   const editor=createPhotoEditor(host,{onInput:(interactive=true)=>{editing=interactive;stopPulse();schedule()},onChange,onActive:active=>{cancelGesture();if(active){comparing=false;host.classList.remove('comparing');compare.setAttribute('aria-pressed','false');if(editor.cropping)resetNavigation()}onGesture()},getPreview:()=>{
     if(!current)return null;const scale=Math.min(1,96/Math.max(sourceWidth,sourceHeight)),width=Math.max(1,Math.round(sourceWidth*scale)),height=Math.max(1,Math.round(sourceHeight*scale));
-    return {data:toneDepth(depth,current.width,current.height,{preset:selection,position,width:bandWidth,outputWidth:width,outputHeight:height,validity:current.validity}),width,height};
+    return {data:renderTone({preset:selection,position,width:bandWidth,outputWidth:width,outputHeight:height}),width,height};
   }});
   const depthRail=attachNotchRail(rail,variants,{enabled:()=>!!current&&!host.hidden&&!editor.cropping,onStart:()=>{railStartSelection=selection;cancelGesture();editor.commit();comparing=false;host.classList.remove('comparing');compare.setAttribute('aria-pressed','false');onGesture()},onSelect:index=>{if(index!==selection)select(index,{persist:false,preview:true})},onTap:index=>{if(index!==selection)select(index,{persist:false,preview:true})},onEnd:()=>{if(current){if(selection!==railStartSelection)onChange();schedule()}}});
+  function renderPixels(width,height,preset,position,bandWidth,edits){
+    const pixels=renderTone({preset,position,width:bandWidth,outputWidth:width,outputHeight:height});
+    return applyPhotoEdits(pixels,width,height,edits,{referenceWidth:sourceWidth,referenceHeight:sourceHeight});
+  }
+  function paintArt(pixels){
+    if(art.width!==pixels.width)art.width=pixels.width;
+    if(art.height!==pixels.height)art.height=pixels.height;
+    const context=art.getContext('2d'),image=context.createImageData(art.width,art.height);
+    image.data.set(pixels.data);context.putImageData(image,0,0);
+  }
   function render(native=false,committed=false){
     if(frame){cancelAnimationFrame(frame);frame=0}
     if(!depth||!current||selection>=VATHOGRAPHY_PRESETS.length)return;
-    const scale=(points.size||editing||depthRail.active)&&!native?Math.min(1,(editing||depthRail.active?512:768)/Math.max(sourceWidth,sourceHeight)):1,width=Math.round(sourceWidth*scale),height=Math.round(sourceHeight*scale);
-    const pixels=toneDepth(depth,current.width,current.height,{preset:committed&&depthRail.active?railStartSelection:selection,position,width:bandWidth,outputWidth:width,outputHeight:height,validity:current.validity});
+    const scale=(points.size||editing||depthRail.active)&&!native?Math.min(1,(editing||depthRail.active?512:768)/Math.max(sourceWidth,sourceHeight)):1;
+    const width=Math.max(1,Math.round(sourceWidth*scale)),height=Math.max(1,Math.round(sourceHeight*scale));
     const edits=committed?editor.committed:editor.edits;if(editor.cropping&&!committed)edits.crop={x:0,y:0,width:1,height:1};
-    const adjusted=applyPhotoEdits(pixels,width,height,edits,{referenceWidth:sourceWidth,referenceHeight:sourceHeight});
-    art.width=adjusted.width;art.height=adjusted.height;const context=art.getContext('2d');
-    const image=context.createImageData(art.width,art.height);image.data.set(adjusted.data);context.putImageData(image,0,0);
+    paintArt(renderPixels(width,height,committed&&depthRail.active?railStartSelection:selection,position,bandWidth,edits));
     const crop=edits.crop,cropped=crop.width!==1||crop.height!==1;original.hidden=cropped;croppedOriginal.hidden=!cropped;
     if(cropped){const key=JSON.stringify(crop);if(key!==originalCropKey){const left=Math.min(sourceWidth-1,Math.round(crop.x*sourceWidth)),top=Math.min(sourceHeight-1,Math.round(crop.y*sourceHeight));croppedOriginal.width=Math.max(1,Math.round((crop.x+crop.width)*sourceWidth)-left);croppedOriginal.height=Math.max(1,Math.round((crop.y+crop.height)*sourceHeight)-top);croppedOriginal.getContext('2d').drawImage(original,left,top,croppedOriginal.width,croppedOriginal.height,0,0,croppedOriginal.width,croppedOriginal.height);originalCropKey=key}}
     updateSplit();if(looping)startLoopPreview();
@@ -142,8 +147,8 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
   const adjust=event=>{const bounds=imageBounds();split=Math.max(.02,Math.min(.98,(event.clientX-bounds.left)/Math.max(1,bounds.width)));updateSplit()};
   const measure=()=>{const values=[...points.values()],x=values.reduce((n,p)=>n+p.x,0)/values.length,y=values.reduce((n,p)=>n+p.y,0)/values.length;return {x,y,gap:values.length>1?2*Math.sqrt(values.reduce((n,p)=>n+(p.x-x)**2+(p.y-y)**2,0)/values.length):0}};
   const start=event=>{
-    stopPulse();stopLoopPreview();
     if(!current||host.hidden||event.button>0||depthRail.active||editor.active||event.target.closest('button,input,.mg-editor,.mg-variants'))return;
+    stopPulse();stopLoopPreview();
     cancelHold();points.set(event.pointerId,{x:event.clientX,y:event.clientY});host.setPointerCapture?.(event.pointerId);previous=measure();
     const now=Number.isFinite(event.timeStamp)?event.timeStamp:Date.now();
     if(points.size===1){gestureMode=comparing?'compare':'tone';gestureChanged=false;gesture={id:event.pointerId,x:event.clientX,y:event.clientY,time:now,moved:false};if(!comparing)hold=setTimeout(()=>{hold=0;if(!host.hidden&&current&&gesture&&!gesture.moved&&points.size===1){peek(true);lastTap=null;lastMultiTap=null;onGesture()}},450)}
@@ -182,14 +187,26 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
   if(globalThis.addEventListener){listen(globalThis,'blur',cancelGesture);listen(globalThis,'resize',()=>{if(current){setNavigation(viewPose);editor.resize()}})}
   if(document.addEventListener)listen(document,'visibilitychange',()=>{if(document.hidden)cancelGesture();else if(looping)startLoopPreview()});
   listen(host,'contextmenu',event=>{if(!event.target.closest('button'))event.preventDefault()});
-  listen(compare,'click',()=>{stopPulse();stopLoopPreview();if(!current)return;editor.commit();comparing=!comparing;host.classList.toggle('comparing',comparing);compare.setAttribute('aria-pressed',String(comparing));updateSplit();if(looping&&!comparing)startLoopPreview()});
+  listen(compare,'click',()=>{stopPulse();stopLoopPreview();if(!current)return;editor.commit();comparing=!comparing;host.classList.toggle('comparing',comparing);compare.setAttribute('aria-pressed',String(comparing));if(looping)render();else updateSplit()});
+  function setLoopMode(mode){
+    if(!VATHO_LOOP_MODES.some(item=>item.id===mode))throw new RangeError('Ukjend løkkemodus.');
+    loopMode=mode;if(loopSelect)loopSelect.value=mode;
+    stopLoopPreview();if(looping)startLoopPreview();
+  }
+  if(loopSelect){
+    const choices=VATHO_LOOP_MODES.map(({id,label})=>{
+      const choice=document.createElement('option');choice.value=id;choice.textContent=label;return choice;
+    });
+    loopSelect.replaceChildren(...choices);loopSelect.value=loopMode;
+    listen(loopSelect,'change',()=>setLoopMode(loopSelect.value));
+  }
   if(loopButton){
     loopButton.setAttribute('aria-pressed','false');
     listen(loopButton,'click',()=>{
       if(!current)return;
       looping=!looping;loopButton.setAttribute('aria-pressed',String(looping));loopButton.setAttribute('aria-label',looping?'Slå av animasjonsløkke':'Slå på animasjonsløkke');
       stopPulse();stopLoopPreview();
-      if(looping){comparing=false;host.classList.remove('comparing');compare.setAttribute('aria-pressed','false');render(true,true)}
+      if(looping){comparing=false;host.classList.remove('comparing');compare.setAttribute('aria-pressed','false');startLoopPreview()}else render(true,true)
     });
   }
   variants.forEach((button,index)=>listen(button,'click',()=>select(index)));
@@ -226,7 +243,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
         const mask=document.createElement('canvas');mask.width=result.width;mask.height=result.height;
         try{const context=mask.getContext('2d',{willReadFrequently:true});context.drawImage(original,0,0,mask.width,mask.height);result=applyPanoramaMask(result,panorama,{alpha:context.getImageData(0,0,mask.width,mask.height).data})}finally{mask.width=mask.height=1}
       }
-      depth=result.normalized?result.depth:normalizeDepth(result.depth,{polarity:result.polarity,validity:result.validity});current=result;host.dataset.model=result.model;host.dataset.source=result.source;
+      depth=result.normalized?result.depth:normalizeDepth(result.depth,{polarity:result.polarity,validity:result.validity});renderTone=prepareToneDepth(depth,result.width,result.height,result.validity);current=result;host.dataset.model=result.model;host.dataset.source=result.source;
       if(stored){selection=stored.recipe.preset;position=stored.recipe.position;bandWidth=stored.recipe.width}
       editor.set(stored?.recipe.edits,sourceWidth,sourceHeight);
       split=.5;compare.setAttribute('aria-pressed','false');select(selection);host.hidden=false;updateSplit();startPulse();
@@ -240,32 +257,28 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
   }
   async function exportGif({signal,onProgress=()=>{}}={}){
     if(!current||!depth||disposed)throw new Error('Framkall VATHOgraphy før GIF-eksport.');
-    const ticket=version,source=current;
-    render(true,true);
-    const scale=Math.min(1,VATHO_GIF_MAX_EDGE/Math.max(art.width,art.height));
-    const width=Math.max(1,Math.round(art.width*scale)),height=Math.max(1,Math.round(art.height*scale));
-    const work=document.createElement('canvas');work.width=width;work.height=height;
-    try{
-      const context=work.getContext('2d',{willReadFrequently:true});
-      if(!context)throw new Error('Kunne ikkje lese VATHOgraphy-biletet.');
-      context.drawImage(art,0,0,width,height);
-      const base=context.getImageData(0,0,width,height).data;
-      const field=sampleLoopDepth(depth,source.width,source.height,width,height,{validity:source.validity,crop:editor.committed.crop});
-      const frame=new Uint8ClampedArray(base.length),encoder=new GrayGifEncoder(width,height,{fps:VATHO_LOOP_FPS});
-      for(let i=0;i<VATHO_LOOP_FRAMES;i++){
-        if(signal?.aborted||disposed||version!==ticket||source!==current)throw new DOMException('GIF-eksporten vart avbroten.','AbortError');
-        renderLoopFrame(base,field,loopFramePhase(i),frame);
-        encoder.addFrame(rgbaToGrayIndices(frame));
-        if(i%3===2){onProgress({percent:Math.round((i+1)/VATHO_LOOP_FRAMES*100)});await new Promise(resolve=>setTimeout(resolve,0))}
-      }
-      onProgress({percent:100});
-      return encoder.finish();
-    }finally{work.width=work.height=1}
+    const ticket=version,source=current,recipe=loopRecipe();
+    let encoder;
+    for(let i=0;i<VATHO_LOOP_FRAMES;i++){
+      if(signal?.aborted||disposed||version!==ticket||source!==current)throw new DOMException('GIF-eksporten vart avbroten.','AbortError');
+      const pixels=loopPixels(recipe,i);
+      if(!encoder)encoder=new GrayGifEncoder(pixels.width,pixels.height,{fps:VATHO_LOOP_FPS,palette:gifPalette(recipe.edits)});
+      encoder.addRgbaFrame(pixels.data);
+      if(i%3===2){onProgress({percent:Math.round((i+1)/VATHO_LOOP_FRAMES*100)});await new Promise(resolve=>setTimeout(resolve,0))}
+    }
+    if(signal?.aborted||disposed||version!==ticket||source!==current)throw new DOMException('GIF-eksporten vart avbroten.','AbortError');
+    return encoder.finish();
+  }
+  function gifPalette(edits){
+    if(edits.grain?.color&&edits.grain.strength)return 'rgb';
+    const ramp=new Uint8ClampedArray(256*4);
+    for(let i=0;i<256;i++){ramp.fill(i,i*4,i*4+3);ramp[i*4+3]=255}
+    return applyPhotoEdits(ramp,256,1,{...edits,crop:{x:0,y:0,width:1,height:1},grain:{strength:0},denoise:0,sharpen:0}).data;
   }
   async function restore(blob,result,recipe,signal){
     if(!recipe||!Number.isInteger(recipe.preset)||recipe.preset<0||recipe.preset>=options.length||!Number.isFinite(recipe.position)||Math.abs(recipe.position)>1||!Number.isFinite(recipe.width)||recipe.width<.25||recipe.width>3)throw new Error('Ugyldig uttrykk i Entropi-fila.');
     normalizePhotoEdits(recipe.edits);
     return process(blob,signal,{result,recipe});
   }
-  return {process,restore,reset,select,snapshot,exportGif,resumeLoop(){if(looping)startLoopPreview()},get loopActive(){return looping},resetView:resetNavigation,resetTone(){stopPulse();editor.commit();resetNavigation();position=0;bandWidth=1;render();onChange()},get recipe(){const recipe={preset:depthRail.active?railStartSelection:selection,position,width:bandWidth},edits=editor.committed;if(!photoEditsNeutral(edits))recipe.edits=edits;return recipe},get ready(){return !!current},get result(){return current},get selectedName(){return options[selection].label},dispose(){reset();disposed=true;depthRail.dispose();editor.dispose();for(const remove of listeners)remove();art.remove();pulse.remove();loopCanvas.remove();croppedOriginal.remove()}};
+  return {process,restore,reset,select,snapshot,exportGif,resumeLoop(){if(looping)startLoopPreview()},get loopActive(){return looping},setLoopMode,get loopMode(){return loopMode},resetView:resetNavigation,resetTone(){stopPulse();editor.commit();resetNavigation();position=0;bandWidth=1;render();onChange()},get recipe(){const recipe={preset:depthRail.active?railStartSelection:selection,position,width:bandWidth},edits=editor.committed;if(!photoEditsNeutral(edits))recipe.edits=edits;return recipe},get ready(){return !!current},get result(){return current},get selectedName(){return options[selection].label},dispose(){reset();disposed=true;depthRail.dispose();editor.dispose();for(const remove of listeners)remove();art.remove();pulse.remove();croppedOriginal.remove()}};
 }

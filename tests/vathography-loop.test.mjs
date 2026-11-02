@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {GrayGifEncoder,rgbaToGrayIndices} from '../vendor/gif-encoder.mjs';
-import {loopPhase,loopFramePhase,depthSweepIntensity,sampleLoopDepth,renderLoopFrame,VATHO_LOOP_FRAMES} from '../vendor/vathography-loop.mjs';
+import {loopPhase,loopFramePhase,loopToneParameters,VATHO_LOOP_MODES,VATHO_LOOP_FRAMES} from '../vendor/vathography-loop.mjs';
 
 test('seamless loop first frame equals periodic endpoint, no duplicated last frame',()=>{
   assert.equal(loopPhase(0),0);
@@ -11,25 +11,22 @@ test('seamless loop first frame equals periodic endpoint, no duplicated last fra
   assert.equal(loopFramePhase(0),0);
   assert.equal(loopFramePhase(VATHO_LOOP_FRAMES-1),59/60);
   assert.throws(()=>loopFramePhase(VATHO_LOOP_FRAMES));
-  const samples=Float32Array.from([0,.25,.5,.75,1,NaN]);
-  const base=new Uint8ClampedArray(samples.length*4).fill(90);
-  for(let i=0;i<samples.length;i++)base[i*4+3]=255;
-  const first=renderLoopFrame(base,samples,0);
-  const last=renderLoopFrame(base,samples,1);
-  assert.deepEqual([...first],[...last]);
-  const nearFirst=renderLoopFrame(base,samples,1/6000);
-  const nearLast=renderLoopFrame(base,samples,1-1/6000);
-  const difference=nearFirst.reduce((n,v,i)=>n+Math.abs(v-nearLast[i]),0);
-  assert.ok(difference<6);
-  assert.deepEqual(depthSweepIntensity(NaN,.5),{light:0,shadow:0});
-});
-test('depth sampling respects crop and validity',()=>{
-  const values=Float32Array.from([0,.25,.5,1]),validity=Uint8Array.from([1,1,0,1]);
-  const output=sampleLoopDepth(values,2,2,2,2,{validity});
-  assert.equal(output[0],0);assert.equal(output[1],.25);
-  assert.ok(Number.isNaN(output[2]));
-  const cropped=sampleLoopDepth(values,2,2,1,1,{crop:{x:.5,y:.5,width:.5,height:.5}});
-  assert.equal(cropped[0],1);
+  const trajectories=new Set();
+  for(const {id} of VATHO_LOOP_MODES){
+    const base={position:.12,width:1.22};
+    assert.deepEqual(loopToneParameters(base,id,0),base);
+    assert.deepEqual(loopToneParameters(base,id,1),base);
+    const path=Array.from({length:VATHO_LOOP_FRAMES},(_,i)=>loopToneParameters(base,id,loopFramePhase(i)));
+    assert.ok(path.some(tone=>tone.position!==base.position),'single-finger depth position moves: '+id);
+    trajectories.add(JSON.stringify(path));
+    for(const start of [{position:-1,width:.25},{position:1,width:3}]){
+      const positions=Array.from({length:60},(_,i)=>loopToneParameters(start,id,i/60));
+      assert.ok(positions.some(v=>v.position!==start.position||v.width!==start.width),'motion at boundary '+id);
+      assert.ok(positions.every(v=>v.position>=-1&&v.position<=1&&v.width>=.25&&v.width<=3));
+    }
+  }
+  assert.equal(trajectories.size,VATHO_LOOP_MODES.length);
+  assert.ok(trajectories.size>=6);
 });
 test('GIF89a, Netscape infinite loop, 20 fps and deterministic bytes',async()=>{
   const encoder=new GrayGifEncoder(256,256,{fps:20});
