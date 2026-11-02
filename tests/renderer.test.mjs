@@ -45,11 +45,17 @@ function harness(options={}){
 const state=app=>({rotation:app.gl.uniforms.uRotation,distance:app.gl.uniforms.uDistance,pan:app.gl.uniforms.uPan,pointScale:app.gl.uniforms.uPointScale,opacity:app.gl.uniforms.uOpacity,count:app.gl.draws.filter(draw=>draw.mode===app.gl.POINTS).at(-1).count});
 function three(app,axis,delta){for(let id=1;id<=3;id++)app.canvas.emit('pointerdown',{pointerId:id,clientX:id*50,clientY:100});for(let id=1;id<=3;id++)app.canvas.emit('pointermove',{pointerId:id,clientX:id*50+(axis==='x'?delta:0),clientY:100+(axis==='y'?delta:0)});for(let id=1;id<=3;id++)app.canvas.emit('pointerup',{pointerId:id});app.flush()}
 
-test('pan, zoom, definition, resize and palette changes reuse the sorted point buffer',()=>{
+test('two-finger translation cannot pan while centred zoom, definition, resize and palette reuse sorted points',()=>{
   const app=harness();assert.equal(app.sorts,1);assert.equal(app.uploads,1);
   app.canvas.emit('wheel',{deltaY:30});app.flush();app.viewer.setPrimitiveLevel(1);app.flush();app.viewer.setPrimitiveLevel(2);app.flush();app.host.clientWidth=400;app.viewer.refresh();app.flush();three(app,'x',30);
   app.canvas.emit('pointerdown',{pointerId:1,clientX:100,clientY:100});app.canvas.emit('pointerdown',{pointerId:2,clientX:200,clientY:100});app.canvas.emit('pointermove',{pointerId:1,clientX:110,clientY:100});app.canvas.emit('pointermove',{pointerId:2,clientX:210,clientY:100});app.canvas.emit('pointerup',{pointerId:1});app.canvas.emit('pointerup',{pointerId:2});app.flush();
-  assert.equal(app.sorts,1);assert.equal(app.uploads,1);assert.notDeepEqual(app.gl.uniforms.uPan,[0,0]);
+  assert.equal(app.sorts,1);assert.equal(app.uploads,1);assert.deepEqual(app.gl.uniforms.uPan,[0,0]);
+  const beforePinch=app.gl.uniforms.uDistance;
+  app.canvas.emit('pointerdown',{pointerId:1,clientX:100,clientY:100});app.canvas.emit('pointerdown',{pointerId:2,clientX:200,clientY:100});
+  app.canvas.emit('pointermove',{pointerId:1,clientX:80,clientY:100});app.canvas.emit('pointermove',{pointerId:2,clientX:220,clientY:100});
+  app.canvas.emit('pointerup',{pointerId:1});app.canvas.emit('pointerup',{pointerId:2});app.flush();
+  assert.deepEqual(app.gl.uniforms.uPan,[0,0]);assert.ok(app.gl.uniforms.uDistance<beforePinch);
+  assert.equal(app.sorts,1);assert.equal(app.uploads,1);
   app.canvas.emit('pointerdown',{pointerType:'mouse'});app.canvas.emit('pointermove',{pointerType:'mouse',clientX:130});app.canvas.emit('pointerup',{pointerType:'mouse'});app.flush();assert.equal(app.sorts,2);assert.equal(app.uploads,2);
   three(app,'y',90);assert.equal(app.sorts,3);assert.equal(app.uploads,3);assert.ok(state(app).count<256);app.viewer.dispose();
 });

@@ -112,7 +112,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
     const next=Math.max(0,Math.min(options.length-1,Math.round(index))),option=options[next];
     selection=next;art.hidden=false;output.hidden=true;if(preview)schedule();else render();
     for(const [i,button]of variants.entries())button.setAttribute('aria-pressed',String(i===selection));
-    host.setAttribute('aria-label','VATHOgraphy · '+option.label+'. Éin finger for djupne. To fingrar for panorering og zoom. Tre fingrar for bandbreidd. Dobbelttrykk med to fingrar for å sentrere.');if(persist)onChange();return true;
+    host.setAttribute('aria-label','VATHOgraphy · '+option.label+'. Éin finger for djupne. To fingrar for sentrert zoom, aldri panorering. Tre fingrar for bandbreidd. Dobbelttrykk med to fingrar for å sentrere.');if(persist)onChange();return true;
   }
   let viewPose={scale:1,x:0,y:0},navigationStart=null,multiTap=null,lastMultiTap=null,gestureMode=null;
   function imageBounds(box=art.getBoundingClientRect()){
@@ -125,17 +125,19 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
     host.style.setProperty('--split',(100*(left-box.left)/Math.max(1,box.width))+'%');host.style.setProperty('--split-left',(left-parent.left)+'px');host.style.setProperty('--split-top',(top-parent.top)+'px');host.style.setProperty('--split-height',Math.max(0,bottom-top)+'px');seam.setAttribute('aria-valuenow',String(Math.round(split*100)));
   }
   function setNavigation(next){
-    const bounds=imageBounds(),parent=host.getBoundingClientRect(),baseWidth=bounds.width/viewPose.scale,baseHeight=bounds.height/viewPose.scale,scale=Math.max(1,Math.min(8,next.scale)),maxX=Math.max(0,(parent.width-baseWidth)/2)+baseWidth*(scale-1)/2,maxY=Math.max(0,(parent.height-baseHeight)/2)+baseHeight*(scale-1)/2;
-    viewPose={scale,x:Math.max(-maxX,Math.min(maxX,next.x)),y:Math.max(-maxY,Math.min(maxY,next.y))};
-    host.style.setProperty('--view-scale',String(viewPose.scale));host.style.setProperty('--view-x',viewPose.x+'px');host.style.setProperty('--view-y',viewPose.y+'px');updateSplit();
+    // Zoom is always centred. A two-finger translation must never pan the image.
+    const scale=Math.max(1,Math.min(8,next.scale));
+    viewPose={scale,x:0,y:0};
+    host.style.setProperty('--view-scale',String(scale));host.style.setProperty('--view-x','0px');host.style.setProperty('--view-y','0px');updateSplit();
   }
   function resetNavigation(){
     viewPose={scale:1,x:0,y:0};host.style.setProperty('--view-scale','1');host.style.setProperty('--view-x','0px');host.style.setProperty('--view-y','0px');updateSplit();
   }
   function navigate(from,to){
     const start=navigationStart;if(!start)return;
-    const bounds=art.getBoundingClientRect(),centreX=bounds.left+bounds.width/2-viewPose.x,centreY=bounds.top+bounds.height/2-viewPose.y,scale=Math.max(1,Math.min(8,start.pose.scale*(start.measure.gap>0&&to.gap>0?to.gap/start.measure.gap:1))),factor=scale/start.pose.scale;
-    setNavigation({scale,x:to.x-centreX-(start.measure.x-centreX-start.pose.x)*factor,y:to.y-centreY-(start.measure.y-centreY-start.pose.y)*factor});
+    // Only pinch distance changes zoom. Ignore the two-finger centroid completely.
+    const scale=Math.max(1,Math.min(8,start.pose.scale*(start.measure.gap>0&&to.gap>0?to.gap/start.measure.gap:1)));
+    if(scale!==viewPose.scale)setNavigation({scale});
   }
   const adjust=event=>{const bounds=imageBounds();split=Math.max(.02,Math.min(.98,(event.clientX-bounds.left)/Math.max(1,bounds.width)));updateSplit()};
   const measure=()=>{const values=[...points.values()],x=values.reduce((n,p)=>n+p.x,0)/values.length,y=values.reduce((n,p)=>n+p.y,0)/values.length;return {x,y,gap:values.length>1?2*Math.sqrt(values.reduce((n,p)=>n+(p.x-x)**2+(p.y-y)**2,0)/values.length):0}};

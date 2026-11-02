@@ -364,30 +364,36 @@ const beginPair=(app,left=145,right=245,y=422)=>{app.emit('pointerdown',{pointer
 const movePair=(app,left,right,y)=>{app.emit('pointermove',{pointerId:31,clientX:left,clientY:y});app.emit('pointermove',{pointerId:32,clientX:right,clientY:y})};
 const endPair=app=>{app.emit('pointerup',{pointerId:31});app.emit('pointerup',{pointerId:32});app.flush()};
 
-test('two fingers pan in all four directions at fit without changing tone or image data',async()=>{
+test('two-finger drags never pan the image, at fit or after centred pinch zoom',async()=>{
   const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);const recipe=JSON.stringify(app.view.recipe),before=app.changes;
   for(const [dx,dy]of [[20,0],[-20,0],[0,20],[0,-20]]){
     app.view.resetView();beginPair(app);movePair(app,145+dx,245+dx,422+dy);endPair(app);
-    const pose=navigationPose(app);assert.ok(Math.abs(pose.scale-1)<1e-9);assert.ok(Math.abs(pose.x-dx)<1e-9);assert.ok(Math.abs(pose.y-dy)<1e-9);assert.equal(JSON.stringify(app.view.recipe),recipe);assert.equal(app.changes,before);
+    const pose=navigationPose(app);assert.equal(pose.scale,1);assert.equal(pose.x,0);assert.equal(pose.y,0);assert.equal(JSON.stringify(app.view.recipe),recipe);assert.equal(app.changes,before);
+  }
+  beginPair(app);movePair(app,115,315,422);endPair(app);
+  assert.deepEqual(navigationPose(app),{scale:2,x:0,y:0});
+  for(const [dx,dy]of [[30,0],[-30,0],[0,30],[0,-30]]){
+    beginPair(app);movePair(app,145+dx,245+dx,422+dy);endPair(app);
+    assert.deepEqual(navigationPose(app),{scale:2,x:0,y:0});
   }
   assert.equal(app.calls.browser,1);app.view.dispose();
 });
-test('pinch is anchored and bounded from one to eight while native export stays unchanged',async()=>{
+test('pinch zoom stays centred and bounded from one to eight while native export stays unchanged',async()=>{
   const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);const recipe=JSON.stringify(app.view.recipe),before=app.changes;
   beginPair(app,185,205);movePair(app,-805,1195,422);endPair(app);
   assert.equal(navigationPose(app).scale,8);assert.ok(Math.abs(navigationPose(app).x)<1e-9);assert.ok(Math.abs(navigationPose(app).y)<1e-9);
   const saved=app.view.snapshot(true);assert.equal(saved.width,320);assert.equal(saved.height,240);assert.equal(navigationPose(app).scale,8);
   beginPair(app,-805,1195);movePair(app,194,196,422);endPair(app);assert.equal(navigationPose(app).scale,1);
-  beginPair(app);movePair(app,5145,5245,5422);endPair(app);const limited=navigationPose(app);assert.ok(limited.x>0&&limited.x<=46.8+1e-8);assert.ok(limited.y>0&&limited.y<422);
+  beginPair(app);movePair(app,5145,5245,5422);endPair(app);const limited=navigationPose(app);assert.deepEqual(limited,{scale:1,x:0,y:0});
   assert.equal(JSON.stringify(app.view.recipe),recipe);assert.equal(app.changes,before);assert.equal(app.calls.browser,1);app.view.dispose();
 });
-test('comparison seam follows the contained image after zoom and pan',async()=>{
+test('comparison seam stays centred during pinch zoom without any pan',async()=>{
   const app=harness({photoWidth:320,photoHeight:240});await app.view.process(photo);const before=app.changes,recipe=JSON.stringify(app.view.recipe);
   app.host.querySelector('.mg-compare').events.get('click')();assert.equal(app.host.classList.contains('comparing'),true);
   beginPair(app);movePair(app,115,315,392);endPair(app);
-  const pose=navigationPose(app);assert.ok(Math.abs(pose.scale-2)<1e-9);assert.ok(Math.abs(pose.x-20)<1e-9);assert.ok(Math.abs(pose.y+30)<1e-9);
-  const width=390*.76*2,height=width*240/320,left=215-width/2,top=392-height/2;
-  assert.ok(Math.abs(parseFloat(app.host.style.getPropertyValue('--split-left'))-215)<1e-8);
+  const pose=navigationPose(app);assert.equal(pose.scale,2);assert.equal(pose.x,0);assert.equal(pose.y,0);
+  const width=390*.76*2,height=width*240/320,left=195-width/2,top=422-height/2;
+  assert.ok(Math.abs(parseFloat(app.host.style.getPropertyValue('--split-left'))-195)<1e-8);
   assert.ok(Math.abs(parseFloat(app.host.style.getPropertyValue('--split-top'))-top)<1e-8);
   assert.ok(Math.abs(parseFloat(app.host.style.getPropertyValue('--split-height'))-height)<1e-8);
   app.emit('pointerdown',{pointerId:5,clientX:left+width*.25,clientY:392});app.emit('pointerup',{pointerId:5});
@@ -411,7 +417,7 @@ test('navigation survives expression changes but reopening starts at fit and con
 });
 
 
-test('panning a cropped image does not regenerate its pixel buffer',async()=>{
+test('centred pinch zoom on a cropped image does not regenerate its pixel buffer',async()=>{
   const app=harness({photoWidth:320,photoHeight:240,reducedMotion:true});
   await app.view.restore(photo,raw('Saved model'),{preset:1,position:0,width:1,edits:{crop:{x:.1,y:.1,width:.8,height:.8}}});app.flush();
   const before=app.renders.length,pixels=findNode(app.host,'mg-art').pixels;

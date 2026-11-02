@@ -79,9 +79,11 @@ function renderScene(host, cloud, bytes, signal, sourcePixels) {
     gestures=attachViewerGestures(canvas,{
       initialDensity:density,
       onRotate:rotate,
-      onTransform(dx,dy,scale,focusX,focusY){
-        const width=Math.max(1,canvas.clientWidth),height=Math.max(1,canvas.clientHeight),pixelsToWorld=2/(focal*height),distance=fitDistance(width,height),before=distance/zoom*pixelsToWorld,nextZoom=Math.max(.4,Math.min(3,zoom*scale)),after=distance/nextZoom*pixelsToWorld;
-        panX+=dx*before-(focusX-width/2)*(before-after);panY-=dy*before-(focusY-height/2)*(before-after);zoom=nextZoom;redraw();
+      onTransform(_dx,_dy,scale){
+        // Two fingers may zoom but must never translate the rendered image.
+        const nextZoom=Math.max(.4,Math.min(3,zoom*scale));
+        if(nextZoom===zoom)return;
+        panX=panY=0;zoom=nextZoom;redraw();
       },
       onDensity(value){density=value;const count=Math.max(1,Math.min(cloud.count,Math.round(cloud.count*value)));if(count!==order.length){order=indices.slice(0,count);geometryDirty=true;redraw()}},
       onDefinition(value){definition=value;pointScale=4**(1-2*value);opacity=4**(value-.5);redraw()},

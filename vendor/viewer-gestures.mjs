@@ -20,7 +20,7 @@ export function attachViewerGestures(canvas,{onRotate,onTransform,onDensity,onDe
     if(pointers.size>3||!previous||!start)return;
     const current=measure(),dx=current.x-previous.x,dy=current.y-previous.y;
     if(pointers.size===1){if(dx||dy)onRotate(dx,dy)}
-    else if(pointers.size===2){const rect=canvas.getBoundingClientRect(),scale=previous.gap>0&&current.gap>0?current.gap/previous.gap:1;if(dx||dy||scale!==1)onTransform(dx,dy,scale,current.x-rect.left,current.y-rect.top)}
+    else if(pointers.size===2){const scale=previous.gap>0&&current.gap>0?current.gap/previous.gap:1;if(scale!==1)onTransform(0,0,scale,canvas.clientWidth/2,canvas.clientHeight/2)}
     else{
       if(!axis&&Math.hypot(current.x-start.x,current.y-start.y)>=10)axis=Math.abs(current.x-start.x)>Math.abs(current.y-start.y)?'definition':'density';
       if(axis==='density'){

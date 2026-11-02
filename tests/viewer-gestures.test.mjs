@@ -31,7 +31,7 @@ function callbacks() {
     }};
 }
 
-test('staggered two-finger drag pans without locking into pinch', () => {
+test('staggered two-finger translation never sends a pan offset and returns to original zoom', () => {
   const surface = canvas(), calls = callbacks();
   const gestures = attachViewerGestures(surface, calls.options);
   assert.equal(surface.send('pointerdown', 1, 100, 300).stopped, false);
@@ -39,9 +39,9 @@ test('staggered two-finger drag pans without locking into pinch', () => {
   assert.equal(surface.send('pointermove', 1, 120, 300).stopped, true);
   surface.send('pointermove', 2, 320, 300);
   assert.equal(calls.transform.length, 2);
-  assert.equal(calls.transform.reduce((sum, [dx]) => sum + dx, 0), 20);
+  assert.ok(calls.transform.every(([dx,dy])=>dx===0&&dy===0));
   assert.ok(Math.abs(calls.transform.reduce((scale, [, , ratio]) => scale * ratio, 1) - 1) < 1e-9);
-  assert.deepEqual(calls.transform[0].slice(3), [200, 280]);
+  assert.deepEqual(calls.transform[0].slice(3), [200, 400]);
   assert.deepEqual(calls.density, []);
   assert.deepEqual(calls.definition, []);
   assert.equal(surface.send('pointerup', 2, 320, 300).stopped, false);
@@ -50,14 +50,14 @@ test('staggered two-finger drag pans without locking into pinch', () => {
   gestures.dispose();
 });
 
-test('two-finger movement combines pan and pinch', () => {
+test('two-finger pinching zooms around the centre but never translates', () => {
   const surface = canvas(), calls = callbacks();
   const gestures = attachViewerGestures(surface, calls.options);
   surface.send('pointerdown', 1, 100, 300);
   surface.send('pointerdown', 2, 300, 300);
   surface.send('pointermove', 1, 80, 300);
   surface.send('pointermove', 2, 340, 300);
-  assert.equal(calls.transform.reduce((sum, [dx]) => sum + dx, 0), 10);
+  assert.ok(calls.transform.every(([dx,dy,ratio,focusX,focusY])=>dx===0&&dy===0&&ratio>0&&focusX===200&&focusY===400));
   assert.ok(Math.abs(calls.transform.reduce((scale, [, , ratio]) => scale * ratio, 1) - 1.3) < 1e-9);
   assert.deepEqual(calls.rotate, []);
   gestures.dispose();
