@@ -38,11 +38,11 @@ const recipes={
 const clamp=value=>Math.max(0,Math.min(1,value));
 const fullCrop=crop=>crop.x===0&&crop.y===0&&crop.width===1&&crop.height===1;
 export const PHOTO_HSL_CHANNELS=Object.freeze(['red','orange','yellow','green','blue','purple']);
-const colorControls=['saturation','highlights','shadows','temperature','tint'];
+const colorControls=['saturation','highlights','shadows','temperature','tint','vibrance','shadowTint','highlightTint'];
 const hueCenters=[0,1/12,1/6,1/3,2/3,5/6,1];
 const hslNeutral=hsl=>PHOTO_HSL_CHANNELS.every(key=>hsl[key].hue===0&&hsl[key].saturation===0&&hsl[key].lightness===0);
 const colorNeutral=edits=>edits.skinTone===0&&edits.fade===0&&colorControls.every(key=>edits[key]===0)&&hslNeutral(edits.hsl);
-const toneNeutral=edits=>edits.vignette===0&&edits.exposure===0&&edits.contrast===0&&edits.sharpen===0&&edits.denoise===0&&edits.grain.strength===0&&colorNeutral(edits)&&(!edits.preset||edits.strength===0);
+const toneNeutral=edits=>edits.blackPoint===0&&edits.whitePoint===0&&edits.midtones===0&&edits.vignette===0&&edits.exposure===0&&edits.contrast===0&&edits.sharpen===0&&edits.denoise===0&&edits.grain.strength===0&&colorNeutral(edits)&&(!edits.preset||edits.strength===0);
 
 export function normalizePhotoEdits(value={}){
   if(!value||typeof value!=='object'||Array.isArray(value))throw new TypeError('Ugyldig fotoredigering.');
@@ -61,7 +61,7 @@ export function normalizePhotoEdits(value={}){
   const grainSource=object(value.grain===undefined?{}:value.grain,'grain'),hslSource=object(value.hsl===undefined?{}:value.hsl,'hsl');
   const grain={strength:number(grainSource,'strength',0,0,1),size:number(grainSource,'size',.5,0,1),color:number(grainSource,'color',0,0,1)};
   const hsl=Object.fromEntries(PHOTO_HSL_CHANNELS.map(key=>{const channel=object(hslSource[key]===undefined?{}:hslSource[key],key);return [key,{hue:number(channel,'hue',0,-1,1),saturation:number(channel,'saturation',0,-1,1),lightness:number(channel,'lightness',0,-1,1)}]}));
-  return {geometry:normalizeGeometry(value.geometry),exposure:number(value,'exposure',0,-3,3),contrast:number(value,'contrast',0,-1,1),sharpen:number(value,'sharpen',0,0,1),denoise:number(value,'denoise',0,0,1),...Object.fromEntries(colorControls.map(key=>[key,number(value,key,0,-1,1)])),skinTone:number(value,'skinTone',0,-1,1),fade:number(value,'fade',0,0,1),vignette:number(value,'vignette',0,0,1),grain,hsl,preset,strength:number(value,'strength',1,0,1),crop};
+  return {geometry:normalizeGeometry(value.geometry),blackPoint:number(value,'blackPoint',0,-1,1),whitePoint:number(value,'whitePoint',0,-1,1),midtones:number(value,'midtones',0,-1,1),exposure:number(value,'exposure',0,-3,3),contrast:number(value,'contrast',0,-1,1),sharpen:number(value,'sharpen',0,0,1),denoise:number(value,'denoise',0,0,1),...Object.fromEntries(colorControls.map(key=>[key,number(value,key,0,-1,1)])),skinTone:number(value,'skinTone',0,-1,1),fade:number(value,'fade',0,0,1),vignette:number(value,'vignette',0,0,1),grain,hsl,preset,strength:number(value,'strength',1,0,1),crop};
 }
 
 export function photoEditsNeutral(edits={}){
@@ -102,7 +102,8 @@ function makeColorTransform(edits){
       const luma=clamp(r*.2126+g*.7152+b*.0722),delta=.3*(edits.shadows*(1-luma)**3+edits.highlights*luma**3);
       r+=delta*(delta>=0?1-r:r);g+=delta*(delta>=0?1-g:g);b+=delta*(delta>=0?1-b:b);
     }
-    const luma=r*.2126+g*.7152+b*.0722,saturation=1+edits.saturation;
+    const luma=r*.2126+g*.7152+b*.0722,chroma=clamp(Math.max(r,g,b)-Math.min(r,g,b));
+    const saturation=(1+edits.saturation)*(1+edits.vibrance*(1-chroma)**2);
     r=clamp(luma+(r-luma)*saturation);g=clamp(luma+(g-luma)*saturation);b=clamp(luma+(b-luma)*saturation);
     if(selective||edits.skinTone){
       const high=Math.max(r,g,b),low=Math.min(r,g,b),chroma=high-low;
@@ -123,6 +124,11 @@ function makeColorTransform(edits){
         if(sector<1){r=c;g=x;b=0}else if(sector<2){r=x;g=c;b=0}else if(sector<3){r=0;g=c;b=x}else if(sector<4){r=0;g=x;b=c}else if(sector<5){r=x;g=0;b=c}else{r=c;g=0;b=x}
         r+=m;g+=m;b+=m;
       }
+    }
+    if(edits.shadowTint||edits.highlightTint){
+      const light=clamp(.2126*r+.7152*g+.0722*b);
+      const tint=.22*(edits.shadowTint*(1-light)**2+edits.highlightTint*light**2);
+      r=clamp(r+tint);g=clamp(g-.15*tint);b=clamp(b-1.46*tint);
     }
     const toe=.18*edits.fade,range=1-.22*edits.fade;
     rgb[0]=toe+range*r;rgb[1]=toe+range*g;rgb[2]=toe+range*b;
@@ -157,10 +163,12 @@ export function applyPhotoEdits(rgba,width,height,edits={}, {bitDepth=8,referenc
     return {data,width:outputWidth,height:outputHeight};
   }
   const maximum=bitDepth===16?65535:255,inverse=1/maximum,gain=2**value.exposure,contrast=2**(2*value.contrast);
-  const tone=value.exposure===0&&value.contrast===0?null:Float64Array.from({length:4097},(_,i)=>{
+  const black=.32*value.blackPoint,white=1+.32*value.whitePoint,gamma=2**(-value.midtones);
+  const tone=value.exposure===0&&value.contrast===0&&!black&&white===1&&gamma===1?null:Float64Array.from({length:4097},(_,i)=>{
     const encoded=i/4096,linear=encoded<=.04045?encoded/12.92:((encoded+.055)/1.055)**2.4,exposed=linear*gain;
     const result=value.exposure===0?encoded:exposed<=.0031308?12.92*exposed:1.055*exposed**(1/2.4)-.055;
-    return clamp(.5+(result-.5)*contrast);
+    const adjusted=clamp(.5+(result-.5)*contrast);
+    return clamp(black+(white-black)*adjusted**gamma);
   });
   const preset=value.preset&&value.strength>0?presetLut(value.preset):null,strength=value.strength;
   const adjustColor=colorNeutral(value)?null:makeColorTransform(value),rgb=new Float64Array(3),grain=value.grain,grainCell=.75+5.25*grain.size*grain.size,grainAmount=.12*grain.strength*Math.min(1,grainCell*Math.min(width/referenceWidth,height/referenceHeight));

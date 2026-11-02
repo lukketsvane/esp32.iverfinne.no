@@ -67,6 +67,7 @@ export function createEntropiDocument({left,right=null,result,recipe={},preview=
 // Use the oldest format that can reproduce the edit when the file is reopened.
 function photoEditVersion(edits){
   if(!edits)return 0;
+  if(edits.blackPoint||edits.whitePoint||edits.midtones||edits.vibrance||edits.shadowTint||edits.highlightTint)return 6;
   if(['E1','E2','E3','E4'].includes(edits.preset)||edits.skinTone||edits.fade||edits.vignette||
      Object.values(edits.geometry??{}).some(Boolean))return 5;
   return advancedPhotoEdits(edits)?4:0;
@@ -163,7 +164,7 @@ export async function decodeEntropiDocument(file){
   const entries=await unzip(file);let manifest;
   try{manifest=JSON.parse(decoder.decode(entries.get('manifest.json')))}catch{invalid()}
   const requiredEditsVersion=photoEditVersion(manifest?.recipe?.edits);
-  if(manifest?.format!=='entropi'||![1,2,3,4,5].includes(manifest.version)||manifest.profile!=='numerical-float32'||manifest.version===2&&!manifest.recipe?.edits||manifest.version===3&&!manifest.panorama||manifest.version<3&&manifest.panorama!=null||manifest.version<requiredEditsVersion||manifest.version>=4&&manifest.version!==requiredEditsVersion)invalid('Ukjend Entropi-versjon.');
+  if(manifest?.format!=='entropi'||![1,2,3,4,5,6].includes(manifest.version)||manifest.profile!=='numerical-float32'||manifest.version===2&&!manifest.recipe?.edits||manifest.version===3&&!manifest.panorama||manifest.version<3&&manifest.panorama!=null||manifest.version<requiredEditsVersion||manifest.version>=4&&manifest.version!==requiredEditsVersion)invalid('Ukjend Entropi-versjon.');
   const {files,originals,result}=manifest;
   if(!files||typeof files!=='object'||Array.isArray(files)||!originals||!result||Object.keys(files).length!==entries.size-1)invalid();
   if(!manifest.id||!manifest.created||!manifest.recipe||!manifest.geometry||!manifest.capture||originals.left!=='sources/left'||originals.right!==null&&originals.right!=='sources/right'||result.depth!=='data/depth.f32'||result.validity!=='data/validity.u8'||result.confidence!==null&&result.confidence!=='data/confidence.f32'||manifest.preview!==null&&manifest.preview!=='preview/image')invalid();

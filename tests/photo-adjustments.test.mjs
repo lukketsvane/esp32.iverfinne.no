@@ -14,7 +14,7 @@ test('fifteen unique presets include P5 and HB2 and normalize to independent neu
   assert.ok(PHOTO_PRESETS.some(item=>item.id==='P5'));assert.ok(PHOTO_PRESETS.some(item=>item.id==='HB2'));
   assert.ok(PHOTO_PRESETS.every(item=>item.label&&item.description&&item.defaultStrength>0&&item.defaultStrength<=1));
   const a=normalizePhotoEdits(),b=normalizePhotoEdits();
-  assert.deepEqual(a,{geometry:{turns:0,flipX:false,flipY:false,straighten:0,skewX:0,skewY:0},exposure:0,contrast:0,sharpen:0,denoise:0,saturation:0,highlights:0,shadows:0,temperature:0,tint:0,skinTone:0,fade:0,vignette:0,grain:{strength:0,size:.5,color:0},hsl:Object.fromEntries(['red','orange','yellow','green','blue','purple'].map(key=>[key,{hue:0,saturation:0,lightness:0}])),preset:null,strength:1,crop:{x:0,y:0,width:1,height:1}});
+  assert.deepEqual(a,{geometry:{turns:0,flipX:false,flipY:false,straighten:0,skewX:0,skewY:0},blackPoint:0,whitePoint:0,midtones:0,vibrance:0,shadowTint:0,highlightTint:0,exposure:0,contrast:0,sharpen:0,denoise:0,saturation:0,highlights:0,shadows:0,temperature:0,tint:0,skinTone:0,fade:0,vignette:0,grain:{strength:0,size:.5,color:0},hsl:Object.fromEntries(['red','orange','yellow','green','blue','purple'].map(key=>[key,{hue:0,saturation:0,lightness:0}])),preset:null,strength:1,crop:{x:0,y:0,width:1,height:1}});
   assert.notEqual(a.crop,b.crop);a.crop.width=.5;assert.equal(b.crop.width,1);
   assert.equal(photoEditsNeutral(),true);assert.equal(photoEditsNeutral({preset:'P5',strength:0}),true);
   assert.equal(photoEditsNeutral({crop:{width:.5}}),false);
@@ -270,4 +270,16 @@ test('an explicit native export can edit a crop of an 8K original',()=>{
   const cropped=applyPhotoEdits(source,width,height,{crop:{x:0,y:0,width:1/width,height:1/height},fade:1},{fullResolution:true});
   assert.deepEqual([cropped.width,cropped.height],[1,1]);
   assert.deepEqual(cropped.data,render([[40,80,120,255]],{fade:1}));
+});
+
+test('level and colour tools act independently and preserve alpha',()=>{
+  assert.ok(render([0],{blackPoint:.5})[0]>0);
+  assert.ok(render([255],{whitePoint:-.5})[0]<255);
+  assert.deepEqual(red(render([0,128,255],{midtones:1})),[0,181,255]);
+  const muted=[110,120,140,73];
+  const vivid=render([muted],{vibrance:1});
+  assert.ok(vivid[2]-vivid[0]>30);assert.equal(vivid[3],73);
+  const shadows=render([40,220],{shadowTint:.6}),lights=render([40,220],{highlightTint:.6});
+  assert.ok(shadows[0]-shadows[2]>shadows[4]-shadows[6]);
+  assert.ok(lights[0]-lights[2]<lights[4]-lights[6]);
 });

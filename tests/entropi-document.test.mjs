@@ -270,3 +270,14 @@ test('version 5 preserves new grading and geometry without changing originals or
     await assert.rejects(decodeEntropiDocument(updateManifest(entries,value=>value.version=4)),/versjon/);
   }
 });
+
+test('level and colour adjustments survive a depth master round trip',async()=>{
+  const input=example();
+  input.recipe.edits={blackPoint:.12,whitePoint:-.1,midtones:.4,vibrance:.6,shadowTint:-.2,highlightTint:.3};
+  const original=createEntropiDocument(input),file=await encodeEntropiDocument(original);
+  const reopened=await decodeEntropiDocument(file);
+  assert.deepEqual(reopened.recipe,original.recipe);
+  const entries=members(await file.arrayBuffer());
+  assert.equal(JSON.parse(entries.find(e=>e.name==='manifest.json').data).version,6);
+  await assert.rejects(decodeEntropiDocument(updateManifest(entries,m=>m.version=5)),/versjon/);
+});
