@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {createEntropiDocument} from '../vendor/entropi-document.mjs';
 import {attachGalleryNavigation} from '../vendor/gallery-navigation.mjs';
+import {renderImportFeedback} from '../vendor/entropi-ui.mjs';
 
 const html=await readFile(new URL('../device/EntropiCamera/camera_ui.html',import.meta.url),'utf8');
 const section=(start,end)=>{
@@ -177,9 +178,25 @@ function archiveHarness(){
     finder:{capture(){return {width:2,height:2,toBlob:callback=>callback(preview)}}},Image:class{naturalWidth=2;naturalHeight=2;async decode(){}},URL:{createObjectURL(blob){const url='blob:'+ ++nextUrl;urls.set(url,blob);return url},revokeObjectURL:url=>urls.delete(url)}
   });
   state.clearScene=()=>{state.sceneGeneration++;view.reset();state.captureDocument=null;state.captureArchiveId=null;state.captureArchiveSuppressed=false};
-  vm.runInContext(enhancement.slice(0,enhancement.indexOf('async function updatePeerPreview('))+'\n'+section('async function showPhoto(','async function takePhoto(')+'\n'+artSource,state);
+  vm.runInContext(renderImportFeedback.toString()+'\n'+enhancement.slice(0,enhancement.indexOf('async function updatePeerPreview('))+'\n'+section('async function showPhoto(','async function takePhoto(')+'\n'+artSource,state);
   return {state,store,records,writes,processed,restored,urls,get:id=>elements.get(id),flush,get activeElement(){return document.activeElement},async key(key,shiftKey=false){const event={key,shiftKey,defaultPrevented:false,preventDefault(){this.defaultPrevented=true}};for(const callback of events.get('keydown')??[])callback(event);await flush();return event}};
 }
+
+test('a partial import keeps its count visible and failures in a closed keyboard-accessible disclosure',async()=>{
+  const app=archiveHarness(),errors=Array.from({length:14},(_,i)=>'broken-'+i+'.png');
+  await app.state.showArchive('Importerte 3 av 17 filer.',errors);
+  assert.equal(app.get('archive-notice').textContent,'Importerte 3 av 17 filer.');
+  assert.equal(app.get('archive-errors').hidden,false);
+  assert.equal(app.get('archive-errors').open,false);
+  assert.deepEqual(app.get('archive-errors-list').children.map(item=>item.textContent),errors);
+  await app.key('Tab');
+  assert.equal(app.activeElement,app.get('archive-errors-summary'));
+  app.get('archive-errors').open=true;
+  await app.state.showArchive();
+  assert.equal(app.get('archive-errors').hidden,true);
+  assert.equal(app.get('archive-errors').open,false);
+  assert.equal(app.get('archive-errors-list').children.length,0);
+});
 
 test('embedded gallery browses adjacent photos and restores the existing grid and focus',async()=>{
   const app=archiveHarness(),images=[0,1,2].map(value=>new Blob([String(value)],{type:'image/png'}));
@@ -384,7 +401,7 @@ for(const outcome of ['resolve','reject'])test(`embedded gallery ignores a stale
   const old=new Blob(['old'],{type:'image/png'}),fresh=new Blob(['fresh'],{type:'image/png'});
   const record=preview=>({id:'same',left:old,preview});
   const get=id=>{if(!elements.has(id))elements.set(id,{hidden:false,textContent:'',classList:{toggle(){}},setAttribute(){},dataset:{},focus(){}});return elements.get(id)};
-  const state=vm.createContext({$:get,archiveGeneration:1,archiveScroll:0,archiveNavigation:{cancel(){}},disarmArchiveDelete(){},archiveSelected:null,archiveRecord:null,archiveDeleteArmed:false,archiveViewer:null,archiveRecords:[{id:'same',created:0}],archiveDate:()=>'',
+  const state=vm.createContext({$:get,archiveImportNotice:(message='')=>{get('archive-notice').textContent=message},archiveGeneration:1,archiveScroll:0,archiveNavigation:{cancel(){}},disarmArchiveDelete(){},archiveSelected:null,archiveRecord:null,archiveDeleteArmed:false,archiveViewer:null,archiveRecords:[{id:'same',created:0}],archiveDate:()=>'',
     archiveStore:{get:async()=>++calls===1?pending:record(fresh)},URL:{createObjectURL(blob){const url='blob:'+urls.size;urls.set(url,blob);return url},revokeObjectURL(){}}
   });
   vm.runInContext(source,state);const stale=state.openArchivedPhoto('same');

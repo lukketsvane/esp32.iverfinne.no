@@ -258,3 +258,14 @@ test('batch imports retain separate edits of an existing master and support a mi
   assert.equal(also.document.recipe.preset,1);
   assert.equal((await app.archive.get(old.id)).previewMatchesDocument,true);
 });
+
+test('photo imports keep the original name and bytes and require a working image decoder',async()=>{
+  const app=harness(),image=photo('file bytes'),name='reconstructed-scan.jpg';
+  const info=await app.archive.save(image,null,image,null,name);
+  const record=await app.archive.get(info.id);
+  assert.equal(info.sourceName,name);assert.equal(record.sourceName,name);
+  assert.equal(await record.left.text(),'file bytes');assert.equal(await record.preview.text(),'file bytes');
+  assert.equal(record.document,undefined);assert.equal(info.pending,false);
+  app.failDecode();await assert.rejects(app.archive.save(image,null,image,null,'broken.jpg'),/ikkje lese/);
+  assert.equal((await app.archive.list()).length,1);
+});

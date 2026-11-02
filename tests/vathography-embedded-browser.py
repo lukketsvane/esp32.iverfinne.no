@@ -90,7 +90,11 @@ def exercise(browser_type, directory):
         ])
         page.wait_for_function("document.querySelectorAll('#archive-grid button').length === 3")
         assert page.locator("#archive").is_visible()
-        assert 'broken.entropi' in page.locator("#archive-notice").inner_text()
+        assert page.locator("#archive-notice").inner_text() == "Importerte 2 av 3 filer."
+        details = page.locator("#archive-errors")
+        assert details.is_visible() and not details.evaluate("element => element.open")
+        details.locator("summary").click()
+        assert "broken.entropi" in details.locator("li").inner_text()
         depths = page.evaluate("""async () => {
           const archive = createArchive(), depths = {};
           for (const {id} of await archive.list()) {

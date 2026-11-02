@@ -15,7 +15,7 @@ import { attachGalleryNavigation } from './vendor/gallery-navigation.mjs';
 import { bindCaptureGesture } from './vendor/capture-gesture.mjs';
 import { createPanoramaCapture } from './vendor/panorama-capture.mjs';
 import { createEntropiDocument } from './vendor/entropi-document.mjs';
-import { bindExportGesture, importEntropiDocuments } from './vendor/entropi-ui.mjs';
+import { bindExportGesture, importEntropiDocuments, renderImportFeedback } from './vendor/entropi-ui.mjs';
 
 lockPageZoom();
 const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder=new Viewfinder($('viewfinder'));
@@ -149,7 +149,7 @@ async function persistPreview(){
   session.pending=write.catch(()=>null);await write;
 }
 async function acceptPhoto(blob,name='entropi.jpg',stored=null,recordId=null,right=null,prepared=null,sweep=null){
-  if(!(blob instanceof Blob)||!blob.type.startsWith('image/')||!blob.size||blob.size>40*1024*1024){state('error','Kamerafotoet kunne ikkje lesast.');return}
+  if(!(blob instanceof Blob)||!blob.type.startsWith('image/')||!blob.size||blob.size>40*1024*1024&&!recordId){state('error','Kamerafotoet kunne ikkje lesast.');return}
   if(photoReady&&mode==='done')void persistPreview().catch(error=>printFeedback(failureText(error,saveFailure)));
   const current=++generation;++captureGeneration;capturing=false;clearScene();stopCamera();clearPhoto();photoBlob=blob;photoName=name.replace(/[^\p{L}\p{N}_.-]/gu,'_').slice(-100)||'entropi.jpg';photoUrl=prepared?.src??URL.createObjectURL(blob);photo.src=photoUrl;$('thumbnail').src=photoUrl;
   state('working');
@@ -280,7 +280,8 @@ function clearGalleryUrls(){
 function galleryUrl(blob){
   const url=URL.createObjectURL(blob);galleryUrls.push(url);return url;
 }
-async function openPhoneGallery(message=''){
+function phoneImportNotice(message='',errors=[]){renderImportFeedback($('phone-vault-status'),$('phone-vault-errors'),$('phone-vault-errors-list'),message,errors)}
+async function openPhoneGallery(message='',errors=[]){
   if(sweepCapture.active)return;
   const opening=++galleryGeneration;
   if(!galleryOpen)galleryFocus=document.activeElement;
@@ -290,11 +291,11 @@ async function openPhoneGallery(message=''){
   $('studio').inert=true;$('phone-vault-close').focus({preventScroll:true});
   $('phone-vault-grid').hidden=false;
   $('phone-vault-detail').hidden=true;
-  $('phone-vault-status').textContent=message;
+  phoneImportNotice(message,errors);
   galleryCurrent=null;galleryRecord=null;galleryScroll=0;galleryNavigation.cancel();clearGalleryUrls();
   const grid=$('phone-vault-grid');grid.replaceChildren();
   try{
-    if(photoReady&&mode==='done')await persistPreview().catch(error=>{if(galleryOpen&&opening===galleryGeneration)$('phone-vault-status').textContent=failureText(error,saveFailure)});
+    if(photoReady&&mode==='done')await persistPreview().catch(error=>{if(galleryOpen&&opening===galleryGeneration)phoneImportNotice(failureText(error,saveFailure))});
     const items=await gallery.list();if(!galleryOpen||opening!==galleryGeneration)return;galleryItems=items;
     if(!galleryItems.length){
       const empty=document.createElement('p');empty.className='sr-only';empty.textContent='Ingen foto enno.';grid.append(empty);
@@ -306,21 +307,21 @@ async function openPhoneGallery(message=''){
       if(item.pending){button.classList.add('pending');const mark=document.createElement('span');mark.className='archive-pending-mark';mark.setAttribute('aria-hidden','true');button.append(mark)}
       button.addEventListener('click',()=>void showPhoneRecord(item.id));grid.append(button);
     }
-  }catch(error){if(galleryOpen&&opening===galleryGeneration)$('phone-vault-status').textContent=failureText(error,'Arkivet er ikkje tilgjengeleg')}
+  }catch(error){if(galleryOpen&&opening===galleryGeneration)phoneImportNotice(failureText(error,'Arkivet er ikkje tilgjengeleg'))}
 }
 async function showPhoneRecord(id){
   if(!$('phone-vault-grid').hidden)galleryScroll=$('phone-vault-grid').scrollTop;
   disarmGalleryDelete();galleryNavigation.cancel();
   const opening=++galleryGeneration,isCurrent=()=>galleryOpen&&opening===galleryGeneration&&galleryCurrent===id;
   galleryCurrent=id;galleryRecord=null;galleryDeleteConfirm=false;
-  $('phone-vault-status').textContent='';
+  phoneImportNotice();
   let record;
   try{record=await gallery.get(id);if(!record)throw new Error('Fotoet er ikkje tilgjengeleg.')}
-  catch(error){if(isCurrent())$('phone-vault-status').textContent=failureText(error,'Kunne ikkje opne fotoet.');return}
+  catch(error){if(isCurrent())phoneImportNotice(failureText(error,'Kunne ikkje opne fotoet.'));return}
   if(!isCurrent())return;
   galleryRecord=record;
   const pending=!record.preview&&!record.document;
-  $('phone-vault-edit').hidden=!record.document&&!pending;
+  $('phone-vault-edit').hidden=!record.document&&!pending&&!record.sourceName;
   $('phone-vault-edit').setAttribute('aria-label',pending?'Framkall originalopptaket':'Framkall Entropi-biletet');
   $('phone-vault-save').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':pending?'Lagre original':'Lagre biletet');
   $('phone-vault-image').alt=(pending?'Originalopptak, ikkje framkalla':'Arkivert foto')+'. '+(galleryItems.findIndex(item=>item.id===id)+1)+' av '+galleryItems.length;
@@ -342,7 +343,7 @@ function backPhoneGallery(){
   const index=galleryItems.findIndex(item=>item.id===galleryCurrent),grid=$('phone-vault-grid');
   ++galleryGeneration;galleryCurrent=null;galleryRecord=null;galleryNavigation.cancel();disarmGalleryDelete();
   $('phone-vault-detail').hidden=true;grid.hidden=false;grid.scrollTop=galleryScroll;
-  $('phone-vault-status').textContent='';
+  phoneImportNotice();
   (grid.children[index]??$('phone-vault-close')).focus({preventScroll:true});
 }
 function closePhoneGallery(){
@@ -359,7 +360,8 @@ $('phone-vault-import').addEventListener('click',()=>{
   return importEntropiDocuments({
     button:$('phone-vault-import'),archive:gallery,isCurrent:()=>galleryOpen&&opening===galleryGeneration,
     open:master=>{closePhoneGallery();return acceptPhoto(master.left,master.id+'.entropi',master)},
-    refresh:openPhoneGallery,feedback:message=>{$('phone-vault-status').textContent=message}
+    openPhoto:async id=>{const target=galleryGeneration+1;await openPhoneGallery();if(galleryOpen&&target===galleryGeneration)await showPhoneRecord(id)},
+    refresh:openPhoneGallery,feedback:phoneImportNotice
   });
 });
 $('phone-vault-edit').addEventListener('click',async()=>{
@@ -368,12 +370,12 @@ $('phone-vault-edit').addEventListener('click',async()=>{
   try{record=await gallery.get(id)}catch(error){if(isCurrent())printFeedback(failureText(error,'Kunne ikkje opne fotoet.'));return}
   if(!isCurrent()||!record)return;
   closePhoneGallery();
-  try{await acceptPhoto(record.left,(record.document?.id??id)+'.entropi',record.document??null,id,record.right,null,{panorama:record.panorama})}catch(error){printFeedback(failureText(error,'Kunne ikkje opne fotoet.'))}
+  try{await acceptPhoto(record.left,record.sourceName??(record.document?.id??id)+'.entropi',record.document??null,id,record.right,null,{panorama:record.panorama})}catch(error){printFeedback(failureText(error,'Kunne ikkje opne fotoet.'))}
 });
 bindExportGesture($('phone-vault-save'),()=>{
   const id=galleryCurrent,record=galleryRecord,opening=galleryGeneration,isCurrent=()=>galleryOpen&&opening===galleryGeneration&&id===galleryCurrent;if(!id||!record||!isCurrent())return;
   const image=record.preview??record.document?.preview??record.left;
-  return {image:()=>image,document:record.document?()=>record.document:undefined,defaultFormat:record.previewMatchesDocument?'tif':'png',imageExtension:image.type==='image/jpeg'?'jpg':image.type==='image/webp'?'webp':'png',name:'entropi-'+id,isCurrent,onError:error=>{if(isCurrent())$('phone-vault-status').textContent=failureText(error,'Kunne ikkje lagre biletet.')}};
+  return {image:()=>image,document:record.document?()=>record.document:undefined,defaultFormat:record.previewMatchesDocument?'tif':'png',imageExtension:image.type==='image/jpeg'?'jpg':image.type==='image/svg+xml'?'svg':image.type.split('/')[1]||'png',name:record.sourceName??'entropi-'+id,isCurrent,onError:error=>{if(isCurrent())phoneImportNotice(failureText(error,'Kunne ikkje lagre biletet.'))}};
 });
 let galleryDeleteTimer=0;
 function disarmGalleryDelete(){clearTimeout(galleryDeleteTimer);galleryDeleteTimer=0;galleryDeleteConfirm=false;$('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed')}
@@ -382,18 +384,18 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden){disarmGall
 $('phone-vault-remove').addEventListener('click',async()=>{
   if(!galleryCurrent)return;
   if(!galleryDeleteConfirm){galleryDeleteConfirm=true;$('phone-vault-remove').setAttribute('aria-label','Trykk igjen for å slette');$('phone-vault-remove').classList.add('armed');galleryDeleteTimer=setTimeout(disarmGalleryDelete,3000);return}
-  disarmGalleryDelete();$('phone-vault-status').textContent='';
+  disarmGalleryDelete();phoneImportNotice();
   const id=galleryCurrent,session=archiveState,wasSuppressed=session.suppressed;
   if(session.id===id)session.suppressed=true;
   try{await session.pending;if(session.id===id)session.suppressed=true;await gallery.remove(id);if(galleryCurrent===id){galleryCurrent=null;void openPhoneGallery()}}
-  catch(error){if(archiveState===session)session.suppressed=wasSuppressed;if(galleryCurrent===id){galleryDeleteConfirm=false;$('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed');$('phone-vault-status').textContent=failureText(error,'Kunne ikkje slette fotoet.')}}
+  catch(error){if(archiveState===session)session.suppressed=wasSuppressed;if(galleryCurrent===id){galleryDeleteConfirm=false;$('phone-vault-remove').setAttribute('aria-label','Slett');$('phone-vault-remove').classList.remove('armed');phoneImportNotice(failureText(error,'Kunne ikkje slette fotoet.'))}}
 });
 window.addEventListener('keydown',event=>{
   if(event.defaultPrevented||!galleryOpen)return;
   if(event.key==='Escape'&&galleryOpen){event.preventDefault();if(!$('phone-vault-detail').hidden)backPhoneGallery();else closePhoneGallery()}
   else if(!$('phone-vault-detail').hidden&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();stepPhoneGallery(event.key==='ArrowRight'?1:-1)}
   else if(event.key==='Tab'){
-    const controls=[$('phone-vault-import'),$('phone-vault-close'),...($('phone-vault-detail').hidden?Array.from($('phone-vault-grid').children):[$('phone-vault-edit'),$('phone-vault-save'),$('phone-vault-remove'),$('phone-vault-back')])].filter(button=>button.tagName==='BUTTON'&&!button.hidden&&!button.disabled);
+    const controls=[$('phone-vault-import'),$('phone-vault-close'),...($('phone-vault-errors').hidden?[]:[$('phone-vault-errors-summary')]),...($('phone-vault-detail').hidden?Array.from($('phone-vault-grid').children):[$('phone-vault-edit'),$('phone-vault-save'),$('phone-vault-remove'),$('phone-vault-back')])].filter(control=>(control.tagName==='BUTTON'||control.tagName==='SUMMARY')&&!control.hidden&&!control.disabled);
     event.preventDefault();const index=controls.indexOf(document.activeElement),next=index<0?(event.shiftKey?controls.length-1:0):(index+(event.shiftKey?-1:1)+controls.length)%controls.length;
     controls[next]?.focus({preventScroll:true});
   }

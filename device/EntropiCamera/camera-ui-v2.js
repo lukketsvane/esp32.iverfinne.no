@@ -143,10 +143,12 @@ $('archive-import').addEventListener('click',()=>{
   const opening=archiveGeneration;
   return importEntropiDocuments({
     button:$('archive-import'),archive:archiveStore,isCurrent:()=>!$('archive').hidden&&opening===archiveGeneration,
-    open:master=>openEntropiMaster(master),refresh:showArchive,feedback:message=>{$('archive-notice').textContent=message}
+    open:master=>openEntropiMaster(master),
+    openPhoto:async id=>{const target=archiveGeneration+1;await showArchive();if(!$('archive').hidden&&target===archiveGeneration)await openArchivedPhoto(id)},
+    refresh:showArchive,feedback:archiveImportNotice
   });
 });
-$('archive-edit').addEventListener('click',async()=>{const id=archiveSelected,opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;if(!id||!isCurrent())return;try{const record=await archiveStore.get(id);if(isCurrent()&&record)await openArchivedCapture(record,id)}catch(error){if(isCurrent())$('archive-notice').textContent=error.message}});
+$('archive-edit').addEventListener('click',async()=>{const id=archiveSelected,opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;if(!id||!isCurrent())return;try{const record=await archiveStore.get(id);if(isCurrent()&&record)await openArchivedCapture(record,id)}catch(error){if(isCurrent())archiveImportNotice(error.message)}});
 
 async function archiveCapture(original,pair,panorama=null){
   try{
@@ -169,7 +171,8 @@ function archiveUrl(blob){
 function archiveDate(timestamp){
   return new Date(timestamp).toLocaleString('nn-NO',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
 }
-async function showArchive(message=''){
+function archiveImportNotice(message='',errors=[]){renderImportFeedback($('archive-notice'),$('archive-errors'),$('archive-errors-list'),message,errors)}
+async function showArchive(message='',errors=[]){
   if(sweepCapture?.active||busy||printBusy)return;
   const opening=++archiveGeneration;
   if($('archive').hidden&&!archiveReturnToPhoto)archiveFocus=document.activeElement;
@@ -177,7 +180,7 @@ async function showArchive(message=''){
   $('archive').hidden=false;
   studio.inert=true;$('close-archive').focus({preventScroll:true});
   $('archive-grid').hidden=false;$('archive-detail').hidden=true;
-  $('archive-notice').textContent=message;
+  archiveImportNotice(message,errors);
   archiveSelected=null;archiveRecord=null;archiveScroll=0;archiveNavigation.cancel();
   clearArchiveUrls();
   const grid=$('archive-grid');grid.replaceChildren();
@@ -218,10 +221,10 @@ async function openArchivedPhoto(id){
   $('archive-detail-info').textContent=archiveDate(archiveRecords.find(entry=>entry.id===id)?.created??Date.now())+'  ·  '+(record.right?'STEREO':'FOTO');
   $('archive-left').setAttribute('aria-label',record.document?'Eksporter VATHOgraphy':pending?(record.right?'Lagre venstre original':'Lagre original'):'Lagre biletet');
   $('archive-right').hidden=!record.right;
-  $('archive-edit').hidden=!record.document&&!pending;
+  $('archive-edit').hidden=!record.document&&!pending&&!record.sourceName;
   $('archive-edit').setAttribute('aria-label',pending?'Framkall originalopptaket':'Opne VATHOgraphy');
   $('archive-delete').setAttribute('aria-label','Slett');$('archive-delete').dataset.armed='false';
-  $('archive-notice').textContent='';
+  archiveImportNotice();
   $('archive-grid').hidden=true;$('archive-detail').hidden=false;
   (pending?$('archive-edit'):$('archive-left')).focus({preventScroll:true});
 }
@@ -234,7 +237,7 @@ function backArchive(){
   const index=archiveRecords.findIndex(record=>record.id===archiveSelected),grid=$('archive-grid');
   ++archiveGeneration;archiveSelected=null;archiveRecord=null;archiveNavigation.cancel();disarmArchiveDelete();
   $('archive-detail').hidden=true;grid.hidden=false;grid.scrollTop=archiveScroll;
-  $('archive-notice').textContent='';
+  archiveImportNotice();
   (grid.children[index]??$('close-archive')).focus({preventScroll:true});
 }
 function closeArchive(restore=true){
@@ -251,7 +254,7 @@ $('archive-back').addEventListener('click',backArchive);
 function archivedExportOptions(kind){
   const id=archiveSelected,record=archiveRecord,opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;if(!id||!record||!isCurrent())return;
   const blob=kind==='right'?record.right:record.preview??record.document?.preview??record.left;if(!blob)return;
-  return {image:()=>blob,document:kind==='left'&&record.document?()=>record.document:undefined,defaultFormat:kind==='left'&&record.previewMatchesDocument?'tif':'png',imageExtension:blob.type==='image/png'?'png':blob.type==='image/webp'?'webp':'jpg',name:'entropi-'+id+'-'+kind,isCurrent,onError:error=>{if(isCurrent())$('archive-notice').textContent=error.message}};
+  return {image:()=>blob,document:kind==='left'&&record.document?()=>record.document:undefined,defaultFormat:kind==='left'&&record.previewMatchesDocument?'tif':'png',imageExtension:blob.type==='image/jpeg'?'jpg':blob.type==='image/svg+xml'?'svg':blob.type.split('/')[1]||'png',name:record.sourceName??'entropi-'+id+'-'+kind,isCurrent,onError:error=>{if(isCurrent())archiveImportNotice(error.message)}};
 }
 for(const kind of ['left','right'])bindExportGesture($('archive-'+kind),()=>archivedExportOptions(kind));
 let archiveDeleteTimer=0;
@@ -265,14 +268,14 @@ $('archive-delete').addEventListener('click',async()=>{
   }
   disarmArchiveDelete();const current=id===captureArchiveId,blob=photoBlob;
   if(current){captureArchiveSuppressed=true;clearTimeout(masterSaveTimer);masterSaveTimer=0;await masterWrites.get(blob)}
-  try{await archiveStore.remove(id);void showArchive()}catch(error){if(current&&blob===photoBlob)captureArchiveSuppressed=false;$('archive-notice').textContent=error.message}
+  try{await archiveStore.remove(id);void showArchive()}catch(error){if(current&&blob===photoBlob)captureArchiveSuppressed=false;archiveImportNotice(error.message)}
 });
 window.addEventListener('keydown',event=>{
   if(event.defaultPrevented||$('archive').hidden)return;
   if(event.key==='Escape'&&!$('archive').hidden){event.preventDefault();if(!$('archive-detail').hidden)backArchive();else closeArchive()}
   else if(!$('archive-detail').hidden&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();stepArchive(event.key==='ArrowRight'?1:-1)}
   else if(event.key==='Tab'){
-    const controls=[$('archive-import'),$('close-archive'),...($('archive-detail').hidden?Array.from($('archive-grid').children):[$('archive-edit'),$('archive-left'),$('archive-right'),$('archive-delete'),$('archive-back')])].filter(button=>button.tagName==='BUTTON'&&!button.hidden&&!button.disabled);
+    const controls=[$('archive-import'),$('close-archive'),...($('archive-errors').hidden?[]:[$('archive-errors-summary')]),...($('archive-detail').hidden?Array.from($('archive-grid').children):[$('archive-edit'),$('archive-left'),$('archive-right'),$('archive-delete'),$('archive-back')])].filter(control=>(control.tagName==='BUTTON'||control.tagName==='SUMMARY')&&!control.hidden&&!control.disabled);
     event.preventDefault();const index=controls.indexOf(document.activeElement),next=index<0?(event.shiftKey?controls.length-1:0):(index+(event.shiftKey?-1:1)+controls.length)%controls.length;
     controls[next]?.focus({preventScroll:true});
   }

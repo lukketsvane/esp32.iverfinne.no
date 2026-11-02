@@ -33,7 +33,12 @@ function harness(options={}){
     replaceChildren(...children){this.children=children}
     appendChild(child){this.children.push(child);return child}
     append(...children){this.children.push(...children)}
-    async emit(name,details={}){for(const callback of this.listeners.get(name)??[])callback({type:name,target:this,currentTarget:this,isPrimary:true,pointerId:1,clientX:100,clientY:100,preventDefault(){},...details});await flush()}
+    async emit(name,details={},waitForHandlers=false){
+      const event={type:name,target:this,currentTarget:this,isPrimary:true,pointerId:1,clientX:100,clientY:100,preventDefault(){},...details};
+      const results=(this.listeners.get(name)??[]).map(callback=>callback(event));
+      if(waitForHandlers)await Promise.all(results);
+      await flush();
+    }
     click(){void this.emit('click')}
     focus(){document.activeElement=this}
     async decode(){if(options.decode)await options.decode()}
@@ -67,6 +72,7 @@ function harness(options={}){
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
     COLOR_SCHEMES,attachGalleryNavigation,createPanoramaCapture:()=>({active:false,recording:false,cancel(){},dispose(){}}),
     createEntropiDocument,bindExportGesture:(button,getOptions)=>button.addEventListener('click',async()=>{const options=getOptions();if(!options||!options.isCurrent())return;try{const blob=await options.image();if(options.isCurrent())saves.push({blob,name:options.name.replace(/\.[^.]+$/,'')+'.'+(options.imageExtension??'png'),isCurrent:options.isCurrent,options})}catch(error){options.onError?.(error)}}),
+    readVathographyPNG:async file=>file.master?file:null,
     decodeEntropiDocument:async file=>{if(!file.master)throw Error('Invalid Entropi file');return file.master},
     createArchive:()=>options.archive??({saveDocument:async document=>({id:document.id}),save:async()=>({}),savePreview:async()=>null,list:async()=>[],get:async()=>null,remove:async()=>{}}),
     location:{search:''},URLSearchParams,
@@ -83,7 +89,7 @@ function harness(options={}){
     performance:{now:()=>now},Date:class extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}},
     setTimeout:(callback,delay=0)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)
   });
-  context.importEntropiDocuments=vm.runInContext('(() => {\n'+importModule+'\nreturn importEntropiDocuments; })()',context);
+  Object.assign(context,vm.runInContext('(() => {\n'+importModule+'\nreturn {importEntropiDocuments,renderImportFeedback}; })()',context));
   vm.runInContext(photoSource+'\n'+application,context,{filename:'app.mjs'});
   async function tick(duration){now+=duration;for(const [id,timer]of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}await flush()}
   async function emit(name,details={}){const event={type:name,defaultPrevented:false,preventDefault(){this.defaultPrevented=true},...details};for(const callback of events.get(name)??[])callback(event);await flush();return event}
@@ -545,7 +551,7 @@ test('importing a numerical master restores its expression without running a mod
   const left=new Blob(['source'],{type:'image/jpeg'}),preview=new Blob(['preview'],{type:'image/png'});
   const stored=createEntropiDocument({left,preview,result:{width:2,height:2,depth:Float32Array.of(1.25,2.75,4.5,NaN),polarity:'near'},recipe:{preset:4,position:-.2,width:2}});
   const app=harness({importDocument:stored});
-  await app.get('open-gallery').emit('click');await app.get('phone-vault-import').emit('click');
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-import').emit('click',{},true);
   assert.equal(app.get('studio').className,'studio done');assert.equal(app.artCalls.length,0);assert.equal(app.sceneCalls.length,0);
   assert.deepEqual(app.artViews[0].recipe,stored.recipe);
   await app.get('save').emit('click');const exported=await app.saves[0].options.document();
@@ -555,7 +561,7 @@ test('importing a numerical master restores its expression without running a mod
 function archiveFixture(){
   const records=new Map(),writes=[],previewWrites=[],removed=[];let nextId=0;
   const state={failSave:false,failRemove:false,blockedSave:null,blockedRemove:null,records,writes,previewWrites,removed,archive:{
-    async save(left,right=null,preview=left){const id='capture-'+ ++nextId;records.set(id,{id,left,right,created:nextId,preview,pending:!preview});return {id}},
+    async save(left,right=null,preview=left,panorama=null,sourceName){const id='capture-'+ ++nextId;records.set(id,{id,left,right,sourceName,created:nextId,preview,pending:!preview});return {id}},
     async importDocument(document){return this.saveDocument(document,'import-'+ ++nextId)},
     async saveDocument(document,id=document.id){writes.push({document,id});if(state.failSave)throw new DOMException('Storage full','QuotaExceededError');if(state.blockedSave)await state.blockedSave.promise;const previous=records.get(id);records.set(id,{id,left:document.left,right:document.right,document,created:previous?.created??nextId++,preview:document.preview});return {id}},
     async savePreview(id,preview){const record=records.get(id);if(!record)return null;previewWrites.push({id,preview});record.preview=preview;record.pending=false;return {id}},
@@ -565,20 +571,59 @@ function archiveFixture(){
   }};return state;
 }
 
-test('the phone imports a selection into the gallery, retaining good masters around a failed file',async()=>{
+// Browser decoding is stubbed by the harness. These two files contain valid 2×2 RGB images.
+const photoSamples = {
+  png:'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR42mM8IcLEwMDAxMDAwMDAAAALWADicqv05gAAAABJRU5ErkJggg==',
+  jpeg:'/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAABgf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCHAHFRf//Z'
+};
+function photoFile(name,type){
+  return new File([Buffer.from(photoSamples[type],'base64')],name,{type:'image/'+type});
+}
+
+test('the phone imports ordinary photos and numerical masters together, retaining good files around a failed one',async()=>{
   const store=archiveFixture();
   const settings={left:new Blob(['source'],{type:'image/jpeg'}),preview:new Blob(['preview'],{type:'image/png'}),result:{width:2,height:1,depth:Float32Array.of(1,2)}};
   const first=createEntropiDocument({...settings,id:'first-master'}),last=createEntropiDocument({...settings,id:'last-master'});
+  const png=photoFile('ordinary.png','png'),jpeg=photoFile('scene.jpg','jpeg');
+  const embedded=Object.assign(photoFile('master.png','png'),{master:last});
   const app=harness({archive:store.archive,importFiles:[
-    {name:'first.entropi',master:first},{name:'broken.entropi'},{name:'last.entropi',master:last}
+    png,{name:'first.entropi',master:first},{name:'broken.entropi'},jpeg,embedded
   ]});
   await app.get('open-gallery').emit('click');
-  await app.get('phone-vault-import').emit('click');
+  await app.get('phone-vault-import').emit('click',{},true);
   assert.deepEqual(store.writes.map(write=>write.document.id),[first.id,last.id]);
   assert.equal(app.get('phone-vault').hidden,false);
-  assert.equal(app.get('phone-vault-grid').children.length,2);
+  assert.equal(app.get('phone-vault-grid').children.length,4);
+  const originals=[...store.records.values()].filter(record=>!record.document);
+  assert.equal(originals.length,2);
+  for(const [record,input] of [[originals[0],png],[originals[1],jpeg]]){
+    assert.equal(record.left.type,input.type);
+    assert.deepEqual(await record.left.arrayBuffer(),await input.arrayBuffer());
+  }
   assert.equal(app.restoreCalls.length,0);
-  assert.match(app.get('phone-vault-status').textContent,/broken\.entropi/);
+  assert.equal(app.get('phone-vault-status').textContent,'Importerte 4 av 5 filer.');
+  assert.equal(app.get('phone-vault-errors').hidden,false);
+  assert.equal(app.get('phone-vault-errors').open,false);
+  assert.equal(app.get('phone-vault-errors-list').children.length,1);
+  assert.match(app.get('phone-vault-errors-list').children[0].textContent,/broken\.entropi/);
+});
+
+test('selecting one ordinary JPEG opens the photograph and archives its original bytes once',async()=>{
+  const store=archiveFixture(),input=photoFile('everyday.jpg','jpeg');
+  const app=harness({archive:store.archive,importFiles:[input]});
+  await app.get('open-gallery').emit('click');
+  await app.get('phone-vault-import').emit('click',{},true);
+  assert.equal(app.get('phone-vault').hidden,false);
+  assert.equal(app.get('phone-vault-detail').hidden,false);
+  assert.equal(app.get('phone-vault-edit').hidden,false);
+  assert.equal(app.restoreCalls.length,0);
+  assert.equal(app.artCalls.length,0);
+  assert.equal(store.records.size,1);
+  const [stored]=store.records.values();
+  assert.equal(stored.left.type,'image/jpeg');
+  assert.deepEqual(await stored.left.arrayBuffer(),await input.arrayBuffer());
+  assert.equal(stored.sourceName,input.name);
+  assert.deepEqual(await app.urls.get(app.get('phone-vault-image').src).arrayBuffer(),await input.arrayBuffer());
 });
 
 test('the archive displays and saves the current processed photo while retaining its original',async()=>{
@@ -683,7 +728,7 @@ test('failed development remains recoverable after page disposal and never requi
 test('a failed master restore retries the saved depth and recipe without becoming stuck or running inference',async()=>{
   const stored=createEntropiDocument({left:new Blob(['original'],{type:'image/jpeg'}),right:new Blob(['right'],{type:'image/jpeg'}),preview:new Blob(['preview'],{type:'image/png'}),result:{width:2,height:2,depth:Float32Array.of(1,2,3,4)},recipe:{preset:4,position:.2,width:1.5}});
   let attempts=0;const app=harness({importDocument:stored,restore:async()=>{if(++attempts===1)throw new Error('Temporary decode failure')}});
-  await app.get('open-gallery').emit('click');await app.get('phone-vault-import').emit('click');assert.equal(app.get('studio').className,'studio error');assert.equal(app.restoreCalls.length,1);
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-import').emit('click',{},true);assert.equal(app.get('studio').className,'studio error');assert.equal(app.restoreCalls.length,1);
   await app.get('retry').emit('click');assert.equal(app.get('studio').className,'studio done');assert.equal(app.restoreCalls.length,2);assert.equal(app.artCalls.length,0);
   assert.equal(app.restoreCalls[1].result,stored.result);assert.equal(app.restoreCalls[1].recipe,stored.recipe);
   await app.get('save').emit('click');const exported=await app.saves[0].options.document();assert.equal(exported.right,stored.right);assert.deepEqual(exported.result.depth,stored.result.depth);

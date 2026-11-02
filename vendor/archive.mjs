@@ -60,15 +60,16 @@ export function createArchive(){
     const panorama=normalizePanorama(document.panorama);if(panorama){if(document.right!=null)throw new Error('Ugyldig panorama.');document={...document,panorama}}
     const db=await connect(),existing=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').get(id));
     const preview=await thumbnail(rendered).catch(()=>null)??rendered;
-    const info={id,created:existing?.created??Date.parse(document.created),stereo:!!document.right||!!panorama?.frames.some(frame=>frame.right),preview,pending:false,previewMatchesDocument:!!document.preview};
+    const source=existing?.sourceName?{sourceName:existing.sourceName}:{};
+    const info={id,...source,created:existing?.created??Date.parse(document.created),stereo:!!document.right||!!panorama?.frames.some(frame=>frame.right),preview,pending:false,previewMatchesDocument:!!document.preview};
     await transact(db,['photos','index'],'readwrite',tx=>{
-      tx.objectStore('photos').put({id,left:document.left,right:document.right,document,preview:document.preview,previewMatchesDocument:!!document.preview,...(panorama?{panorama}:{})});
+      tx.objectStore('photos').put({id,...source,left:document.left,right:document.right,document,preview:document.preview,previewMatchesDocument:!!document.preview,...(panorama?{panorama}:{})});
       tx.objectStore('index').put(info);
     });
     return info;
   }
   return {
-    async save(left,right=null,rendered=left,panorama=null){
+    async save(left,right=null,rendered=left,panorama=null,sourceName=null){
       requestPersistence();
       if(!(left instanceof Blob)||!left.size||right&&(!(right instanceof Blob)||!right.size))throw new Error('Manglar gyldige originalbilete.');
       if(rendered!==null&&(!(rendered instanceof Blob)||!rendered.size))throw new Error('Manglar gyldig framkalla bilete.');
@@ -76,10 +77,16 @@ export function createArchive(){
       if(sweep&&(right!==null||left.size+(rendered?.size??0)+sweep.frames.reduce((sum,frame)=>sum+frame.left.size+(frame.right?.size??0),0)>128*1024*1024))throw new Error('Ugyldig panorama.');
       const db=await connect();
       const id=newRecordId();
-      const preview=await thumbnail(rendered??left).catch(()=>null)??rendered??left;
-      const info={id,created:Date.now(),stereo:!!right||!!sweep?.frames.some(frame=>frame.right),preview,pending:rendered===null,previewMatchesDocument:false};
+      // Imported image files must actually decode before they become archive entries.
+      let preview;
+      if(sourceName!==null){
+        try{preview=await thumbnail(left)}catch{throw new Error('Nettlesaren kunne ikkje lese biletet.')}
+      }else preview=await thumbnail(rendered??left).catch(()=>null);
+      preview??=rendered??left;
+      const source=sourceName!==null?{sourceName}:{};
+      const info={id,...source,created:Date.now(),stereo:!!right||!!sweep?.frames.some(frame=>frame.right),preview,pending:rendered===null,previewMatchesDocument:false};
       await transact(db,['photos','index'],'readwrite',tx=>{
-        tx.objectStore('photos').put({id,left,right,preview:rendered,previewMatchesDocument:false,...(sweep?{panorama:sweep}:{})});
+        tx.objectStore('photos').put({id,...source,left,right,preview:rendered,previewMatchesDocument:false,...(sweep?{panorama:sweep}:{})});
         tx.objectStore('index').put(info);
       });
       return info;

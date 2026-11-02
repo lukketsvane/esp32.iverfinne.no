@@ -142,7 +142,7 @@ export function bindExportGesture(button,getOptions){
 function pickEntropiFiles(multiple){
   return new Promise(resolve=>{
     const input=document.createElement('input');
-    input.type='file';input.accept='.entropi,.png,image/png';input.multiple=multiple;input.hidden=true;
+    input.type='file';input.accept=multiple?'image/*,.entropi,.png,.jpg,.jpeg,.webp,.heic,.heif,.avif':'.entropi,.png,image/png';input.multiple=multiple;input.hidden=true;
     const finish=files=>{input.remove();resolve(files)};
     input.addEventListener('cancel',()=>finish([]),{once:true});
     input.addEventListener('change',()=>finish(Array.from(input.files??[])),{once:true});
@@ -164,29 +164,68 @@ export async function pickEntropiDocument(){
   return file?readEntropiFile(file):null;
 }
 
-export async function importEntropiDocuments({button,archive,open,refresh,isCurrent,feedback}){
+const photoTypes={jpg:'jpeg',jpeg:'jpeg',png:'png',webp:'webp',gif:'gif',bmp:'bmp',avif:'avif',heic:'heic',heif:'heif',tif:'tiff',tiff:'tiff',svg:'svg+xml'};
+async function readImportFile(file){
+  const extension=(file.name??'').split('.').pop().toLowerCase();
+  if(extension==='entropi'||file.type==='application/x-entropi')return {master:await decodeEntropiDocument(file)};
+  const header=new Uint8Array(await file.slice(0,8).arrayBuffer());
+  const png=header.length===8&&[137,80,78,71,13,10,26,10].every((byte,i)=>header[i]===byte);
+  const type=png?'image/png':file.type?.startsWith('image/')?file.type:photoTypes[extension]?'image/'+photoTypes[extension]:null;
+  if(!type)throw new Error('Dette filformatet er ikkje støtta.');
+  const photo=file.type===type?file:file.slice(0,file.size,type);
+  if(type==='image/png'){
+    const payload=await readVathographyPNG(photo);
+    if(payload)return {master:await decodeEntropiDocument(payload)};
+  }
+  // A picker-backed File may still hash correctly after IndexedDB reload but fail
+  // to display in Chromium. Keep an independent, byte-identical image Blob.
+  const parts=[],chunkSize=4*1024*1024;
+  for(let offset=0;offset<photo.size;offset+=chunkSize){
+    const bytes=await photo.slice(offset,offset+chunkSize).arrayBuffer();
+    parts.push(new Blob([bytes]));
+  }
+  return {photo:new Blob(parts,{type:photo.type})};
+}
+
+export function renderImportFeedback(status,details,list,message='',errors=[]){
+  status.textContent=message;
+  details.open=false;
+  details.hidden=errors.length===0;
+  list.replaceChildren();
+  for(const error of errors){
+    const item=document.createElement('li');
+    item.textContent=error;
+    list.append(item);
+  }
+}
+
+export async function importEntropiDocuments({button,archive,open,openPhoto,refresh,isCurrent,feedback}){
   if(button.disabled)return;
   button.disabled=true;
   try{
     const files=await pickEntropiFiles(true);
     if(!files.length||!isCurrent())return;
-    if(files.length===1){
-      const master=await readEntropiFile(files[0]);
-      if(isCurrent())await open(master);
-      return;
-    }
     let imported=0;
     const errors=[];
     for(const file of files){
       if(!isCurrent())return;
       try{
-        const master=await readEntropiFile(file);
+        const {master,photo}=await readImportFile(file);
         if(!isCurrent())return;
-        await archive.importDocument(master);
+        if(master){
+          if(files.length===1){await open(master);return}
+          await archive.importDocument(master);
+        }else{
+          const record=await archive.save(photo,null,photo,null,file.name);
+          if(files.length===1){if(isCurrent())await openPhoto(record.id);return}
+        }
         imported++;
       }catch(error){errors.push(file.name+' ('+(error?.message||'ukjend feil')+')')}
     }
-    if(isCurrent())await refresh(['Importerte '+imported+' av '+files.length+' filer.',...errors].join(' '));
+    if(isCurrent()){
+      const summary='Importerte '+imported+' av '+files.length+(files.length===1?' fil.':' filer.');
+      if(files.length===1)feedback(summary,errors);else await refresh(summary,errors);
+    }
   }catch(error){if(isCurrent())feedback(error?.message||'Kunne ikkje importere filene.')}
   finally{button.disabled=false}
 }

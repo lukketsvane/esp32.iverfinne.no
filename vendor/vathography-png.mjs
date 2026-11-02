@@ -16,6 +16,14 @@ function validate(file){
   if(!(file instanceof Blob)||file.size<signature.length+25||file.size>maxPng)invalid('Biletet er for stort eller ikkje PNG.');
   if(file.type&&file.type!=='image/png')invalid('Berre PNG støttar dette bildefilformatet.');
 }
+// Includes the four-byte type and trailing CRC, as stored in a PNG chunk.
+function readPayload(chunk){
+  const field=chunk.subarray(4,-4);
+  const crc=new DataView(chunk.buffer,chunk.byteOffset+chunk.length-4,4).getUint32(0);
+  if(crc!==crc32(chunk.subarray(0,-4)))invalid('VATHO-datablokka er skadd.');
+  if(typeAt(field,0)!=='VATH'||field[4]!==1||field[5]||field[6]||field[7])invalid('Ukjend VATHO-PNG-versjon.');
+  return field.subarray(8);
+}
 function walkPng(bytes){
   if(bytes.length<45||!signature.every((b,i)=>bytes[i]===b))invalid('Fann ikkje PNG-signaturen.');
   const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
@@ -31,10 +39,7 @@ function walkPng(bytes){
     if(type==='IDAT')seenIDAT=true;
     if(type==='vaTh'){
       if(embedded!==null||size<8||size>maxArchive)invalid('Ugyldig eller duplisert VATHO-datablokk.');
-      const field=bytes.subarray(offset+8,offset+8+size),crcInput=bytes.subarray(offset+4,offset+8+size);
-      if(view.getUint32(offset+8+size,false)!==crc32(crcInput))invalid('VATHO-datablokka er skadd.');
-      if(String.fromCharCode(...field.subarray(0,4))!=='VATH'||field[4]!==1||field[5]||field[6]||field[7])invalid('Ukjend VATHO-PNG-versjon.');
-      embedded=field.subarray(8);
+      embedded=readPayload(bytes.subarray(offset+4,end));
     }
     if(type==='IEND'){
       if(size!==0||!seenIDAT||end!==bytes.length)invalid('PNG-fila har ugyldig slutt.');
@@ -64,8 +69,30 @@ export async function encodeVathographyPNG(preview,documentFile){
   return result;
 }
 export async function readVathographyPNG(file){
-  validate(file);
-  const bytes=new Uint8Array(await file.arrayBuffer());
-  const {embedded}=walkPng(bytes);
-  return embedded===null?null:new Blob([embedded],{type:'application/x-entropi'});
+  if(!(file instanceof Blob)||file.size<45||file.type&&file.type!=='image/png')invalid();
+  // Skip pixel data. A regular 8K PNG need not fit in the numerical master budget.
+  let start=0,bytes=new Uint8Array(await file.slice(0,65536).arrayBuffer());
+  if(!signature.every((value,i)=>bytes[i]===value))invalid('Fann ikkje PNG-signaturen.');
+  let embedded=null,hasPixels=false;
+  for(let offset=8;offset+12<=file.size;){
+    if(offset+8>start+bytes.length){
+      start=offset;bytes=new Uint8Array(await file.slice(start,start+65536).arrayBuffer());
+    }
+    const index=offset-start,size=new DataView(bytes.buffer,bytes.byteOffset+index,4).getUint32(0);
+    const type=typeAt(bytes,index+4),end=offset+12+size;
+    if(end>file.size)invalid('PNG-fila har ein øydelagd datablokk.');
+    if(offset===8?(type!=='IHDR'||size!==13):type==='IHDR')invalid();
+    if(type==='IDAT')hasPixels=true;
+    if(type==='vaTh'){
+      if(embedded||size<8||size>maxArchive+8)invalid('Ugyldig eller duplisert VATHO-datablokk.');
+      const chunk=new Uint8Array(await file.slice(offset+4,end).arrayBuffer());
+      embedded=new Blob([readPayload(chunk)],{type:'application/x-entropi'});
+    }
+    if(type==='IEND'){
+      if(size||!hasPixels||end!==file.size)invalid('PNG-fila har ugyldig slutt.');
+      return embedded;
+    }
+    offset=end;
+  }
+  invalid('PNG-fila manglar sluttblokk.');
 }

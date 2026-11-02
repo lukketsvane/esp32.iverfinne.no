@@ -59,3 +59,24 @@ test('truncated PNG and incorrect source MIME are refused',async()=>{
   await assert.rejects(encodeVathographyPNG(new Blob(['not png'],{type:'image/png'}),archive));
   await assert.rejects(readVathographyPNG(new Blob(['fake'],{type:'image/jpeg'})));
 });
+
+test('a large ordinary PNG skips image-data chunks without reading them into a master buffer',async()=>{
+  const pixelBytes=170*1024*1024,tail=33+12+pixelBytes,total=tail+12;
+  const header=Buffer.alloc(41),footer=Buffer.from('0000000049454e44ae426082','hex');
+  Buffer.from(await png.slice(0,33).arrayBuffer()).copy(header);
+  header.writeUInt32BE(pixelBytes,33);header.write('IDAT',37);
+  const reads=[];
+  class LargeImage extends Blob{
+    get size(){return total}
+    slice(start,end){
+      reads.push([start,end]);assert.ok(end-start<=65536);
+      const data=Buffer.alloc(Math.min(end,total)-start);
+      if(start===0)header.copy(data);
+      if(start===tail)footer.copy(data);
+      return new Blob([data]);
+    }
+    arrayBuffer(){throw Error('The whole image must not be buffered')}
+  }
+  assert.equal(await readVathographyPNG(new LargeImage([],{type:'image/png'})),null);
+  assert.equal(reads.length,2);
+});

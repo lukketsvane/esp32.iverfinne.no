@@ -246,14 +246,27 @@ test('multi picker imports serially, keeps good files around failures and leaves
   const trigger=app.element('button'),saved=[],messages=[];
   const pending=deferred();
   const options={button:trigger,archive:{async importDocument(master){saved.push(master.id);if(saved.length===1)await pending.promise}},
-    open(){throw Error('Batch opened a single file')},isCurrent:()=>true,refresh:message=>messages.push(message),feedback:message=>messages.push(message)};
+    open(){throw Error('Batch opened a single file')},isCurrent:()=>true,refresh:(message,errors)=>messages.push([message,...errors]),feedback:message=>messages.push([message])};
   const work=app.api.importEntropiDocuments(options);
   assert.equal(app.input().multiple,true);assert.equal(trigger.disabled,true);
   app.input().files=['a.entropi','bad.entropi','null.entropi','b.entropi'].map(name=>new File(['bytes'],name));
   await app.input().emit('change');await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(saved,['a.entropi']);pending.resolve();await work;
   assert.deepEqual(saved,['a.entropi','b.entropi']);assert.equal(messages.length,1);
-  assert.match(messages[0],/2 av 4.*bad\.entropi.*skadd.*null\.entropi.*ukjend feil/);assert.equal(trigger.disabled,false);
+  assert.match(messages[0].join(" "),/2 av 4.*bad\.entropi.*skadd.*null\.entropi.*ukjend feil/);assert.equal(trigger.disabled,false);
   const cancelled=app.api.importEntropiDocuments(options);await app.input().emit('cancel');await cancelled;
   assert.equal(messages.length,1);assert.equal(saved.length,2);
+});
+
+test('plain images detach from the picker without a whole-file JavaScript buffer or changed bytes',async()=>{
+  const app=harness(),chunkSize=4*1024*1024,bytes=new Uint8Array(chunkSize+11),reads=[];
+  bytes[0]=0xff;bytes[chunkSize]=0xd9;
+  class PickerFile extends File{
+    arrayBuffer(){throw new Error('Unexpected whole-file read')}
+    slice(start,end,type){reads.push(end-start);return super.slice(start,end,type)}
+  }
+  const file=new PickerFile([bytes],'original.jpg',{type:'image/jpeg'}),{photo}=await app.api.readImportFile(file);
+  assert.equal(photo instanceof File,false);
+  assert.equal(photo.type,'image/jpeg');assert.deepEqual(new Uint8Array(await photo.arrayBuffer()),bytes);
+  assert.ok(reads.length>=3&&reads.every(size=>size<=chunkSize));
 });

@@ -86,3 +86,8 @@
 #studio #open-gallery{position:absolute;left:auto;right:calc(12px + env(safe-area-inset-right));top:calc(12px + env(safe-area-inset-top));bottom:auto;z-index:20;display:grid;place-items:center;padding:10px;width:44px;height:44px;transform:none}#studio .access-control.device-link{right:calc(62px + env(safe-area-inset-right))}
 
 @media(orientation:landscape) and (max-height:550px){#studio #reset,.review #close-photo{left:auto;right:calc(12px + env(safe-area-inset-right));top:calc(64px + env(safe-area-inset-top));bottom:auto}}
+
+.import-errors{flex:0 0 auto;min-width:0;margin:0 0 8px;font-size:12px}
+.import-errors[hidden]{display:none!important}
+.import-errors summary{cursor:pointer;padding:6px 0;touch-action:manipulation}
+.import-errors ul{max-height:min(18vh,8rem);margin:4px 0;padding-left:1.5em;overflow-y:auto;overscroll-behavior-y:contain;touch-action:pan-y;overflow-wrap:anywhere}
