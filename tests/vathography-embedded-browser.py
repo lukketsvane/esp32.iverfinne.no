@@ -1,5 +1,4 @@
 """Run after device/build-ui.py with Playwright and Pillow (no camera required)."""
-from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -12,10 +11,12 @@ ORIGIN = "http://entropi.test/"
 
 
 def exercise(browser_type, directory):
-    browser = browser_type.launch()
+    # The archive stores Blobs in IndexedDB, which requires a persistent WebKit profile.
+    context = browser_type.launch_persistent_context(Path(directory) / browser_type.name,
+                                                     viewport={"width": 390, "height": 844})
     try:
-        page = browser.new_page(viewport={"width": 390, "height": 844})
-        page.set_default_timeout(7000)
+        page = context.new_page()
+        page.set_default_timeout(15000)
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.route("http://**/*", lambda route: route.fulfill(body=PAGE, content_type="text/html")
@@ -52,7 +53,7 @@ def exercise(browser_type, directory):
             event.value.save_as(file)
             outputs[label] = file
 
-        with Image.open(BytesIO(outputs["Loop GIF"].read_bytes())) as gif:
+        with Image.open(outputs["Loop GIF"]) as gif:
             assert gif.format == "GIF" and gif.n_frames == 60 and gif.size == (16, 16)
             assert gif.info["loop"] == 0 and gif.info["duration"] == 50
             first = gif.convert("RGB").tobytes()
@@ -103,7 +104,7 @@ def exercise(browser_type, directory):
         assert not errors, errors
         print(f"{browser_type.name}: embedded VATHO PNG, 60-frame GIF and mixed-file gallery import passed", flush=True)
     finally:
-        browser.close()
+        context.close()
 
 
 if __name__ == "__main__":

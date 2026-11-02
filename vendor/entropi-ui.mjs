@@ -184,9 +184,9 @@ export async function importEntropiDocuments({button,archive,open,refresh,isCurr
         if(!isCurrent())return;
         await archive.importDocument(master);
         imported++;
-      }catch(error){errors.push(file.name+' ('+(error.message||'ukjend feil')+')')}
+      }catch(error){errors.push(file.name+' ('+(error?.message||'ukjend feil')+')')}
     }
     if(isCurrent())await refresh(['Importerte '+imported+' av '+files.length+' filer.',...errors].join(' '));
-  }catch(error){if(isCurrent())feedback(error.message||'Kunne ikkje importere filene.')}
+  }catch(error){if(isCurrent())feedback(error?.message||'Kunne ikkje importere filene.')}
   finally{button.disabled=false}
 }
