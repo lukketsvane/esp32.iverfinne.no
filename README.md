@@ -113,7 +113,7 @@ Søkjar og djupneprojeksjon er tilpassa [entropi.iverfinne.no](https://github.co
 
 PNG brukar den synlege kunsten. TIFF framkallar dei lagra flyttalsverdiane med gjeldande uttrykk og fotoredigering i originalfotoet sin storleik, før det valde utsnittet blir teke ut. Oppskalering skjer før tonekurva, og 16-bits tonar blir avrunda direkte frå flyttal; ugyldige område blir transparente. Svartkvitt brukar gråtone og alfa, medan farga profilar blir lagra med 16 bit per RGBA-kanal. Dette gir finare tonepresisjon, utan å auke dynamikkområdet til sensoren eller hente att tapte detaljar. TIFF har ikkje innebygd ICC-profil, så fargestyringa i andre program kan påverke visinga. DNG mappar dei opphavlege numeriske verdiane direkte til 16 bit; verdiområde, retning og einingar ligg i metadata. DNG er eit eksperimentelt monokromt LinearRaw-bilete, ikkje sensor-RAW eller ei lovnad om at Lightroom brukar eit innebygd djupnekart. Uavhengig TIFF- og LibRaw-innlesing er testa; faktisk Lightroom- og iPhone-import må kontrollerast separat.
 
-Lagring brukar eitt trykk for det synlege biletet. Hald inne lagreknappen og dra opp for å velje PNG, `.entropi`, TIFF eller DNG; slepp utanfor for å avbryte. Piltast opp eller kontekstmeny opnar same veljar med tastatur. Lastinga følgjer heile søkjarramma. Nye arkivoppføringar blir viste etter framkalling, med det ferdige uttrykket og utsnittet som miniatyr og førehandsvising; originalane blir bevarte for vidare redigering.
+Lagring brukar eitt trykk for det synlege biletet. Hald inne lagreknappen og dra opp for å velje PNG, VATHO-PNG, `.entropi`, TIFF eller DNG; slepp utanfor for å avbryte. Piltast opp eller kontekstmeny opnar same veljar med tastatur. Lastinga følgjer heile søkjarramma. Nye arkivoppføringar blir viste etter framkalling, med det ferdige uttrykket og utsnittet som miniatyr og førehandsvising; originalane blir bevarte for vidare redigering.
 
 ## Gestar og samordna opptak
 
@@ -136,3 +136,13 @@ Galleriknappen er oppe til høgre. Kryssiktet oppe til venstre er skjult. Handli
 Eit kort trykk på kamerasymbolet i resultatet opnar søkjaren. Hald inne i 400 ms og slepp for å ta neste foto direkte; flytting, ein ekstra finger eller bakgrunn avbryt. Shift+Enter på knappen gir same opptak, og mellomrom utanfor andre kontrollar verkar som utløysar. Førre kunstverk og originalar blir bevarte dersom neste opptak feilar.
 
 `/stereo/capture` og USB-opptak startar førespurnaden til kamera 2 før det lokale opptaket, og ventar med full JPEG-overføring til etterpå. Begge JPEG-ar må passe same par-ID, kamera-ID-ar og storleik før paret blir brukt. Begge kameraa må ha den nye firmwareversjonen. Tidspunkta er frå separate kameraklokker; samordninga er ikkje maskinvaresynkronisering. Den faste riggprofilen må framleis kontrollerast med nye verkelege par etter flytting av kamera eller optikk.
+
+## VATHO-PNG: eit bilete med heile djupnemasteren
+
+Ved å halde inne lagreknappen i framkalla VATHOgraphy kan du velje **VATHO PNG**. Dette eksporterer ein ordinær, visbar PNG med ein ekstra privat, *safe-to-copy* PNG-datablokk `vaTh` (versjon 1). Datablokka inneheld eit komplett `.entropi`-arkiv med opphavleg foto, 32-bit flyttalsdjupne, gyldigheitskart, proveniens, gjeldande framkallingsoppskrift og førehandsvising. Tonane, inkludert 16-bit TIFF, kan rekonstruerast frå flyttalsdataa. Dette er ikkje ein ny dybdemodell og ikkje eit oppskalert eller syntetisk djupnekart.
+
+For å importere: opne **fotoarkivet**, vel **Importer** øvst, og vel `.vatho.png`, ein vanleg `-vatho.png` eller ei eldre `.entropi`-fil. Ei flat PNG utan innebygd djupne blir avvist av masterimporten med ei forklaring i staden for å bli påstått å ha djupnedata. Importen kontrollerer PNG-datablokka med CRC og dokumentet med filintegritetssjekkar før originalen og numeriske djupneverdiane blir opna.
+
+**Oppbevaring:** Bruk `Lagre i Filer` og del som dokument/vedlegg. Fotoappar, sosiale medium og messaging-tenester kan koda biletet på nytt og fjerne `vaTh`-datablokka. Då ser biletet framleis likt ut, men kan ikkje lenger importerast som ein redigerbar master.
+
+Utviklarverktøy for å pakka ein allereie berekna Marigold V2-flyttalsdjupne: `node scripts/pack-marigold-png.mjs --original foto.jpg --depth marigold.f32 --preview vathography.png --out foto-vatho.png`. Programmet sjekkar at dei originale flyttalsverdiane overlever eksport og ny import heilt uendra.

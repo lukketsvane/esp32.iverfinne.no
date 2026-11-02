@@ -1,4 +1,5 @@
 import { encodeEntropiDocument, decodeEntropiDocument } from './entropi-document.mjs';
+import { encodeVathographyPNG, readVathographyPNG } from './vathography-png.mjs';
 import { encodeDepthDng } from './entropi-export.mjs';
 import { encodeRenderedTiff } from './entropi-rendered-export.mjs';
 import { downloadFile, savePhoto } from './photo.mjs';
@@ -8,15 +9,23 @@ export async function saveEntropiFile(blob,name,isCurrent=()=>true){
   downloadFile(blob,name,isCurrent);
 }
 
-const exportFormats=[['PNG','png'],['.entropi','entropi'],['TIFF','tif'],['DNG','dng']],upscaleFormats=[['AI 2×','ai2'],['AI 4×','ai4'],['AI 8×','ai8']];
+const exportFormats=[['PNG','png'],['VATHO PNG','vpng'],['.entropi','entropi'],['TIFF','tif'],['DNG','dng']],upscaleFormats=[['AI 2×','ai2'],['AI 4×','ai4'],['AI 8×','ai8']];
 const exportStatusStyle='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap';
 
 async function prepareExport({image,document:master,name='entropi',imageExtension='png',isCurrent=()=>true},extension,{signal,onProgress=()=>{}}={}){
   let blob;
   if(/^ai[248]$/.test(extension)){const factor=Number(extension.slice(2));await prepareUpscaleAssets(signal,onProgress);blob=await upscaleImage(await image(),factor,{signal,onProgress,isCurrent});return {blob,name:name.replace(/\.[^.]+$/,'')+'-ai-'+factor+'x.png',image:true}}
   if(extension==='png')blob=await image();
-  else{const value=await master();blob=extension==='entropi'?await encodeEntropiDocument(value):extension==='tif'?await encodeRenderedTiff(value):encodeDepthDng(value.result)}
-  return {blob,name:name.replace(/\.[^.]+$/,'')+'.'+(extension==='png'?imageExtension:extension),image:extension==='png'};
+  else{
+    if(typeof master!=='function')throw new Error('Framkalla eit djupnebilete før eksport.');
+    const value=await master();
+    if(extension==='vpng'){
+      const displayed=await image(),preview=displayed.type==='image/png'?displayed:value.preview?.type==='image/png'?value.preview:null;
+      if(!preview)throw new Error('VATHO-PNG krev ei PNG-førehandsvising.');
+      blob=await encodeVathographyPNG(preview,await encodeEntropiDocument(value));
+    }else blob=extension==='entropi'?await encodeEntropiDocument(value):extension==='tif'?await encodeRenderedTiff(value):encodeDepthDng(value.result);
+  }
+  return {blob,name:name.replace(/\.[^.]+$/,'')+(extension==='vpng'?'-vatho.png':'.'+(extension==='png'?imageExtension:extension)),image:extension==='png'||extension==='vpng'};
 }
 
 async function handOffExport(file,isCurrent){
@@ -61,7 +70,7 @@ export function showExportOptions(settings){
     }finally{exportTask=null;button.textContent=label;busy=false;dialog.setAttribute('aria-busy','false');for(const item of options.children)item.disabled=false}
   };
   for(const [index,[label,extension]]of formats.entries()){
-    const button=document.createElement('button');button.type='button';button.textContent=label;button.setAttribute('role','menuitem');button.tabIndex=index===0?0:-1;button.setAttribute('aria-label',extension==='entropi'?'Lagre redigerbar Entropi-fil':extension==='dng'?'Eksporter eksperimentell DNG':extension.startsWith('ai')?'AI-oppskaler '+extension.slice(2)+' gonger':'Eksporter '+label);
+    const button=document.createElement('button');button.type='button';button.textContent=label;button.setAttribute('role','menuitem');button.tabIndex=index===0?0:-1;button.setAttribute('aria-label',extension==='vpng'?'Lagre PNG med original og redigerbare djupnedata':extension==='entropi'?'Lagre redigerbar Entropi-fil':extension==='dng'?'Eksporter eksperimentell DNG':extension.startsWith('ai')?'AI-oppskaler '+extension.slice(2)+' gonger':'Eksporter '+label);
     button.style.cssText='display:grid;place-items:center;min-width:48px;width:100%;height:48px;padding:0 8px;border:0;outline:0;box-shadow:none;background:transparent;color:#d4d4d8;font:600 12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;letter-spacing:.02em;touch-action:none';
     button.style.gridColumn=index<plainCount?'1 / -1':String(index-plainCount+1);button.style.gridRow=index<plainCount?String(plainCount-index+1):'1';
     button.addEventListener('click',event=>{event.stopPropagation();return choose(index)});options.append(button);
@@ -126,11 +135,18 @@ export function bindExportGesture(button,getOptions){
 
 export function pickEntropiDocument(){
   return new Promise((resolve,reject)=>{
-    const input=document.createElement('input');input.type='file';input.accept='.entropi';input.hidden=true;
+    const input=document.createElement('input');input.type='file';input.accept='.entropi,.png,image/png';input.hidden=true;
     input.addEventListener('cancel',()=>{input.remove();resolve(null)},{once:true});
     input.addEventListener('change',async()=>{
       const file=input.files?.[0];input.remove();
-      try{resolve(file?await decodeEntropiDocument(file):null)}catch(error){reject(error)}
+      try{
+        if(!file){resolve(null);return}
+        if(file.name?.toLowerCase().endsWith('.png')||file.type==='image/png'){
+          const embedded=await readVathographyPNG(file);
+          if(!embedded)throw new Error('Dette er ei vanleg PNG utan innebygd VATHO-djupne.');
+          resolve(await decodeEntropiDocument(embedded));
+        }else resolve(await decodeEntropiDocument(file));
+      }catch(error){reject(error)}
     },{once:true});
     document.body.append(input);input.click();
   });
