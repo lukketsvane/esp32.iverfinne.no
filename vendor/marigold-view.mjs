@@ -5,25 +5,57 @@ import { normalizePhotoEdits, photoEditsNeutral, applyPhotoEdits } from './photo
 import { createPhotoEditor } from './photo-editor.mjs';
 import { attachNotchRail } from './notch-rail.mjs';
 import { applyPanoramaMask } from './panorama.mjs';
+import {loopPhase,loopFramePhase,sampleLoopDepth,renderLoopFrame,VATHO_LOOP_FRAMES,VATHO_LOOP_SECONDS,VATHO_LOOP_FPS,VATHO_GIF_MAX_EDGE} from './vathography-loop.mjs';
+import {GrayGifEncoder,rgbaToGrayIndices} from './gif-encoder.mjs';
 
 export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserDepth,stereo=runStereoDepth,onStatus=()=>{},onGesture=()=>{},onChange=()=>{}}={}){
-  const output=host.querySelector('.mg-output'),original=host.querySelector('.mg-original'),seam=host.querySelector('.mg-seam'),compare=host.querySelector('.mg-compare'),rail=host.querySelector('.mg-variants');
+  const output=host.querySelector('.mg-output'),original=host.querySelector('.mg-original'),seam=host.querySelector('.mg-seam'),compare=host.querySelector('.mg-compare'),loopButton=host.querySelector('.mg-loop'),rail=host.querySelector('.mg-variants');
   const art=document.createElement('canvas');art.className='mg-art';art.hidden=true;host.prepend(art);
   const croppedOriginal=document.createElement('canvas');croppedOriginal.className='mg-original mg-original-crop';croppedOriginal.hidden=true;host.appendChild(croppedOriginal);
   const pulse=document.createElement('canvas');pulse.className='mg-pulse';pulse.hidden=true;pulse.setAttribute('aria-hidden','true');host.prepend(pulse);
+  const loopCanvas=document.createElement('canvas');loopCanvas.className='mg-loop-art';loopCanvas.hidden=true;loopCanvas.setAttribute('aria-hidden','true');host.prepend(loopCanvas);
   const motion=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
   const options=VATHOGRAPHY_PRESETS;
   rail.replaceChildren();
   const variants=options.map((option,index)=>{const button=document.createElement('button');button.type='button';button.className='mg-variant';button.setAttribute('aria-label',option.label);button.setAttribute('aria-pressed',String(index===0));button.appendChild(document.createElement('i'));rail.appendChild(button);return button});
   let current=null,controller=null,selection=1,comparing=false,split=.5,version=0,depth=null,position=0,bandWidth=1,frame=0,sourceWidth=0,sourceHeight=0,disposed=false,pulseFrame=0,editing=false,originalCropKey='',railStartSelection=1;
   const urls=[],points=new Map(),listeners=[];let previous=null,hold=0,gesture=null,lastTap=null,peeking=false,gestureChanged=false;
+  let looping=false,loopFrame=0,loopStarted=null,loopLast=-Infinity,loopBase=null,loopDepth=null,loopImage=null;
   const stopPulse=()=>{cancelAnimationFrame(pulseFrame);pulseFrame=0;pulse.hidden=true;pulse.width=pulse.height=1};
+  const stopLoopPreview=()=>{
+    cancelAnimationFrame(loopFrame);loopFrame=0;loopCanvas.hidden=true;loopCanvas.width=loopCanvas.height=1;
+    loopBase=loopDepth=loopImage=null;loopStarted=null;loopLast=-Infinity;
+  };
+  function startLoopPreview(){
+    stopLoopPreview();
+    if(!looping||disposed||!current||host.hidden||document.hidden||comparing||peeking||editor.active||!art.width||!art.height)return;
+    const scale=Math.min(1,VATHO_GIF_MAX_EDGE/Math.max(art.width,art.height));
+    const width=Math.max(1,Math.round(art.width*scale)),height=Math.max(1,Math.round(art.height*scale));
+    loopCanvas.width=width;loopCanvas.height=height;
+    const context=loopCanvas.getContext('2d',{willReadFrequently:true});if(!context)return;
+    context.drawImage(art,0,0,width,height);
+    loopBase=new Uint8ClampedArray(context.getImageData(0,0,width,height).data);
+    loopDepth=sampleLoopDepth(depth,current.width,current.height,width,height,{validity:current.validity,crop:editor.committed.crop});
+    loopImage=context.createImageData(width,height);
+    loopCanvas.hidden=false;
+    const tick=now=>{
+      loopFrame=0;
+      if(!looping||disposed||!current||host.hidden||document.hidden||comparing||peeking||editor.active){stopLoopPreview();return}
+      loopStarted??=now;
+      if(now-loopLast>=1000/VATHO_LOOP_FPS){
+        renderLoopFrame(loopBase,loopDepth,loopPhase(now-loopStarted),loopImage.data);
+        context.putImageData(loopImage,0,0);loopLast=now;
+      }
+      loopFrame=requestAnimationFrame(tick);
+    };
+    loopFrame=requestAnimationFrame(tick);
+  }
   const peek=value=>{peeking=value;host.classList.toggle('peeking',value)};
   const cancelHold=()=>{clearTimeout(hold);hold=0};
-  const cancelGesture=()=>{stopPulse();cancelHold();peek(false);points.clear();previous=null;gesture=null;lastTap=null;multiTap=lastMultiTap=null;navigationStart=null;gestureMode=null;if(current){if(gestureChanged)onChange();schedule()}gestureChanged=false};
+  const cancelGesture=()=>{stopPulse();stopLoopPreview();cancelHold();peek(false);points.clear();previous=null;gesture=null;lastTap=null;multiTap=lastMultiTap=null;navigationStart=null;gestureMode=null;if(current){if(gestureChanged)onChange();schedule()}gestureChanged=false};
   const listen=(element,name,handler,opts)=>{element.addEventListener(name,handler,opts);listeners.push(()=>element.removeEventListener(name,handler,opts))};
   const reset=()=>{
-    version++;controller?.abort();controller=null;current=null;depth=null;comparing=false;depthRail.cancel();cancelGesture();resetNavigation();editor.set();
+    version++;controller?.abort();controller=null;looping=false;loopButton?.setAttribute('aria-pressed','false');loopButton?.setAttribute('aria-label','Slå på animasjonsløkke');current=null;depth=null;comparing=false;depthRail.cancel();cancelGesture();resetNavigation();editor.set();
     cancelAnimationFrame(frame);frame=0;host.hidden=true;art.hidden=true;host.classList.remove('comparing');output.removeAttribute('src');original.removeAttribute('src');
     for(const url of urls.splice(0))URL.revokeObjectURL(url);art.width=art.height=1;croppedOriginal.width=croppedOriginal.height=1;croppedOriginal.hidden=true;original.hidden=false;originalCropKey='';editing=false;
   };
@@ -43,7 +75,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
     const image=context.createImageData(art.width,art.height);image.data.set(adjusted.data);context.putImageData(image,0,0);
     const crop=edits.crop,cropped=crop.width!==1||crop.height!==1;original.hidden=cropped;croppedOriginal.hidden=!cropped;
     if(cropped){const key=JSON.stringify(crop);if(key!==originalCropKey){const left=Math.min(sourceWidth-1,Math.round(crop.x*sourceWidth)),top=Math.min(sourceHeight-1,Math.round(crop.y*sourceHeight));croppedOriginal.width=Math.max(1,Math.round((crop.x+crop.width)*sourceWidth)-left);croppedOriginal.height=Math.max(1,Math.round((crop.y+crop.height)*sourceHeight)-top);croppedOriginal.getContext('2d').drawImage(original,left,top,croppedOriginal.width,croppedOriginal.height,0,0,croppedOriginal.width,croppedOriginal.height);originalCropKey=key}}
-    updateSplit();
+    updateSplit();if(looping)startLoopPreview();
   }
   function startPulse(){
     stopPulse();if(motion?.matches||document.hidden||editor.edits.crop.width!==1||editor.edits.crop.height!==1)return;
@@ -76,7 +108,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
   }
   function schedule(){if(!frame&&!disposed)frame=requestAnimationFrame(()=>render())}
   function select(index,{persist=true,preview=false}={}){
-    stopPulse();if(!current)return false;editor.commit();
+    stopPulse();stopLoopPreview();if(!current)return false;editor.commit();
     const next=Math.max(0,Math.min(options.length-1,Math.round(index))),option=options[next];
     selection=next;art.hidden=false;output.hidden=true;if(preview)schedule();else render();
     for(const [i,button]of variants.entries())button.setAttribute('aria-pressed',String(i===selection));
@@ -108,7 +140,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
   const adjust=event=>{const bounds=imageBounds();split=Math.max(.02,Math.min(.98,(event.clientX-bounds.left)/Math.max(1,bounds.width)));updateSplit()};
   const measure=()=>{const values=[...points.values()],x=values.reduce((n,p)=>n+p.x,0)/values.length,y=values.reduce((n,p)=>n+p.y,0)/values.length;return {x,y,gap:values.length>1?2*Math.sqrt(values.reduce((n,p)=>n+(p.x-x)**2+(p.y-y)**2,0)/values.length):0}};
   const start=event=>{
-    stopPulse();
+    stopPulse();stopLoopPreview();
     if(!current||host.hidden||event.button>0||depthRail.active||editor.active||event.target.closest('button,input,.mg-editor,.mg-variants'))return;
     cancelHold();points.set(event.pointerId,{x:event.clientX,y:event.clientY});host.setPointerCapture?.(event.pointerId);previous=measure();
     const now=Number.isFinite(event.timeStamp)?event.timeStamp:Date.now();
@@ -134,6 +166,7 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
     if(!points.has(event.pointerId))return;
     const tap=gesture,wasPeeking=peeking;if(gestureMode==='compare'&&points.size===1&&tap&&!tap.moved&&event.type==='pointerup')adjust({clientX:tap.x});cancelHold();peek(false);points.delete(event.pointerId);previous=points.size?measure():null;gesture=null;
     if(!points.size&&gestureMode!=='view'&&(art.width!==sourceWidth||art.height!==sourceHeight))schedule();
+    if(!points.size&&looping&&!gestureChanged)startLoopPreview();
     if(event.type==='pointercancel'||event.type==='lostpointercapture'){lastTap=multiTap=lastMultiTap=null;if(!points.size)gestureMode=null;navigationStart=null;if(gestureChanged){gestureChanged=false;onChange();schedule()}return}
     if(!points.size){
       const now=Number.isFinite(event.timeStamp)?event.timeStamp:Date.now();
@@ -145,9 +178,18 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
   for(const [name,handler]of [['pointerdown',start],['pointermove',move],['pointerup',end],['pointercancel',end],['lostpointercapture',end]])listen(host,name,handler,{passive:false});
   if(motion?.addEventListener)listen(motion,'change',()=>{if(motion.matches)stopPulse()});
   if(globalThis.addEventListener){listen(globalThis,'blur',cancelGesture);listen(globalThis,'resize',()=>{if(current){setNavigation(viewPose);editor.resize()}})}
-  if(document.addEventListener)listen(document,'visibilitychange',()=>{if(document.hidden)cancelGesture()});
+  if(document.addEventListener)listen(document,'visibilitychange',()=>{if(document.hidden)cancelGesture();else if(looping)startLoopPreview()});
   listen(host,'contextmenu',event=>{if(!event.target.closest('button'))event.preventDefault()});
-  listen(compare,'click',()=>{stopPulse();if(!current)return;editor.commit();comparing=!comparing;host.classList.toggle('comparing',comparing);compare.setAttribute('aria-pressed',String(comparing));updateSplit()});
+  listen(compare,'click',()=>{stopPulse();stopLoopPreview();if(!current)return;editor.commit();comparing=!comparing;host.classList.toggle('comparing',comparing);compare.setAttribute('aria-pressed',String(comparing));updateSplit();if(looping&&!comparing)startLoopPreview()});
+  if(loopButton){
+    loopButton.setAttribute('aria-pressed','false');
+    listen(loopButton,'click',()=>{
+      if(!current)return;
+      looping=!looping;loopButton.setAttribute('aria-pressed',String(looping));loopButton.setAttribute('aria-label',looping?'Slå av animasjonsløkke':'Slå på animasjonsløkke');
+      stopPulse();stopLoopPreview();
+      if(looping){comparing=false;host.classList.remove('comparing');compare.setAttribute('aria-pressed','false');render(true,true)}
+    });
+  }
   variants.forEach((button,index)=>listen(button,'click',()=>select(index)));
   listen(seam,'keydown',event=>{if(!comparing||!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();split=Math.max(.02,Math.min(.98,split+(event.key==='ArrowRight'?.05:-.05)));updateSplit()});
   listen(host,'keydown',event=>{stopPulse();if(comparing||editor.active||!current||event.target.closest('button,input,.mg-editor')||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();if(event.key==='ArrowLeft'||event.key==='ArrowRight')position=Math.max(-1,Math.min(1,position+(event.key==='ArrowRight'?.02:-.02)));else bandWidth=Math.max(.25,Math.min(3,bandWidth*(event.key==='ArrowUp'?1.05:1/1.05)));schedule();onChange()});
@@ -194,10 +236,34 @@ export function createMarigoldView(host,{local=runLocalDepth,browser=runBrowserD
     const source=art;
     const canvas=document.createElement('canvas');canvas.width=native?source.width:384;canvas.height=native?source.height:Math.max(1,Math.round(384*source.height/source.width));const context=canvas.getContext('2d');context.drawImage(source,0,0,canvas.width,canvas.height);if(editor.active||depthRail.active)schedule();return context.getImageData(0,0,canvas.width,canvas.height);
   }
+  async function exportGif({signal,onProgress=()=>{}}={}){
+    if(!current||!depth||disposed)throw new Error('Framkall VATHOgraphy før GIF-eksport.');
+    const ticket=version,source=current;
+    render(true,true);
+    const scale=Math.min(1,VATHO_GIF_MAX_EDGE/Math.max(art.width,art.height));
+    const width=Math.max(1,Math.round(art.width*scale)),height=Math.max(1,Math.round(art.height*scale));
+    const work=document.createElement('canvas');work.width=width;work.height=height;
+    try{
+      const context=work.getContext('2d',{willReadFrequently:true});
+      if(!context)throw new Error('Kunne ikkje lese VATHOgraphy-biletet.');
+      context.drawImage(art,0,0,width,height);
+      const base=context.getImageData(0,0,width,height).data;
+      const field=sampleLoopDepth(depth,source.width,source.height,width,height,{validity:source.validity,crop:editor.committed.crop});
+      const frame=new Uint8ClampedArray(base.length),encoder=new GrayGifEncoder(width,height,{fps:VATHO_LOOP_FPS});
+      for(let i=0;i<VATHO_LOOP_FRAMES;i++){
+        if(signal?.aborted||disposed||version!==ticket||source!==current)throw new DOMException('GIF-eksporten vart avbroten.','AbortError');
+        renderLoopFrame(base,field,loopFramePhase(i),frame);
+        encoder.addFrame(rgbaToGrayIndices(frame));
+        if(i%3===2){onProgress({percent:Math.round((i+1)/VATHO_LOOP_FRAMES*100)});await new Promise(resolve=>setTimeout(resolve,0))}
+      }
+      onProgress({percent:100});
+      return encoder.finish();
+    }finally{work.width=work.height=1}
+  }
   async function restore(blob,result,recipe,signal){
     if(!recipe||!Number.isInteger(recipe.preset)||recipe.preset<0||recipe.preset>=options.length||!Number.isFinite(recipe.position)||Math.abs(recipe.position)>1||!Number.isFinite(recipe.width)||recipe.width<.25||recipe.width>3)throw new Error('Ugyldig uttrykk i Entropi-fila.');
     normalizePhotoEdits(recipe.edits);
     return process(blob,signal,{result,recipe});
   }
-  return {process,restore,reset,select,snapshot,resetView:resetNavigation,resetTone(){stopPulse();editor.commit();resetNavigation();position=0;bandWidth=1;render();onChange()},get recipe(){const recipe={preset:depthRail.active?railStartSelection:selection,position,width:bandWidth},edits=editor.committed;if(!photoEditsNeutral(edits))recipe.edits=edits;return recipe},get ready(){return !!current},get result(){return current},get selectedName(){return options[selection].label},dispose(){reset();disposed=true;depthRail.dispose();editor.dispose();for(const remove of listeners)remove();art.remove();pulse.remove();croppedOriginal.remove()}};
+  return {process,restore,reset,select,snapshot,exportGif,resumeLoop(){if(looping)startLoopPreview()},get loopActive(){return looping},resetView:resetNavigation,resetTone(){stopPulse();editor.commit();resetNavigation();position=0;bandWidth=1;render();onChange()},get recipe(){const recipe={preset:depthRail.active?railStartSelection:selection,position,width:bandWidth},edits=editor.committed;if(!photoEditsNeutral(edits))recipe.edits=edits;return recipe},get ready(){return !!current},get result(){return current},get selectedName(){return options[selection].label},dispose(){reset();disposed=true;depthRail.dispose();editor.dispose();for(const remove of listeners)remove();art.remove();pulse.remove();loopCanvas.remove();croppedOriginal.remove()}};
 }

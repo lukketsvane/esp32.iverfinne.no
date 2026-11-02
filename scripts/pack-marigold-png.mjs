@@ -26,7 +26,7 @@ if(!sourcePath||!depthPath||!previewPath||!outPath){
     result:{width,height,depth,polarity:'far',quantity:'relative-depth',units:'relative',
       model:'Marigold V2 · Log-stage2',source:'imported-marigold-v2',
       provenance:{checkpoint:'huawei-bayerlab/marigold-v2-0/depth/Log-stage2',
-        backbone:'Qwen/Qwen-Image-Edit-2509',quantization:info.quantization??null,
+        backbone:'Qwen/Qwen-Image-Edit-2509',quantization:info.quantization??info.backbone_quantization??null,
         sourceSHA256:crypto.createHash('sha256').update(source).digest('hex'),
         sourcePixels:info.input_pixels??null,outputPixels:[width,height],rawFormat:'float32-log-depth',noFallback:true}}
   });

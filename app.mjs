@@ -105,7 +105,7 @@ async function makeScene(){
 
 async function makeDepthArt(){
   if(!photoReady||studioControls.image!==2||mode==='camera')return;
-  if(depthArt.ready){state('done');return}
+  if(depthArt.ready){state('done');depthArt.resumeLoop?.();return}
   state('working');if(artTask)return;
   const current=generation,blob=photoBlob,processing=artTask=new AbortController();progress({phase:'reading'});
   try{
@@ -196,7 +196,7 @@ async function printCurrent(){const source=scene,blob=photoBlob,image=studioCont
 function exportOptions(){
   if(!photoBlob||!photoReady||mode!=='done'||studioControls.image===1&&!scene||studioControls.image===2&&!depthArt.ready)return;
   const blob=photoBlob,source=scene,image=studioControls.image,result=depthArt.result;
-  return {image:()=>snapshotBlob(image===1?source.snapshot(true):image===2?depthArt.snapshot(true):photoView.snapshot(photoGestures.state,true)),document:image===2?async()=>{const document=makeDocument();void persistDocument().catch(error=>printFeedback(failureText(error,saveFailure)));return document}:undefined,name:photoName,onError:error=>printFeedback(failureText(error,'Kunne ikkje lagre biletet.')),isCurrent:()=>photoBlob===blob&&mode==='done'&&studioControls.image===image&&(image===0||image===1&&scene===source||image===2&&result===depthArt.result)};
+  return {image:()=>snapshotBlob(image===1?source.snapshot(true):image===2?depthArt.snapshot(true):photoView.snapshot(photoGestures.state,true)),document:image===2?async()=>{const document=makeDocument();void persistDocument().catch(error=>printFeedback(failureText(error,saveFailure)));return document}:undefined,animation:image===2?options=>depthArt.exportGif(options):undefined,name:photoName,onError:error=>printFeedback(failureText(error,'Kunne ikkje lagre biletet.')),isCurrent:()=>photoBlob===blob&&mode==='done'&&studioControls.image===image&&(image===0||image===1&&scene===source||image===2&&result===depthArt.result)};
 }
 
 sweepCapture=createPanoramaCapture({surface:$('capture-plane'),viewport:$('viewfinder'),enabled:()=>mode==='camera'&&!!stream&&video.readyState>=2&&!openingCamera&&!galleryOpen&&!shutterTimer&&!nextShot,capture:async signal=>{
@@ -222,7 +222,7 @@ $('studio').addEventListener('pointercancel',()=>{pointer=null;lastTap=0});
 $('studio').addEventListener('pointermove',event=>{if(pointer&&Math.hypot(event.clientX-pointer.x,event.clientY-pointer.y)>12){pointer=null;lastTap=0}},true);
 $('studio').addEventListener('contextmenu',event=>{if(!event.target.closest('button,a'))event.preventDefault()});
 window.addEventListener('message',event=>{if(event.source===window.opener&&allowedOrigins.has(event.origin)&&event.data?.type==='entropi-photo')void acceptPhoto(event.data.blob,typeof event.data.name==='string'?event.data.name:'entropi.jpg')});
-function resume(){finder.active=mode==='camera'&&!document.hidden&&!galleryOpen;if(!document.hidden&&mode==='camera'&&!galleryOpen)void startCamera();else if(!document.hidden){if(studioControls.image===1)scene?.refresh?.();else photoGestures.refresh?.()}}
+function resume(){finder.active=mode==='camera'&&!document.hidden&&!galleryOpen;if(!document.hidden&&mode==='camera'&&!galleryOpen)void startCamera();else if(!document.hidden){if(studioControls.image===1)scene?.refresh?.();else if(studioControls.image===2)depthArt.resumeLoop?.();else photoGestures.refresh?.()}}
 function suspend(){sweepCapture.cancel();cancelNextCapture();stopCamera();if(capturing){++captureGeneration;capturing=false;state('camera')}finder.active=false;pointer=null;lastTap=0}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();else resume()});
 window.addEventListener('pageshow',event=>{if(event.persisted)resume()});

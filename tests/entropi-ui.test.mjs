@@ -220,3 +220,23 @@ test('AI export uses the displayed image at each chosen scale and preserves the 
     assert.equal(app.calls.photo[0][1],'capture-ai-'+factor+'x.png');assert.equal(reads,0);assert.deepEqual(document.result.depth,values);assert.equal(app.dialog(),null);
   }
 });
+
+test('Loop GIF appears only for VATHOgraphy, exports GIF bytes as a file, and never sends static PNG instead',async()=>{
+  const gif=new Blob([Uint8Array.from([71,73,70,56,57,97,59])],{type:'image/gif'}),app=harness();
+  let passes=0,reported=0;
+  app.api.showExportOptions({
+    name:'depth-portrait.jpeg',image:()=>png,document:master,
+    animation:({signal,onProgress})=>{assert.equal(signal.aborted,false);onProgress({percent:100});passes++;reported++;return gif}
+  });
+  const dialog=app.dialog();
+  assert.ok(button(dialog,'Loop GIF'));
+  assert.equal(button(dialog,'Loop GIF').getAttribute('aria-label'),'Lagre saumlaus VATHOgraphy-GIF i endelaus løkke');
+  await button(dialog,'Loop GIF').click();
+  assert.equal(passes,1);assert.equal(reported,1);
+  assert.equal(app.calls.downloads[0].blob,gif);
+  assert.equal(app.calls.downloads[0].name,'depth-portrait-loop.gif');
+  assert.equal(app.calls.photo.length,0);
+  assert.equal(app.dialog(),null);
+  const normal=harness();normal.api.showExportOptions({name:'still.jpg',image:()=>png,document:master});
+  assert.equal(button(normal.dialog(),'Loop GIF'),undefined);
+});

@@ -12,8 +12,14 @@ export async function saveEntropiFile(blob,name,isCurrent=()=>true){
 const exportFormats=[['PNG','png'],['VATHO PNG','vpng'],['.entropi','entropi'],['TIFF','tif'],['DNG','dng']],upscaleFormats=[['AI 2×','ai2'],['AI 4×','ai4'],['AI 8×','ai8']];
 const exportStatusStyle='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap';
 
-async function prepareExport({image,document:master,name='entropi',imageExtension='png',isCurrent=()=>true},extension,{signal,onProgress=()=>{}}={}){
+async function prepareExport({image,document:master,animation,name='entropi',imageExtension='png',isCurrent=()=>true},extension,{signal,onProgress=()=>{}}={}){
   let blob;
+  if(extension==='gif'){
+    if(typeof animation!=='function')throw new Error('Framkall VATHOgraphy før GIF-eksport.');
+    blob=await animation({signal,onProgress});
+    if(blob?.type!=='image/gif'||!blob.size)throw new Error('GIF-eksporten feila.');
+    return {blob,name:name.replace(/\.[^.]+$/,'')+'-loop.gif',image:false};
+  }
   if(/^ai[248]$/.test(extension)){const factor=Number(extension.slice(2));await prepareUpscaleAssets(signal,onProgress);blob=await upscaleImage(await image(),factor,{signal,onProgress,isCurrent});return {blob,name:name.replace(/\.[^.]+$/,'')+'-ai-'+factor+'x.png',image:true}}
   if(extension==='png')blob=await image();
   else{
@@ -40,7 +46,7 @@ export function showExportOptions(settings){
   void warmUpscaleAssets();
   const dialog=document.createElement('dialog'),options=document.createElement('div'),status=document.createElement('span'),focus=document.activeElement;
   const viewport=globalThis.visualViewport,left=viewport?.offsetLeft??0,top=viewport?.offsetTop??0,width=viewport?.width??globalThis.innerWidth??390,height=viewport?.height??globalThis.innerHeight??844;
-  const bounds=anchor?.getBoundingClientRect?.()??{left:left+width/2-24,top:top+height-72,width:48},formats=[...(master?exportFormats:[exportFormats[0]]),...upscaleFormats],plainCount=formats.length-upscaleFormats.length,size=(plainCount+1)*48+8;
+  const bounds=anchor?.getBoundingClientRect?.()??{left:left+width/2-24,top:top+height-72,width:48},formats=[...(master?exportFormats:[exportFormats[0]]),...(typeof settings.animation==='function'?[['Loop GIF','gif']]:[]),...upscaleFormats],plainCount=formats.length-upscaleFormats.length,size=(plainCount+1)*48+8;
   dialog.setAttribute('data-entropi-export','');dialog.setAttribute('aria-label','Eksporter bilete');dialog.setAttribute('role','menu');
   dialog.style.cssText='position:fixed;inset:auto;margin:0;padding:4px;width:164px;max-width:calc(100vw - 24px);box-sizing:border-box;border:0;border-radius:25px;background:linear-gradient(180deg,#ffffff1f,#ffffff04 58%),rgba(24,24,27,.62);color:#f5f5f7;box-shadow:inset 0 1px 0 #ffffff38,inset 0 0 0 1px #ffffff1c,0 10px 40px #0007,0 2px 8px #0004;backdrop-filter:blur(24px) saturate(180%) brightness(1.08);-webkit-backdrop-filter:blur(24px) saturate(180%) brightness(1.08);touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;z-index:2147483647';
   dialog.style.maxHeight=Math.max(48,height-24)+'px';dialog.style.overflowY='auto';
@@ -70,7 +76,7 @@ export function showExportOptions(settings){
     }finally{exportTask=null;button.textContent=label;busy=false;dialog.setAttribute('aria-busy','false');for(const item of options.children)item.disabled=false}
   };
   for(const [index,[label,extension]]of formats.entries()){
-    const button=document.createElement('button');button.type='button';button.textContent=label;button.setAttribute('role','menuitem');button.tabIndex=index===0?0:-1;button.setAttribute('aria-label',extension==='vpng'?'Lagre PNG med original og redigerbare djupnedata':extension==='entropi'?'Lagre redigerbar Entropi-fil':extension==='dng'?'Eksporter eksperimentell DNG':extension.startsWith('ai')?'AI-oppskaler '+extension.slice(2)+' gonger':'Eksporter '+label);
+    const button=document.createElement('button');button.type='button';button.textContent=label;button.setAttribute('role','menuitem');button.tabIndex=index===0?0:-1;button.setAttribute('aria-label',extension==='vpng'?'Lagre PNG med original og redigerbare djupnedata':extension==='gif'?'Lagre saumlaus VATHOgraphy-GIF i endelaus løkke':extension==='entropi'?'Lagre redigerbar Entropi-fil':extension==='dng'?'Eksporter eksperimentell DNG':extension.startsWith('ai')?'AI-oppskaler '+extension.slice(2)+' gonger':'Eksporter '+label);
     button.style.cssText='display:grid;place-items:center;min-width:48px;width:100%;height:48px;padding:0 8px;border:0;outline:0;box-shadow:none;background:transparent;color:#d4d4d8;font:600 12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;letter-spacing:.02em;touch-action:none';
     button.style.gridColumn=index<plainCount?'1 / -1':String(index-plainCount+1);button.style.gridRow=index<plainCount?String(plainCount-index+1):'1';
     button.addEventListener('click',event=>{event.stopPropagation();return choose(index)});options.append(button);

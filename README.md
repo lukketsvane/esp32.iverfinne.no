@@ -146,3 +146,11 @@ For å importere: opne **fotoarkivet**, vel **Importer** øvst, og vel `.vatho.p
 **Oppbevaring:** Bruk `Lagre i Filer` og del som dokument/vedlegg. Fotoappar, sosiale medium og messaging-tenester kan koda biletet på nytt og fjerne `vaTh`-datablokka. Då ser biletet framleis likt ut, men kan ikkje lenger importerast som ein redigerbar master.
 
 Utviklarverktøy for å pakka ein allereie berekna Marigold V2-flyttalsdjupne: `node scripts/pack-marigold-png.mjs --original foto.jpg --depth marigold.f32 --preview vathography.png --out foto-vatho.png`. Programmet sjekkar at dei originale flyttalsverdiane overlever eksport og ny import heilt uendra.
+
+## Saumlaus VATHOgraphy-animasjon og GIF
+
+Når eit djupnebilete er framkalla, kan du trykkje på den vesle **løkkje-knappen** nedst til høgre for å slå den periodiske djupneanimasjonen av eller på. Vanleg rendering, originalfoto, 32-bit flyttalsdjupne og framkallingsoppskrifta vert ikkje endra.
+
+Hald inne **Lagre** og vel **Loop GIF**. Eksporten lagrar ei endelaus GIF89a-løkke (NETSCAPE-utviding), 20 bilete/s, 3 sekund og maksimalt 512 pikslar på lengste sida. Ho vert laga frå nøyaktig dei same djupneverdiane og tonane som førehandvisinga, utan statuslinjer, samanlikningsknapp eller andre iPhone-kontrollar. Rørsla er periodisk med samsvarende første/sluttpunkt; eksporten tek berre fasane `i/N`, aldri eit ekstra duplisert sluttbilete. GIF er 256-nivå gråskala, medan dei separate VATHO-PNG-/Entropi-masterane bevarer djupna i float32.
+
+GIF-en er ein animert *djupnesveip* gjennom eitt foto, ikkje ein påstand om videoopptak eller reell rørsle. Dersom du vil ha med alle originale djupnedata og kunne framkalle biletet om att, bruk **VATHO PNG** i staden.

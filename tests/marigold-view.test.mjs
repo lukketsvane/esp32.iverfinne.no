@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
+import * as loopMath from '../vendor/vathography-loop.mjs';
+import {GrayGifEncoder,rgbaToGrayIndices} from '../vendor/gif-encoder.mjs';
 
 const source=(await Promise.all(['photo-adjustments','notch-rail','photo-editor','marigold-view'].map(name=>readFile(new URL('../vendor/'+name+'.mjs',import.meta.url),'utf8')))).map(text=>text.replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'')).join('\n');
 const photo=new Blob(['jpeg'],{type:'image/jpeg'});
@@ -41,6 +43,7 @@ function harness({endpoint=null,localFails=false,browserFails=false,photoWidth=2
   }
   const add=(events,name,handler)=>{if(!events.has(name))events.set(name,new Set());events.get(name).add(handler)},remove=(events,name,handler)=>events.get(name)?.delete(handler),emit=(events,name)=>{for(const handler of events.get(name)||[])handler()};
   const host=new Element(),documentEvents=new Map(),windowEvents=new Map(),document={createElement:()=>new Element(),body:new Element(),hidden:false,addEventListener:(name,handler)=>add(documentEvents,name,handler),removeEventListener:(name,handler)=>remove(documentEvents,name,handler)},context=vm.createContext({
+    ...loopMath,GrayGifEncoder,rgbaToGrayIndices,
     document,Image:Element,Blob,DOMException,AbortController,Uint8Array,Uint8ClampedArray,Uint16Array,Float32Array,matchMedia:()=>({matches:reducedMotion}),Date:{now:()=>time},
     addEventListener:(name,handler)=>add(windowEvents,name,handler),removeEventListener:(name,handler)=>remove(windowEvents,name,handler),
     setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,at:time+delay});return id},clearTimeout:id=>timers.delete(id),
@@ -415,4 +418,42 @@ test('panning a cropped image does not regenerate its pixel buffer',async()=>{
   beginPair(app);movePair(app,115,315,392);endPair(app);
   assert.equal(app.renders.length,before);assert.equal(findNode(app.host,'mg-art').pixels,pixels);assert.equal(navigationPose(app).scale,2);
   app.view.dispose();
+});
+
+test('explicit loop toggle starts and stops a persistent depth animation without changing the numerical master',async()=>{
+  const app=harness({photoWidth:16,photoHeight:16});
+  const result=await app.view.process(photo),values=[...result.depth],recipe=JSON.stringify(app.view.recipe);
+  const button=app.host.querySelector('.mg-loop');
+  assert.equal(app.view.loopActive,false);
+  button.events.get('click')();
+  assert.equal(app.view.loopActive,true);
+  assert.equal(button.attributes.get('aria-pressed'),'true');
+  app.flush();
+  const canvas=findNode(app.host,'mg-loop-art');
+  assert.ok(canvas&&!canvas.hidden);
+  app.advance(10000);app.flush();
+  assert.equal(canvas.hidden,false,'loop does not stop after the original one-shot pulse');
+  assert.deepEqual([...result.depth],values);
+  assert.equal(JSON.stringify(app.view.recipe),recipe);
+  button.events.get('click')();
+  assert.equal(app.view.loopActive,false);
+  assert.equal(canvas.hidden,true);
+  assert.equal(button.attributes.get('aria-pressed'),'false');
+  app.view.dispose();assert.equal(app.frames.size,0);
+});
+
+test('actual VATHOgraphy image can be exported as a looping GIF without changing depth values',async()=>{
+  const app=harness({photoWidth:4,photoHeight:4}),result=await app.view.process(photo),baseline=[...app.view.result.depth];
+  let completed=false;
+  const pending=app.view.exportGif({onProgress:()=>{}}).then(file=>{completed=true;return file});
+  for(let i=0;i<80&&!completed;i++){app.advance(0);await Promise.resolve()}
+  const file=await pending;
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  assert.equal(file.type,'image/gif');
+  assert.equal(Buffer.from(bytes.subarray(0,6)).toString('ascii'),'GIF89a');
+  assert.equal(Buffer.from(bytes).includes(Buffer.from('NETSCAPE2.0')),true);
+  let gce=0;for(let i=0;i<bytes.length-2;i++)if(bytes[i]===0x21&&bytes[i+1]===0xf9&&bytes[i+2]===0x04)gce++;
+  assert.equal(gce,60);
+  assert.deepEqual([...result.depth],baseline);
+  app.view.dispose();assert.equal(app.frames.size,0);
 });
