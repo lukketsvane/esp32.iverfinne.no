@@ -101,6 +101,23 @@ async function photoFromDevice(app,blob=new Blob(['camera-jpeg'],{type:'image/jp
 }
 async function tap(app,details={}){await app.get('studio').emit('pointerdown',details);await app.get('studio').emit('pointerup',details)}
 
+test('the live camera feeds the finder inline and exits WebKit picture-in-picture without stopping capture',async()=>{
+  const tag=html.match(/<video\b[^>]*\bid="video"[^>]*>/)[0];
+  for(const attribute of ['muted','playsinline','disablepictureinpicture','disableremoteplayback','x-webkit-airplay="deny"'])assert.ok(tag.includes(attribute),attribute);
+  assert.doesNotMatch(tag,/\scontrols(?:\s|=|>)/);
+  const app=harness(),video=app.get('video'),modes=[];
+  await app.get('capture-plane').emit('click');
+  video.webkitSetPresentationMode=mode=>modes.push(mode);
+  video.webkitPresentationMode='inline';
+  await video.emit('webkitpresentationmodechanged');
+  video.webkitPresentationMode='picture-in-picture';
+  await video.emit('webkitpresentationmodechanged');
+  assert.deepEqual(modes,['inline']);
+  assert.equal(video.srcObject,app.media);
+  assert.equal(app.finders[0].source,video);
+  assert.equal(app.stopped,0);
+});
+
 test('VATHOgraphy freezes the native finder until processing completes or retries after failure',async()=>{
   const pending=deferred();let attempts=0;
   const app=harness({image:2,art:()=>++attempts===1?pending.promise:Promise.resolve({model:'ready'})});

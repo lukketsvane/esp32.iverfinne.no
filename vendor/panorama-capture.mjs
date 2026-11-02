@@ -23,14 +23,23 @@ export function createPanoramaCapture({surface,viewport,enabled,capture,onResult
       try{
         update('recording');current.capture=createSweepCapture({capture,onFrame:n=>{count=n;update()}});
         const frames=await current.capture.done;current.controller.signal.throwIfAborted();gesture.finish();update('processing');
-        const panorama=await buildPanorama(frames,{signal:current.controller.signal});current.controller.signal.throwIfAborted();
-        await onResult(panorama,current.controller.signal);
+        const signal=current.controller.signal;
+        let result={...frames[0],panorama:null},note='';
+        if(frames.length>1){
+          try{result=await buildPanorama(frames,{signal})}
+          catch(error){
+            if(error?.code!=='PANORAMA_OVERLAP')throw error;
+            note='For lite nytt motiv eller overlapp til panorama. Opna det første fotoet.';
+          }
+        }
+        signal.throwIfAborted();
+        await onResult(result,signal,note);
       }catch(error){if(error.name!=='AbortError'&&!current.controller.signal.aborted)failure=error}
       finally{if(run===current){run=null;update('');if(failure){indicator.hidden=false;label.textContent=failure.message;bar.style.transform='scaleX(0)';errorTimer=setTimeout(()=>{if(!run)indicator.hidden=true},6500);onError(failure)}}}
     })();
     return true;
   }
-  const gesture=bindLiveCaptureGesture(surface,{enabled:()=>!run&&enabled(),hitTest:event=>{const r=viewport.getBoundingClientRect();return event.clientX>=r.left&&event.clientX<=r.right&&event.clientY>=r.top&&event.clientY<=r.bottom},onStart:start,onFinish:()=>{run?.capture?.finish();if(run)update('processing')},onCancel:()=>{if(run){run.controller.abort();run.capture?.cancel()}},onProgress:progress=>{elapsed=progress.elapsedMs;if(run&&phase==='recording')update()}});
+  const gesture=bindLiveCaptureGesture(surface,{holdMs:600,enabled:()=>!run&&enabled(),hitTest:event=>{const r=viewport.getBoundingClientRect();return event.clientX>=r.left&&event.clientX<=r.right&&event.clientY>=r.top&&event.clientY<=r.bottom},onStart:start,onFinish:()=>{run?.capture?.finish();if(run)update('processing')},onCancel:()=>{if(run){run.controller.abort();run.capture?.cancel()}},onProgress:progress=>{elapsed=progress.elapsedMs;if(run&&phase==='recording')update()}});
   const hidden=()=>{if(document.hidden)cancel()},escape=event=>{if(event.key==='Escape'&&run){event.preventDefault();event.stopImmediatePropagation();cancel()}};
   document.addEventListener('visibilitychange',hidden);window.addEventListener('pagehide',cancel);window.addEventListener('keydown',escape,true);
   return {get active(){return !!run},get recording(){return phase==='recording'},cancel,dispose(){cancel();clearTimeout(errorTimer);gesture.dispose();indicator.remove();document.removeEventListener('visibilitychange',hidden);window.removeEventListener('pagehide',cancel);window.removeEventListener('keydown',escape,true)}};

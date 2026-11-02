@@ -477,10 +477,11 @@ sweepCapture=createPanoramaCapture({surface:$('capture-plane'),viewport:$('finde
   if(phase==='processing'){busy=true;stopStream()}
   if(!phase){busy=false;resumeStream()}
   controls();
-},onResult:async(sweep,signal)=>{
-  const archived=await archiveCapture(sweep.left,null,sweep.panorama);signal.throwIfAborted();studioControls.setImage(2);
+},onResult:async(sweep,signal,note)=>{
+  const pair=sweep.right?sweep:null;
+  const archived=await archiveCapture(sweep.left,pair,sweep.panorama);signal.throwIfAborted();studioControls.setImage(sweep.panorama?2:0);
   const stop=()=>artTask?.abort();signal.addEventListener('abort',stop,{once:true});
-  try{await showPhoto(sweep.left,signal,null,null,archived.id,sweep);if(archived.warning)printFeedback(archived.warning)}finally{signal.removeEventListener('abort',stop)}
+  try{await showPhoto(sweep.left,signal,pair,null,archived.id,sweep);if(archived.warning||note)printFeedback(archived.warning||note)}finally{signal.removeEventListener('abort',stop)}
 },onError:error=>notice(error.message||'Kunne ikkje setje saman panoramaet.',true)});
 $('capture-plane').addEventListener('click',takePhoto);$('retry-capture').addEventListener('click',takePhoto);
 bindExportGesture($('save-photo'),()=>{const blob=photoBlob,mode=studioControls.image,source=mode===2?marigoldView:sceneViewer,artResult=marigoldView.result;if(!blob||!photoDialog.open||mode===1&&!sceneVisible||mode===2&&!artVisible)return;const isCurrent=()=>photoBlob===blob&&photoDialog.open&&studioControls.image===mode&&(mode===0||mode===1&&sceneViewer===source&&sceneVisible||mode===2&&marigoldView.ready&&!artError&&marigoldView.result===artResult);return {image:()=>snapshotBlob(mode===0?photoView.snapshot(photoGestures.state,true):source.snapshot(true)),document:mode===2?persistCurrentMaster:undefined,animation:mode===2?options=>marigoldView.exportGif(options):undefined,name:photoName,isCurrent,onError:error=>printFeedback(error.message)}});

@@ -19,6 +19,10 @@ import { bindExportGesture, importEntropiDocuments } from './vendor/entropi-ui.m
 
 lockPageZoom();
 const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder=new Viewfinder($('viewfinder'));
+// The camera stream is a canvas input. Keep WebKit from presenting it as a separate player.
+video.addEventListener('webkitpresentationmodechanged',()=>{
+  if(video.webkitPresentationMode==='picture-in-picture')video.webkitSetPresentationMode?.('inline');
+});
 const allowedOrigins=new Set(['http://192.168.4.1','http://127.0.0.1:19304']);
 const gallery=createArchive();
 let currentDocument=null,photoRight=null,archiveState={id:null,pending:null,suppressed:false},documentTimer=0,photoReceivedAt=null;
@@ -209,9 +213,14 @@ sweepCapture=createPanoramaCapture({surface:$('capture-plane'),viewport:$('viewf
   $('phone-shutter').disabled=!!phase;
   if(phase==='processing'){capturing=true;state('working')}
   else if(!phase&&capturing){capturing=false;state('camera')}
-},onResult:async(sweep,signal)=>{
+},onResult:async(sweep,signal,note)=>{
   signal.throwIfAborted();const stop=()=>artTask?.abort();signal.addEventListener('abort',stop,{once:true});
-  try{await acceptPhoto(sweep.left,'entropi-panorama-'+Date.now()+'.png',null,null,null,null,sweep)}finally{signal.removeEventListener('abort',stop)}
+  try{
+    if(!sweep.panorama)studioControls.setImage(0);
+    const name=sweep.panorama?'entropi-panorama-'+Date.now()+'.png':'entropi-'+Date.now()+'.jpg';
+    await acceptPhoto(sweep.left,name,null,null,sweep.right??null,null,sweep);
+    if(note&&photoReady&&await archiveState.pending&&photoBlob===sweep.left)printFeedback(note);
+  }finally{signal.removeEventListener('abort',stop)}
 },onError:error=>printFeedback(failureText(error,'Kunne ikkje setje saman panoramaet.'))});
 bindCaptureGesture($('reset'),{enabled:()=>mode==='done'&&!printing&&!nextShot&&!galleryOpen&&!sweepCapture.active,onCapture:()=>captureNext()});
 $('capture-plane').addEventListener('click',()=>void capture());$('reset').addEventListener('click',reset);bindExportGesture($('save'),exportOptions);
