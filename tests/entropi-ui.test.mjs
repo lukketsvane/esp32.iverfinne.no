@@ -240,3 +240,20 @@ test('Loop GIF appears only for VATHOgraphy, exports GIF bytes as a file, and ne
   const normal=harness();normal.api.showExportOptions({name:'still.jpg',image:()=>png,document:master});
   assert.equal(button(normal.dialog(),'Loop GIF'),undefined);
 });
+
+test('multi picker imports serially, keeps good files around failures and leaves a cancelled selection untouched',async()=>{
+  const app=harness({decode:async file=>{if(file.name==='bad.entropi')throw Error('skadd');return {id:file.name}}});
+  const trigger=app.element('button'),saved=[],messages=[];
+  const pending=deferred();
+  const options={button:trigger,archive:{async importDocument(master){saved.push(master.id);if(saved.length===1)await pending.promise}},
+    open(){throw Error('Batch opened a single file')},isCurrent:()=>true,refresh:message=>messages.push(message),feedback:message=>messages.push(message)};
+  const work=app.api.importEntropiDocuments(options);
+  assert.equal(app.input().multiple,true);assert.equal(trigger.disabled,true);
+  app.input().files=['a.entropi','bad.entropi','b.entropi'].map(name=>new File(['bytes'],name));
+  await app.input().emit('change');await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(saved,['a.entropi']);pending.resolve();await work;
+  assert.deepEqual(saved,['a.entropi','b.entropi']);assert.equal(messages.length,1);
+  assert.match(messages[0],/2 av 3.*bad\.entropi.*skadd/);assert.equal(trigger.disabled,false);
+  const cancelled=app.api.importEntropiDocuments(options);await app.input().emit('cancel');await cancelled;
+  assert.equal(messages.length,1);assert.equal(saved.length,2);
+});

@@ -9,6 +9,7 @@ import { attachGalleryNavigation } from '../vendor/gallery-navigation.mjs';
 const html=await readFile(new URL('../index.html',import.meta.url),'utf8');
 const application=(await readFile(new URL('../vendor/capture-gesture.mjs',import.meta.url),'utf8')).replace(/^export /gm,'')+'\n'+(await readFile(new URL('../app.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
 const photoModule=await readFile(new URL('../vendor/photo.mjs',import.meta.url),'utf8'),photoSource=photoModule.slice(photoModule.indexOf('export function photoSnapshot')).replace(/^export /gm,'');
+const importModule=(await readFile(new URL('../vendor/entropi-ui.mjs',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve()};
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
 
@@ -45,8 +46,15 @@ function harness(options={}){
     elements.set(element.id,element);
   }
   Object.assign(elements.get('video'),{videoWidth:640,videoHeight:480,play:async()=>{if(options.play)await options.play(elements.get('video').srcObject)},pause(){}});
-  const document={hidden:options.hidden??false,referrer:options.referrer??'http://192.168.4.1/',getElementById:id=>elements.get(id),addEventListener(name,callback){if(!events.has(name))events.set(name,[]);events.get(name).push(callback)},createElement(tag){
+  const document={body:{append(){}},hidden:options.hidden??false,referrer:options.referrer??'http://192.168.4.1/',getElementById:id=>elements.get(id),addEventListener(name,callback){if(!events.has(name))events.set(name,[]);events.get(name).push(callback)},createElement(tag){
     const element=new Element('',tag.toUpperCase());
+    if(tag==='input'){
+      element.remove=()=>{};
+      element.click=()=>{
+        element.files=options.importFiles??(options.importDocument?[{name:'photo.entropi',master:options.importDocument}]:[]);
+        return element.emit(element.files.length?'change':'cancel');
+      };
+    }
     if(tag==='canvas'){element.getContext=()=>({drawImage(){},getImageData:(x,y,width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})});element.toBlob=(callback,type)=>options.toBlob?options.toBlob(callback,type):callback(new Blob(['camera-jpeg'],{type}))}
     return element;
   }};
@@ -58,7 +66,8 @@ function harness(options={}){
     Image:class{naturalWidth=1600;naturalHeight=1200;async decode(){if(options.decode)await options.decode()}},
     navigator:{standalone:options.standalone,mediaDevices:{getUserMedia:async()=>{mediaRequests++;return options.media?await options.media(media):media}}},matchMedia:()=>({matches:!!options.displayStandalone}),
     COLOR_SCHEMES,attachGalleryNavigation,createPanoramaCapture:()=>({active:false,recording:false,cancel(){},dispose(){}}),
-    createEntropiDocument,bindExportGesture:(button,getOptions)=>button.addEventListener('click',async()=>{const options=getOptions();if(!options||!options.isCurrent())return;try{const blob=await options.image();if(options.isCurrent())saves.push({blob,name:options.name.replace(/\.[^.]+$/,'')+'.'+(options.imageExtension??'png'),isCurrent:options.isCurrent,options})}catch(error){options.onError?.(error)}}),pickEntropiDocument:async()=>options.importDocument??null,
+    createEntropiDocument,bindExportGesture:(button,getOptions)=>button.addEventListener('click',async()=>{const options=getOptions();if(!options||!options.isCurrent())return;try{const blob=await options.image();if(options.isCurrent())saves.push({blob,name:options.name.replace(/\.[^.]+$/,'')+'.'+(options.imageExtension??'png'),isCurrent:options.isCurrent,options})}catch(error){options.onError?.(error)}}),
+    decodeEntropiDocument:async file=>{if(!file.master)throw Error('Invalid Entropi file');return file.master},
     createArchive:()=>options.archive??({saveDocument:async document=>({id:document.id}),save:async()=>({}),savePreview:async()=>null,list:async()=>[],get:async()=>null,remove:async()=>{}}),
     location:{search:''},URLSearchParams,
     Viewfinder:class{constructor(){this.tone={grain:1,contrast:1};this.captures=[];finders.push(this)}capture(source){const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;this.captures.push({source,canvas});return canvas}setStyle(level){this.style=level}setPalette(id){this.palette=id}setTone(pose){this.tone={grain:pose.grain,contrast:pose.contrast}}clear(){}dispose(){}},
@@ -74,6 +83,7 @@ function harness(options={}){
     performance:{now:()=>now},Date:class extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}},
     setTimeout:(callback,delay=0)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id},clearTimeout:id=>timers.delete(id)
   });
+  context.importEntropiDocuments=vm.runInContext('(() => {\n'+importModule+'\nreturn importEntropiDocuments; })()',context);
   vm.runInContext(photoSource+'\n'+application,context,{filename:'app.mjs'});
   async function tick(duration){now+=duration;for(const [id,timer]of [...timers])if(timer.at<=now){timers.delete(id);timer.callback()}await flush()}
   async function emit(name,details={}){const event={type:name,defaultPrevented:false,preventDefault(){this.defaultPrevented=true},...details};for(const callback of events.get(name)??[])callback(event);await flush();return event}
@@ -518,7 +528,7 @@ test('importing a numerical master restores its expression without running a mod
   const left=new Blob(['source'],{type:'image/jpeg'}),preview=new Blob(['preview'],{type:'image/png'});
   const stored=createEntropiDocument({left,preview,result:{width:2,height:2,depth:Float32Array.of(1.25,2.75,4.5,NaN),polarity:'near'},recipe:{preset:4,position:-.2,width:2}});
   const app=harness({importDocument:stored});
-  await app.get('phone-vault-import').emit('click');
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-import').emit('click');
   assert.equal(app.get('studio').className,'studio done');assert.equal(app.artCalls.length,0);assert.equal(app.sceneCalls.length,0);
   assert.deepEqual(app.artViews[0].recipe,stored.recipe);
   await app.get('save').emit('click');const exported=await app.saves[0].options.document();
@@ -529,6 +539,7 @@ function archiveFixture(){
   const records=new Map(),writes=[],previewWrites=[],removed=[];let nextId=0;
   const state={failSave:false,failRemove:false,blockedSave:null,blockedRemove:null,records,writes,previewWrites,removed,archive:{
     async save(left,right=null,preview=left){const id='capture-'+ ++nextId;records.set(id,{id,left,right,created:nextId,preview,pending:!preview});return {id}},
+    async importDocument(document){return this.saveDocument(document,'import-'+ ++nextId)},
     async saveDocument(document,id=document.id){writes.push({document,id});if(state.failSave)throw new DOMException('Storage full','QuotaExceededError');if(state.blockedSave)await state.blockedSave.promise;const previous=records.get(id);records.set(id,{id,left:document.left,right:document.right,document,created:previous?.created??nextId++,preview:document.preview});return {id}},
     async savePreview(id,preview){const record=records.get(id);if(!record)return null;previewWrites.push({id,preview});record.preview=preview;record.pending=false;return {id}},
     async list(){return [...records.values()].map(({id,created,preview,pending,left})=>({id,created,preview:preview??left,pending}))},
@@ -536,6 +547,22 @@ function archiveFixture(){
     async remove(id){if(state.failRemove)throw new Error('Delete failed');if(state.blockedRemove)await state.blockedRemove.promise;removed.push(id);records.delete(id);state.failSave=false}
   }};return state;
 }
+
+test('the phone imports a selection into the gallery, retaining good masters around a failed file',async()=>{
+  const store=archiveFixture();
+  const settings={left:new Blob(['source'],{type:'image/jpeg'}),preview:new Blob(['preview'],{type:'image/png'}),result:{width:2,height:1,depth:Float32Array.of(1,2)}};
+  const first=createEntropiDocument({...settings,id:'first-master'}),last=createEntropiDocument({...settings,id:'last-master'});
+  const app=harness({archive:store.archive,importFiles:[
+    {name:'first.entropi',master:first},{name:'broken.entropi'},{name:'last.entropi',master:last}
+  ]});
+  await app.get('open-gallery').emit('click');
+  await app.get('phone-vault-import').emit('click');
+  assert.deepEqual(store.writes.map(write=>write.document.id),[first.id,last.id]);
+  assert.equal(app.get('phone-vault').hidden,false);
+  assert.equal(app.get('phone-vault-grid').children.length,2);
+  assert.equal(app.restoreCalls.length,0);
+  assert.match(app.get('phone-vault-status').textContent,/broken\.entropi/);
+});
 
 test('the archive displays and saves the current processed photo while retaining its original',async()=>{
   const store=archiveFixture(),app=harness({image:0,archive:store.archive}),original=await photoFromDevice(app);
@@ -639,7 +666,7 @@ test('failed development remains recoverable after page disposal and never requi
 test('a failed master restore retries the saved depth and recipe without becoming stuck or running inference',async()=>{
   const stored=createEntropiDocument({left:new Blob(['original'],{type:'image/jpeg'}),right:new Blob(['right'],{type:'image/jpeg'}),preview:new Blob(['preview'],{type:'image/png'}),result:{width:2,height:2,depth:Float32Array.of(1,2,3,4)},recipe:{preset:4,position:.2,width:1.5}});
   let attempts=0;const app=harness({importDocument:stored,restore:async()=>{if(++attempts===1)throw new Error('Temporary decode failure')}});
-  await app.get('phone-vault-import').emit('click');assert.equal(app.get('studio').className,'studio error');assert.equal(app.restoreCalls.length,1);
+  await app.get('open-gallery').emit('click');await app.get('phone-vault-import').emit('click');assert.equal(app.get('studio').className,'studio error');assert.equal(app.restoreCalls.length,1);
   await app.get('retry').emit('click');assert.equal(app.get('studio').className,'studio done');assert.equal(app.restoreCalls.length,2);assert.equal(app.artCalls.length,0);
   assert.equal(app.restoreCalls[1].result,stored.result);assert.equal(app.restoreCalls[1].recipe,stored.recipe);
   await app.get('save').emit('click');const exported=await app.saves[0].options.document();assert.equal(exported.right,stored.right);assert.deepEqual(exported.result.depth,stored.result.depth);

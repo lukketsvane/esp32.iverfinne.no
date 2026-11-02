@@ -1,6 +1,7 @@
 import {normalizePanorama} from './entropi-document.mjs';
 
 const archiveName='entropi-gallery-v1';
+const newRecordId=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
 
 function openArchive(){
   return new Promise((resolve,reject)=>{
@@ -52,6 +53,20 @@ export function createArchive(){
     persistenceRequested=true;
     void navigator.storage.persist().catch(()=>{});
   };
+  async function storeDocument(document,id,imported){
+    requestPersistence();
+    const rendered=document.preview??(imported?document.left:null);
+    if(!id||!(document.left instanceof Blob)||!document.result?.depth||!(rendered instanceof Blob))throw new Error('Ugyldig Entropi-dokument.');
+    const panorama=normalizePanorama(document.panorama);if(panorama){if(document.right!=null)throw new Error('Ugyldig panorama.');document={...document,panorama}}
+    const db=await connect(),existing=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').get(id));
+    const preview=await thumbnail(rendered).catch(()=>null)??rendered;
+    const info={id,created:existing?.created??Date.parse(document.created),stereo:!!document.right||!!panorama?.frames.some(frame=>frame.right),preview,pending:false,previewMatchesDocument:!!document.preview};
+    await transact(db,['photos','index'],'readwrite',tx=>{
+      tx.objectStore('photos').put({id,left:document.left,right:document.right,document,preview:document.preview,previewMatchesDocument:!!document.preview,...(panorama?{panorama}:{})});
+      tx.objectStore('index').put(info);
+    });
+    return info;
+  }
   return {
     async save(left,right=null,rendered=left,panorama=null){
       requestPersistence();
@@ -60,7 +75,7 @@ export function createArchive(){
       const sweep=normalizePanorama(panorama);
       if(sweep&&(right!==null||left.size+(rendered?.size??0)+sweep.frames.reduce((sum,frame)=>sum+frame.left.size+(frame.right?.size??0),0)>128*1024*1024))throw new Error('Ugyldig panorama.');
       const db=await connect();
-      const id=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+      const id=newRecordId();
       const preview=await thumbnail(rendered??left).catch(()=>null)??rendered??left;
       const info={id,created:Date.now(),stereo:!!right||!!sweep?.frames.some(frame=>frame.right),preview,pending:rendered===null,previewMatchesDocument:false};
       await transact(db,['photos','index'],'readwrite',tx=>{
@@ -97,19 +112,9 @@ export function createArchive(){
         return photo?.left?{...record,preview:await thumbnail(photo.left).catch(()=>null)??photo.left}:record;
       }));
     },
-    async saveDocument(document,id=document.id){
-      requestPersistence();
-      if(!id||!(document.left instanceof Blob)||!document.result?.depth||!(document.preview instanceof Blob))throw new Error('Ugyldig Entropi-dokument.');
-      const panorama=normalizePanorama(document.panorama);if(panorama){if(document.right!=null)throw new Error('Ugyldig panorama.');document={...document,panorama}}
-      const db=await connect(),existing=await transact(db,['index'],'readonly',tx=>tx.objectStore('index').get(id));
-      const preview=await thumbnail(document.preview).catch(()=>null)??document.preview;
-      const info={id,created:existing?.created??Date.parse(document.created),stereo:!!document.right||!!panorama?.frames.some(frame=>frame.right),preview,pending:false,previewMatchesDocument:true};
-      await transact(db,['photos','index'],'readwrite',tx=>{
-        tx.objectStore('photos').put({id,left:document.left,right:document.right,document,preview:document.preview,previewMatchesDocument:true,...(panorama?{panorama}:{})});
-        tx.objectStore('index').put(info);
-      });
-      return info;
-    },
+    saveDocument(document,id=document.id){return storeDocument(document,id,false)},
+    // An imported selection can contain differently edited copies of the same master.
+    importDocument(document){return storeDocument(document,newRecordId(),true)},
     async get(id){
       const db=await connect(),record=await transact(db,['photos'],'readonly',tx=>tx.objectStore('photos').get(id));
       if(!record)return record;

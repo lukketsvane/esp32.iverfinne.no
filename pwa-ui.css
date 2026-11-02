@@ -19,6 +19,8 @@
 .phone-vault{position:fixed;z-index:100;inset:0;padding:calc(22px + env(safe-area-inset-top)) calc(22px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(22px + env(safe-area-inset-left));display:flex;flex-direction:column;background:#080808;color:#e8e8e8;touch-action:pan-y}
 .phone-vault[hidden],.phone-vault-detail[hidden]{display:none!important}
 .phone-vault-top{display:flex;justify-content:flex-end;margin-bottom:12px}
+.vault-import-status{font-size:12px;margin:0 0 8px;max-height:20vh;overflow:auto;overflow-wrap:anywhere}
+.vault-import-status:empty{display:none}
 .phone-vault button{font:inherit;touch-action:none;background:transparent;color:#bbb;border:0;padding:0;min-height:48px;min-width:48px;border-radius:24px}
 .phone-vault #phone-vault-close{display:grid;place-items:center;width:44px;height:44px;padding:0;border:0;background:none}
 .phone-vault button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}

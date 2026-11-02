@@ -139,7 +139,13 @@ async function openArchivedCapture(record,id=null){
   }catch(error){if(!task.signal.aborted)notice(error.message,true)}
   finally{if(captureTask===task){captureTask=null;busy=false;controls();resumeStream()}}
 }
-$('archive-import').addEventListener('click',async()=>{try{const master=await pickEntropiDocument();if(master)await openEntropiMaster(master)}catch(error){$('archive-notice').textContent=error.message}});
+$('archive-import').addEventListener('click',()=>{
+  const opening=archiveGeneration;
+  return importEntropiDocuments({
+    button:$('archive-import'),archive:archiveStore,isCurrent:()=>!$('archive').hidden&&opening===archiveGeneration,
+    open:master=>openEntropiMaster(master),refresh:showArchive,feedback:message=>{$('archive-notice').textContent=message}
+  });
+});
 $('archive-edit').addEventListener('click',async()=>{const id=archiveSelected,opening=archiveGeneration,isCurrent=()=>!$('archive').hidden&&opening===archiveGeneration&&archiveSelected===id;if(!id||!isCurrent())return;try{const record=await archiveStore.get(id);if(isCurrent()&&record)await openArchivedCapture(record,id)}catch(error){if(isCurrent())$('archive-notice').textContent=error.message}});
 
 async function archiveCapture(original,pair,panorama=null){
@@ -163,7 +169,7 @@ function archiveUrl(blob){
 function archiveDate(timestamp){
   return new Date(timestamp).toLocaleString('nn-NO',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
 }
-async function showArchive(){
+async function showArchive(message=''){
   if(sweepCapture?.active||busy||printBusy)return;
   const opening=++archiveGeneration;
   if($('archive').hidden&&!archiveReturnToPhoto)archiveFocus=document.activeElement;
@@ -171,6 +177,7 @@ async function showArchive(){
   $('archive').hidden=false;
   studio.inert=true;$('close-archive').focus({preventScroll:true});
   $('archive-grid').hidden=false;$('archive-detail').hidden=true;
+  $('archive-notice').textContent=message;
   archiveSelected=null;archiveRecord=null;archiveScroll=0;archiveNavigation.cancel();
   clearArchiveUrls();
   const grid=$('archive-grid');grid.replaceChildren();

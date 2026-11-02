@@ -15,7 +15,7 @@ import { attachGalleryNavigation } from './vendor/gallery-navigation.mjs';
 import { bindCaptureGesture } from './vendor/capture-gesture.mjs';
 import { createPanoramaCapture } from './vendor/panorama-capture.mjs';
 import { createEntropiDocument } from './vendor/entropi-document.mjs';
-import { bindExportGesture, pickEntropiDocument } from './vendor/entropi-ui.mjs';
+import { bindExportGesture, importEntropiDocuments } from './vendor/entropi-ui.mjs';
 
 lockPageZoom();
 const $=id=>document.getElementById(id),video=$('video'),photo=$('photo'),finder=new Viewfinder($('viewfinder'));
@@ -271,7 +271,7 @@ function clearGalleryUrls(){
 function galleryUrl(blob){
   const url=URL.createObjectURL(blob);galleryUrls.push(url);return url;
 }
-async function openPhoneGallery(){
+async function openPhoneGallery(message=''){
   if(sweepCapture.active)return;
   const opening=++galleryGeneration;
   if(!galleryOpen)galleryFocus=document.activeElement;
@@ -281,7 +281,7 @@ async function openPhoneGallery(){
   $('studio').inert=true;$('phone-vault-close').focus({preventScroll:true});
   $('phone-vault-grid').hidden=false;
   $('phone-vault-detail').hidden=true;
-  $('phone-vault-status').textContent='';
+  $('phone-vault-status').textContent=message;
   galleryCurrent=null;galleryRecord=null;galleryScroll=0;galleryNavigation.cancel();clearGalleryUrls();
   const grid=$('phone-vault-grid');grid.replaceChildren();
   try{
@@ -345,8 +345,13 @@ function closePhoneGallery(){
 $('open-gallery').addEventListener('click',()=>void openPhoneGallery());
 $('phone-vault-close').addEventListener('click',closePhoneGallery);
 $('phone-vault-back').addEventListener('click',backPhoneGallery);
-$('phone-vault-import').addEventListener('click',async()=>{
-  try{const document=await pickEntropiDocument();if(!document)return;closePhoneGallery();await acceptPhoto(document.left,document.id+'.entropi',document)}catch(error){$('phone-vault-status').textContent=failureText(error,'Kunne ikkje opne Entropi-fila.')}
+$('phone-vault-import').addEventListener('click',()=>{
+  const opening=galleryGeneration;
+  return importEntropiDocuments({
+    button:$('phone-vault-import'),archive:gallery,isCurrent:()=>galleryOpen&&opening===galleryGeneration,
+    open:master=>{closePhoneGallery();return acceptPhoto(master.left,master.id+'.entropi',master)},
+    refresh:openPhoneGallery,feedback:message=>{$('phone-vault-status').textContent=message}
+  });
 });
 $('phone-vault-edit').addEventListener('click',async()=>{
   const id=galleryCurrent,opening=galleryGeneration,isCurrent=()=>galleryOpen&&opening===galleryGeneration&&id===galleryCurrent;if(!id||!isCurrent())return;

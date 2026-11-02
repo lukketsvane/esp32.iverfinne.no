@@ -139,21 +139,54 @@ export function bindExportGesture(button,getOptions){
   return ()=>{reset();status?.remove();for(const [target,name,handler,capture]of bindings)target.removeEventListener?.(name,handler,capture)};
 }
 
-export function pickEntropiDocument(){
-  return new Promise((resolve,reject)=>{
-    const input=document.createElement('input');input.type='file';input.accept='.entropi,.png,image/png';input.hidden=true;
-    input.addEventListener('cancel',()=>{input.remove();resolve(null)},{once:true});
-    input.addEventListener('change',async()=>{
-      const file=input.files?.[0];input.remove();
-      try{
-        if(!file){resolve(null);return}
-        if(file.name?.toLowerCase().endsWith('.png')||file.type==='image/png'){
-          const embedded=await readVathographyPNG(file);
-          if(!embedded)throw new Error('Dette er ei vanleg PNG utan innebygd VATHO-djupne.');
-          resolve(await decodeEntropiDocument(embedded));
-        }else resolve(await decodeEntropiDocument(file));
-      }catch(error){reject(error)}
-    },{once:true});
+function pickEntropiFiles(multiple){
+  return new Promise(resolve=>{
+    const input=document.createElement('input');
+    input.type='file';input.accept='.entropi,.png,image/png';input.multiple=multiple;input.hidden=true;
+    const finish=files=>{input.remove();resolve(files)};
+    input.addEventListener('cancel',()=>finish([]),{once:true});
+    input.addEventListener('change',()=>finish(Array.from(input.files??[])),{once:true});
     document.body.append(input);input.click();
   });
+}
+
+async function readEntropiFile(file){
+  if(file.name?.toLowerCase().endsWith('.png')||file.type==='image/png'){
+    const embedded=await readVathographyPNG(file);
+    if(!embedded)throw new Error('Dette er ei vanleg PNG utan innebygd VATHO-djupne.');
+    return decodeEntropiDocument(embedded);
+  }
+  return decodeEntropiDocument(file);
+}
+
+export async function pickEntropiDocument(){
+  const [file]=await pickEntropiFiles(false);
+  return file?readEntropiFile(file):null;
+}
+
+export async function importEntropiDocuments({button,archive,open,refresh,isCurrent,feedback}){
+  if(button.disabled)return;
+  button.disabled=true;
+  try{
+    const files=await pickEntropiFiles(true);
+    if(!files.length||!isCurrent())return;
+    if(files.length===1){
+      const master=await readEntropiFile(files[0]);
+      if(isCurrent())await open(master);
+      return;
+    }
+    let imported=0;
+    const errors=[];
+    for(const file of files){
+      if(!isCurrent())return;
+      try{
+        const master=await readEntropiFile(file);
+        if(!isCurrent())return;
+        await archive.importDocument(master);
+        imported++;
+      }catch(error){errors.push(file.name+' ('+(error.message||'ukjend feil')+')')}
+    }
+    if(isCurrent())await refresh(['Importerte '+imported+' av '+files.length+' filer.',...errors].join(' '));
+  }catch(error){if(isCurrent())feedback(error.message||'Kunne ikkje importere filene.')}
+  finally{button.disabled=false}
 }

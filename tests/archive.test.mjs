@@ -242,3 +242,19 @@ for(const kind of ['async','sync'])test(`${kind} failed preview replacement pres
   assert.equal(record.previewMatchesDocument,true);assert.equal(listed.previewMatchesDocument,true);
   assert.equal(await record.preview.text(),'rendered master');assert.equal(await listed.preview.text(),'thumbnail:rendered master');
 });
+
+test('batch imports retain separate edits of an existing master and support a missing preview',async()=>{
+  const app=harness(),original=master(),old=await app.archive.saveDocument(original);
+  const variant={...original,preview:null},first=await app.archive.importDocument(variant);
+  variant.recipe={...variant.recipe,preset:1};
+  const second=await app.archive.importDocument(variant);
+  assert.equal(new Set([old.id,first.id,second.id]).size,3);
+  const imported=await app.archive.get(first.id),also=await app.archive.get(second.id);
+  assert.equal(imported.document.id,original.id);
+  assert.equal(imported.document.preview,null);
+  assert.equal(imported.previewMatchesDocument,false);
+  assert.equal(await imported.left.text(),await original.left.text());
+  assert.equal(imported.document.recipe.preset,original.recipe.preset);
+  assert.equal(also.document.recipe.preset,1);
+  assert.equal((await app.archive.get(old.id)).previewMatchesDocument,true);
+});
