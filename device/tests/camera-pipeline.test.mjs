@@ -132,3 +132,45 @@ int main(){
     await rm(folder,{recursive:true,force:true});
   }
 });
+
+test('SCCB recovery only clocks a timed-out sensor with SDA low and SCL high', {
+  skip: compiler ? false : 'No native C++ host compiler is installed.',
+}, async () => {
+  const init = body('static bool initializeCamera(');
+  assert.match(init, /if \(sensorProbeFailed\) checkFailedSensorBus\(\);\s+esp_err_t error = esp_camera_init\(&config\);\s+sensorProbeFailed = error == ESP_ERR_NOT_SUPPORTED;/);
+  const folder = await mkdtemp(join(tmpdir(), 'entropi-sccb-'));
+  const file = join(folder, 'sccb.cpp'), program = join(folder, process.platform === 'win32' ? 'sccb.exe' : 'sccb');
+  try {
+    await writeFile(file, `#include <cassert>
+#include <cstddef>
+#define CONFIG_SCCB_HARDWARE_I2C_PORT1 1
+enum { I2C_NUM_1=1, SIOD_GPIO_NUM=26, SIOC_GPIO_NUM=27, I2C_CLK_SRC_DEFAULT=0, ESP_OK=0 };
+using gpio_num_t=int; using esp_err_t=int; using i2c_master_bus_handle_t=void*;
+struct i2c_master_bus_config_t { int i2c_port,sda_io_num,scl_io_num,clk_source,glitch_ignore_cnt; struct { int enable_internal_pullup; } flags; };
+static bool fail=false; static int sda,scl,resets,releases;
+int i2c_new_master_bus(i2c_master_bus_config_t *cfg, void **bus) {
+  assert(cfg->i2c_port==1 && cfg->sda_io_num==26 && cfg->scl_io_num==27 && cfg->flags.enable_internal_pullup);
+  *bus=fail ? nullptr : &resets; return fail ? 1 : 0;
+}
+int i2c_master_bus_reset(void *bus) { assert(bus && !sda && scl); resets++; return 0; }
+int i2c_del_master_bus(void *bus) { assert(bus); releases++; return 0; }
+int gpio_get_level(int pin) { return pin==26 ? sda : scl; }
+void delayMicroseconds(unsigned) {}
+const char* esp_err_to_name(int) { return ""; } bool trySerialText(){return false;} void endSerialText(){}
+struct { void printf(const char*,...){} } Serial;
+${body('static void checkFailedSensorBus(')}
+int main() {
+  for (sda=0;sda<=1;sda++) for (scl=0;scl<=1;scl++) {
+    resets=releases=0; checkFailedSensorBus();
+    assert(resets==(!sda && scl)); assert(releases==1);
+  }
+  fail=true; resets=releases=0; checkFailedSensorBus(); assert(!releases && !resets);
+}`);
+    const built = spawnSync(compiler, ['-std=c++11', ...(process.platform === 'win32' ? ['-static'] : []), file, '-o', program], { encoding: 'utf8' });
+    assert.equal(built.status, 0, built.stderr);
+    const run = spawnSync(program, [], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});

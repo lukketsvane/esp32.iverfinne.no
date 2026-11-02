@@ -16,6 +16,8 @@
 #include <WiFi.h>
 #include <Preferences.h>
 #include "esp_camera.h"
+#include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_random.h"
@@ -50,6 +52,7 @@ static volatile bool recovering = false;
 static volatile bool recoveryRequested = false;
 static bool hasPsram = false;
 static bool cameraInitialized = false;
+static bool sensorProbeFailed = false;
 static framesize_t previewSize = FRAMESIZE_QVGA;
 static framesize_t photoSize = FRAMESIZE_UXGA;
 static int previewQuality = 14;
@@ -182,6 +185,40 @@ static bool copyFrame(camera_fb_t *frame, PhotoFrame &photo) {
   return true;
 }
 
+static void checkFailedSensorBus() {
+  // esp_camera_init has already released SCCB and XCLK after a failed probe.
+  i2c_master_bus_config_t config = {};
+#if CONFIG_SCCB_HARDWARE_I2C_PORT1
+  config.i2c_port = I2C_NUM_1;
+#else
+  config.i2c_port = I2C_NUM_0;
+#endif
+  config.sda_io_num = static_cast<gpio_num_t>(SIOD_GPIO_NUM);
+  config.scl_io_num = static_cast<gpio_num_t>(SIOC_GPIO_NUM);
+  config.clk_source = I2C_CLK_SRC_DEFAULT;
+  config.glitch_ignore_cnt = 7;
+  config.flags.enable_internal_pullup = 1;
+  i2c_master_bus_handle_t bus = nullptr;
+  esp_err_t result = i2c_new_master_bus(&config, &bus);
+  if (result != ESP_OK) return;
+
+  delayMicroseconds(100);
+  int sda = gpio_get_level(config.sda_io_num);
+  int scl = gpio_get_level(config.scl_io_num);
+  bool clear = !sda && scl;
+  // IDF uses open-drain SCL pulses (at most nine) followed by a STOP on ESP32.
+  if (clear) result = i2c_master_bus_reset(bus);
+  delayMicroseconds(100);
+  int sdaAfter = gpio_get_level(config.sda_io_num);
+  int sclAfter = gpio_get_level(config.scl_io_num);
+  esp_err_t released = i2c_del_master_bus(bus);
+  if (trySerialText()) {
+    Serial.printf("SCCB retry: sda=%d scl=%d clear=%d result=%s after_sda=%d after_scl=%d release=%s\n",
+                  sda, scl, clear, esp_err_to_name(result), sdaAfter, sclAfter, esp_err_to_name(released));
+    endSerialText();
+  }
+}
+
 static bool initializeCamera() {
   if (cameraInitialized) {
     esp_camera_deinit();
@@ -215,7 +252,9 @@ static bool initializeCamera() {
   config.jpeg_buffer_size = hasPsram ? 512 * 1024 : 0;
   config.fb_count = hasPsram ? 2 : 1;
   config.grab_mode = hasPsram ? CAMERA_GRAB_LATEST : CAMERA_GRAB_WHEN_EMPTY;
+  if (sensorProbeFailed) checkFailedSensorBus();
   esp_err_t error = esp_camera_init(&config);
+  sensorProbeFailed = error == ESP_ERR_NOT_SUPPORTED;
   if (error != ESP_OK) {
     char message[96];
     snprintf(message, sizeof(message), "Camera initialization failed (0x%x)", error);
