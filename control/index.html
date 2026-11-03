@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="nn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101214">
+<meta name="description" content="Kontroll, feilsøking, stereobearbeiding og rasterkunst for Entropi ESP32-CAM.">
+<link rel="manifest" href="manifest.webmanifest">
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<title>ENTROPI / Stereo Control</title>
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/" aria-label="Entropi framside"><span class="mark">E.</span><span><strong>ENTROPI</strong><small>STEREO CONTROL / 02</small></span></a><div class="top-actions"><span class="connection-pill" id="connection" aria-live="polite">INGEN KAMERA</span><button class="button tiny" id="demo" title="Opne lokalt eksempelbilete">DEMO</button></div></header>
+<main>
+<section class="intro"><div><p class="eyebrow">STUDIO / 2026</p><h1>To auge.<br><em>Eitt bilete.</em></h1><p class="subhead">Feilsøking, stereoløkker, analog farge og digital raster. Eit lokalt verkstadbord for ESP32-CAM.</p></div><div class="intro-meta"><span>01 / SENSOR</span><span>02 / STEREO</span><span>03 / DITHER</span><span>04 / ARKIV</span></div></section>
+<section class="section" id="devices"><div class="section-head"><div><span class="eyebrow">01 / SENSOR</span><h2>To ESP32-CAM</h2></div><button class="button" id="refresh">Test begge ↻</button></div><div class="camera-grid" id="cams"></div><p class="context" id="sensor-note">0x106 oppstår under sensorinitialisering. Ein slik sensorfeil er ikkje ein nettverksfeil. «TEST 320 → 1600» prøver berre oppløysingar etter at kameraet har starta, og set den opphavlege innstillinga tilbake.</p></section>
+<section class="section" id="stereo"><div class="section-head"><div><span class="eyebrow">02 / STEREO</span><h2>To perspektiv</h2></div><span class="micro" id="source-status">Ingen kjelder</span></div>
+ <div class="source-grid"><figure class="source"><div class="source-label">01 / VENSTRE <span id="source-label-0">INGEN BILETE</span></div><div class="source-image"><img id="im0" alt="Bilete frå kamera 1"><span id="imempty0" class="source-empty">+</span></div><div class="source-actions"><label class="button mini">VEL BILETE<input type="file" accept="image/*" id="upload0" hidden></label><button class="button mini" data-shoot="0">TA BILETE</button></div></figure>
+ <figure class="source"><div class="source-label">02 / HØGRE <span id="source-label-1">INGEN BILETE</span></div><div class="source-image"><img id="im1" alt="Bilete frå kamera 2"><span id="imempty1" class="source-empty">+</span></div><div class="source-actions"><label class="button mini">VEL BILETE<input type="file" accept="image/*" id="upload1" hidden></label><button class="button mini" data-shoot="1">TA BILETE</button></div></figure></div>
+ <div class="toolbar"><button class="button strong" id="both">UTLØYS BEGGE</button><button class="button" id="swap">BYT SIDE ↔</button><label class="button">IMPORTER FLEIRE<input id="upload-many" type="file" accept="image/*" multiple hidden></label></div>
+ <div class="stage-head"><div><span class="eyebrow">FØREHANDSVISING</span><span id="render-status" class="render-status">Klar</span></div><div class="stage-head-actions"><button class="button mini" id="original" aria-pressed="false" title="Hald nede for ubehandla bilete">HALD: FØR</button><button class="button mini" id="play">SPEL ▶</button></div></div>
+ <div id="stage" class="stage" aria-label="Førehandsvising. Dra horisontalt for å endre djupne"><canvas id="before" width="960" height="540"></canvas><canvas id="canvas" width="960" height="540"></canvas><div class="stage-grid" aria-hidden="true"></div><span class="stage-corner">ENTROPI <b id="stage-mode">ALTERNATE</b></span><span id="stage-placeholder" class="stage-placeholder">LAST OPP TO BILETE<br><small>ELLER BRUK DEMO</small></span></div>
+ <p class="context">Dra direkte på biletet for å justere djupna. Loop-modus og GIF-innstillingar blir ikkje endra av dragging. «Før»-knappen viser originalkomposisjonen.</p>
+ <div class="controls-grid"><label>DJUPNE <output id="depth-value">0 px</output><input type="range" id="depth" min="-180" max="180" value="0"></label><label>FART <output id="speed-value">500 ms</output><input type="range" id="speed" min="120" max="2000" step="20" value="500"></label><label>OVERLEGG <output id="blend-value">50 %</output><input type="range" id="blend" min="0" max="100" value="50"></label><label>FØR/ETTER <output id="compare-value">100 %</output><input type="range" id="compare" min="0" max="100" value="100"></label></div>
+ <div class="group-head"><span>LOOP / VISNING</span><span class="micro">Val blir lagra uavhengig av djupne</span></div><div class="chip-group" id="modes" role="group" aria-label="Stereo loop-modus"></div>
+</section>
+<section class="section" id="post"><div class="section-head"><div><span class="eyebrow">03 / POSTPRODUKSJON</span><h2>Rasterverkstaden</h2></div><button class="button" id="reset">NULLSTILL ALT</button></div>
+ <div class="editor-layout"><article class="panel"><div class="panel-head"><h3>RASTER / DITHER</h3><label class="switch"><input type="checkbox" id="dither-enabled" checked><span>PÅ</span></label></div>
+  <div class="field-grid"><label class="field">ALGORITME<select id="method"></select></label><label class="field">FARGEPALLETT<select id="palette"></select></label></div>
+  <label class="field custom-palette" id="custom-field" hidden>FARGAR (HEX, SKIL MED MELLOMROM)<input type="text" id="custom" value="#111111 #eeeeee" spellcheck="false"></label>
+  <div class="palette-actions"><span class="micro">HENT FARGAR FRÅ BILETET</span><button class="button mini" data-extract-palette="4">4 FARGAR</button><button class="button mini" data-extract-palette="8">8 FARGAR</button><button class="button mini" data-extract-palette="16">16 FARGAR</button></div>
+  <div class="sliders" id="dither-sliders"></div>
+  <div class="toggle-row"><label><input type="checkbox" id="serpentine" checked><span>Serpentinsk feildiffusjon</span></label><label><input type="checkbox" id="invert"><span>Inverter paletten</span></label></div>
+  <p class="context">Diffusjon styrer kor mykje kvantiseringsfeil som blir spreidd til nabopikslar. Bayer, halvtonar og støy brukar i staden eit romleg mønster. Høg pikselstorleik er nyttig til trykk og retro-foto.</p>
+  <div class="group-head"><span>12 FERDIGE UTTRYKK</span></div><div class="preset-grid" id="presets"></div>
+ </article><article class="panel"><div class="panel-head"><h3>FOTO / FARGE</h3><span class="micro">11 verktøy</span></div><div class="sliders" id="grade-sliders"></div><p class="context">Eksponering, kontrast, metning, varme, toning, skuggar, høglys, fade, filmkorn, vignett og skarpleik. Same behandling gjeld PNG og GIF.</p><div class="panel-actions"><button class="button" id="reset-grade">NULLSTILL FOTO</button><button class="button" id="reset-dither">NULLSTILL RASTER</button></div></article></div>
+ <div class="export"><div><p class="eyebrow">04 / OUTPUT</p><h3>Frå ramme til fil.</h3><p class="context">PNG eksporterer gjeldande ramme. GIF brukar valt loop-modus og rastereffekt på kvar ramme, ikkje ein falsk videoførehandsvisar.</p></div><div class="export-buttons"><button class="button strong" id="png">PNG ↓</button><button class="button" id="webp">WEBP ↓</button><button class="button" id="gif">GIF ↓</button><button class="button" id="add">LEGG I GALLERI +</button></div></div>
+ <div class="gif-settings"><label>GIF-RAMMER <select id="gif-frames"><option>8</option><option selected>12</option><option>20</option><option>24</option></select></label><label>GIF-STORLEIK <select id="gif-size"><option value="320">320 px</option><option value="480" selected>480 px</option><option value="640">640 px</option></select></label><label>GIF-FART <span>Frå stereo-kontrollen ovanfor</span></label></div>
+</section>
+<section class="section" id="gallery-section"><div class="section-head"><div><span class="eyebrow">05 / ARKIV</span><h2>Galleri</h2></div><div class="gallery-heading"><label>LAST TIL <select id="gallery-target"><option value="0">KAMERA 1</option><option value="1">KAMERA 2</option></select></label><span class="micro" id="count">0 bilete</span></div></div><div class="gallery" id="gallery"></div><div class="empty-gallery" id="gallery-empty">INGEN BILETE LAGRA ENNO</div><button id="more" class="button more" hidden>VIS FLEIRE</button><p class="context">Alltid fire kvadratiske ruter per rad. Bileta blir lagra lokalt i denne nettlesaren når lagring er tilgjengeleg. Trykk på eit bilete for å laste det til venstre eller høgre kamera.</p></section>
+<section class="section" id="diagnostics"><div class="section-head"><div><span class="eyebrow">06 / TEKNISK</span><h2>API og diagnose</h2></div><button class="button" id="clear-log">TØM LOGG</button></div><div class="panel"><div class="field-grid"><label class="field">KAMERA 1 / BASE-URL<input id="api0" type="url" placeholder="http://192.168.4.1"></label><label class="field">KAMERA 2 / BASE-URL<input id="api1" type="url" placeholder="Faktisk IP for kamera 2, når tilgjengeleg"></label></div><div class="toolbar"><button class="button strong" id="save-api">LAGRE ADRESSER</button><label class="field" style="min-width:170px">API-TYPE<select id="adapter"><option value="firmware">Entropi firmware</option><option value="generic">Generisk JSON</option></select></label></div><div id="api-hint" class="context"></div><pre id="log" class="log" aria-live="polite">Klar for lokal testing.</pre></div></section>
+<footer class="foot"><span>ENTROPI / LOCAL FIRST</span><span>INGEN BILETE VERT SENDE TIL EIN SKYMODELL</span><a href="/">↖ TILBAKE</a></footer>
+</main>
+<script type="module" src="app.mjs"></script>
+</body>
+</html>
