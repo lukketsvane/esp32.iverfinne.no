@@ -32,4 +32,10 @@ Last inn eit eller fleire bilete; første to blir opna i kameravisarane, alle bl
 
 For den eksisterande statiske nettstaden kan mappa leggjast under `control/` i webroten, slik at kontrollpanelet ligg på `https://esp32.iverfinne.no/control/`. Dette erstattar ikkje den eksisterande fotoflyt-/3D-visaren på hovudsida eller kamera-firmwaren.
 
-The GitHub preview deploy omits bundled PNG icons and demo JPEG. The demo button generates its own image locally and the PWA manifest uses the SVG icon. The downloadable ZIP also has PNG icons and a JPEG fixture.
+## 3.0: utvida diagnostikk og palettar
+
+«TEST 320 → 1600» krev gyldig `/status` med `camera_ready=true`. Han testar QVGA og, dersom PSRAM er stadfesta, også VGA og UXGA. For kvar storleik set appen innstillinga, gjer eit nytt JPEG-opptak, kontrollerer biletdimensjonane og loggfører rundetid og storleik. Opphavleg fotooppløysing blir forsøkt gjenoppretta i `finally`; feil ved tilbakesetting blir melde tydeleg. Ingen testbilete blir lagra i galleriet.
+
+Statusskilta skil «INGEN KONTAKT» (HTTP/mixed-content/CORS eller nettverksfeil), «SENSORFEIL» (gyldig firmware-status med `camera_ready=false`) og «SENSOR KLAR». To ESP32-AP med identisk `192.168.4.1` blir flagga som adressekonflikt. Ein «OPNE UI»-lenkje gjer det mogleg å opne kvart kort i ei eiga fane medan ein er kopla til det aktuelle kamera-Wi-Fi-et.
+
+Palettuttrekk kan lage 4/8/16 fargar frå gjeldande stereo-ramme med deterministisk vekta median-cut, lokalt i nettlesaren. Thumbnail-generering fell tilbake til vanlig `Image` dersom `createImageBitmap` manglar eller feilar (Safari). På touchskjerm endrar horisontal dragging djupne først etter terskel, og vertikal sveiping får scrolle uhindra. PWA-serviceworker skil no appmappa `/control/` frå firmware-API-et `/control`, så appskalet kan lesast frå cache offline.
