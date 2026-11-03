@@ -1,0 +1,19 @@
+{
+  "name": "ENTROPI Stereo Control",
+  "short_name": "ENTROPI",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101214",
+  "theme_color": "#101214",
+  "description": "To kamera, eitt bilde: stereo, rastereffektar, galleri og diagnostikk.",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
