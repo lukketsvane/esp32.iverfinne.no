@@ -6,3 +6,5 @@
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 
 .gallery-heading{display:flex;align-items:center;gap:12px}.gallery-heading label{display:flex;align-items:center;gap:7px;color:#889494;font-size:9px;letter-spacing:.1em}.gallery-heading select{width:113px;min-height:30px;padding:5px;font-size:9px}.gallery-heading .micro{white-space:nowrap}
+
+.palette-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:10px}.palette-actions .micro{margin-right:auto}
